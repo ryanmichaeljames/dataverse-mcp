@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-04-09
+
+### Added
+- First stable release — all 7 tools verified against a live Dataverse environment
+- `dataverse_list_solutions` — list installed solutions with filtering and pagination
+- `dataverse_get_solution` — retrieve a single solution by unique name or ID
+- `dataverse_list_solution_components` — list components in a solution with type codes and display names
+- `dataverse_query_table` — query records from any table with OData filtering, column selection, sorting, and expand
+- `dataverse_get_record` — retrieve a single record by ID from any table
+- `dataverse_list_tables` — list available tables with metadata
+- `dataverse_get_table_metadata` — retrieve detailed schema metadata for a table including columns and relationships
+
+### Fixed
+- Pin `httpx>=0.20.0,<1.0` to prevent `uvx --prerelease=allow` from resolving `httpx 1.0.dev` which removed `TransportError` from the top-level namespace
+
 ## [0.1.0b2] - 2026-04-09
 
 ### Fixed
@@ -29,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...v0.1.0
 [0.1.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b1...v0.1.0b2
 [0.1.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/releases/tag/v0.1.0b1

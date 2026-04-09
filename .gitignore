@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[cod]
+*$py.class
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Environment variables
+.env
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# VS Code MCP config (contains environment-specific URLs/secrets)
+.vscode/mcp.json
+
+# OS
+.DS_Store
+Thumbs.db

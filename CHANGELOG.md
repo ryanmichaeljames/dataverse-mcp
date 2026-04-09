@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0b2] - 2026-04-09
+
+### Fixed
+- Pin `httpx>=0.20.0,<1.0` to prevent `uvx --prerelease=allow` from resolving `httpx 1.0.dev` which removed `TransportError` from the top-level namespace
+
 ## [0.1.0b1] - 2026-04-09
 
 ### Added
@@ -24,5 +29,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b1...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...HEAD
+[0.1.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b1...v0.1.0b2
 [0.1.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/releases/tag/v0.1.0b1

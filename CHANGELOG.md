@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0b1] - 2026-04-13
+
+### Added
+- `dataverse_get_dependent_components` tool — retrieves components that directly depend on a given solution component (`RetrieveDependentComponents`)
+- `dataverse_get_required_components` tool — retrieves components that a given solution component requires (`RetrieveRequiredComponents`)
+- `dataverse_get_dependencies_for_delete` tool — retrieves dependencies that would block deleting a solution component (`RetrieveDependenciesForDelete`)
+- `dataverse_get_dependencies_for_uninstall` tool — retrieves dependencies that would block uninstalling a managed solution (`RetrieveDependenciesForUninstall`)
+- `dataverse_get_missing_dependencies` tool — retrieves required components missing from a solution (`RetrieveMissingDependencies`)
+- `dataverse_is_component_customizable` tool — checks whether a solution component's customizable flag is set, using `IsComponentCustomizable`
+- `dataverse_get_app_components` tool — retrieves all components belonging to a model-driven app (`RetrieveAppComponents`)
+- `ComponentDependencyInput`, `SolutionDependencyInput`, and `AppComponentsInput` Pydantic models for dependency tool inputs
+
 ## [0.1.0] - 2026-04-09
 
 ### Added
@@ -44,7 +56,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.2.0b1...HEAD
+[0.2.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...v0.2.0b1
 [0.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...v0.1.0
 [0.1.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b1...v0.1.0b2
 [0.1.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/releases/tag/v0.1.0b1

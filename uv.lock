@@ -385,7 +385,7 @@ wheels = [
 
 [[package]]
 name = "dataverse-mcp"
-version = "0.1.0b2"
+version = "0.2.0b1"
 source = { editable = "." }
 dependencies = [
     { name = "azure-identity" },

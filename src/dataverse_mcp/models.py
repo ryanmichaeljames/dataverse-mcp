@@ -250,3 +250,82 @@ class GetTableMetadataInput(BaseModel):
         ),
         min_length=1,
     )
+
+
+# ---------------------------------------------------------------------------
+# Dependency tools
+# ---------------------------------------------------------------------------
+
+
+class ComponentDependencyInput(BaseModel):
+    """Input for component-scoped dependency functions."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    object_id: str = Field(
+        ...,
+        description=(
+            "The GUID of the solution component to inspect "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789'). "
+            "Use dataverse_list_solution_components to find component objectids."
+        ),
+        min_length=1,
+    )
+    component_type: int = Field(
+        ...,
+        description=(
+            "The solution component type code. Common values: "
+            "1=Entity, 2=Attribute, 3=Relationship, 9=OptionSet, "
+            "10=EntityRelationship, 20=SecurityRole, 26=View, 29=Workflow, "
+            "59=Chart, 60=SystemForm, 61=WebResource, 62=SiteMap, "
+            "63=ConnectionRole, 70=FieldSecurityProfile, "
+            "90=PluginType, 91=PluginAssembly, 92=SDKMessageProcessingStep, "
+            "300=CanvasApp, 371=Connector, 372=EnvironmentVariableDefinition"
+        ),
+        ge=1,
+    )
+
+    @field_validator("object_id")
+    @classmethod
+    def validate_object_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class SolutionDependencyInput(BaseModel):
+    """Input for solution-scoped dependency functions."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    solution_unique_name: str = Field(
+        ...,
+        description=(
+            "The unique name of the solution (e.g., 'MyCustomApp'). "
+            "Use dataverse_list_solutions to find solution unique names."
+        ),
+        min_length=1,
+    )
+
+
+class AppComponentsInput(BaseModel):
+    """Input for retrieving components of a model-driven app."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    app_module_id: str = Field(
+        ...,
+        description=(
+            "The GUID of the model-driven app (AppModule) whose components "
+            "to retrieve (e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789'). "
+            "Query the appmodule table to find app IDs."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("app_module_id")
+    @classmethod
+    def validate_app_module_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v

@@ -5,6 +5,7 @@ An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft
 ## Features
 
 - **Solution inspection** — list solutions, get solution details, browse solution components
+- **Dependency analysis** — inspect required/dependent components, deletion blockers, uninstall blockers, missing dependencies, app components, and component customizability
 - **Table querying** — flexible OData-style queries against any Dataverse table
 - **Schema exploration** — list tables, inspect table metadata (primary key, name attribute)
 - **Agent-friendly** — rich tool descriptions designed for AI agent discoverability
@@ -106,26 +107,17 @@ To connect to multiple environments, add one entry per environment with a unique
 | `dataverse_list_solutions` | List solutions with optional OData filter, select, and top |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |
+| `dataverse_get_dependent_components` | Get components that directly depend on a given solution component |
+| `dataverse_get_required_components` | Get components that a given solution component requires |
+| `dataverse_get_dependencies_for_delete` | Get dependencies that would block deleting a component |
+| `dataverse_get_dependencies_for_uninstall` | Get dependencies that would block uninstalling a managed solution |
+| `dataverse_get_missing_dependencies` | Get required components missing from a solution |
+| `dataverse_is_component_customizable` | Check whether a component can be customized |
+| `dataverse_get_app_components` | Enumerate all components in a model-driven app |
 | `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, top |
 | `dataverse_get_record` | Get a single record by table name and GUID |
 | `dataverse_list_tables` | List available tables/entities with optional filter |
 | `dataverse_get_table_metadata` | Get schema details for a specific table |
-
-## Project Structure
-
-```
-src/dataverse_mcp/
-├── __init__.py          # Package init
-├── _app.py              # FastMCP instance (avoids circular imports)
-├── server.py            # Entry point, logging setup, tool registration
-├── client.py            # DataverseClient wrapper (auth, lifecycle)
-├── models.py            # Pydantic v2 input models for all tools
-└── tools/
-    ├── __init__.py      # Tools package init
-    ├── solutions.py     # Solution query tools
-    ├── tables.py        # Table record query tools
-    └── metadata.py      # Table/column metadata tools
-```
 
 ## Development
 
@@ -136,6 +128,10 @@ cd dataverse-mcp
 
 # Install dependencies
 uv sync
+
+# Optional: create a local .env for mcp dev / inspector runs
+# DATAVERSE_URL=https://yourorg.crm.dynamics.com
+# DATAVERSE_AUTH_TYPE=azure_cli
 
 # Run the MCP inspector for testing
 uv run mcp dev src/dataverse_mcp/server.py

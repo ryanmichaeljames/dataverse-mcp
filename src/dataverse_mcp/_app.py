@@ -16,7 +16,16 @@ mcp = FastMCP(
         "environments. Use dataverse_list_solutions to discover solutions, "
         "dataverse_query_table to search records, and "
         "dataverse_list_tables / dataverse_get_table_metadata for schema "
-        "exploration."
+        "exploration. Use dataverse_get_dependent_components and "
+        "dataverse_get_required_components to map component dependencies, "
+        "dataverse_get_dependencies_for_delete to check what blocks deletion, "
+        "dataverse_get_dependencies_for_uninstall to check what blocks "
+        "uninstalling a managed solution, and "
+        "dataverse_get_missing_dependencies to validate a solution is "
+        "self-contained before deployment. Use "
+        "dataverse_is_component_customizable to check whether a component "
+        "can be modified, and dataverse_get_app_components to enumerate "
+        "all components belonging to a model-driven app."
     ),
     lifespan=dataverse_lifespan,
 )

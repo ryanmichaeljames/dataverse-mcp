@@ -13,6 +13,7 @@ logging.basicConfig(
 from dataverse_mcp._app import mcp  # noqa: E402
 
 # Import tool modules to trigger @mcp.tool() registration
+import dataverse_mcp.tools.environments  # noqa: E402, F401
 import dataverse_mcp.tools.solutions  # noqa: E402, F401
 import dataverse_mcp.tools.tables  # noqa: E402, F401
 import dataverse_mcp.tools.metadata  # noqa: E402, F401

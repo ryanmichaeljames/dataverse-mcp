@@ -4,6 +4,8 @@ import re
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from dataverse_mcp.client import normalize_dataverse_url
+
 _GUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
@@ -14,10 +16,30 @@ _GUID_PATTERN = re.compile(
 # ---------------------------------------------------------------------------
 
 
-class ListSolutionsInput(BaseModel):
-    """Input for listing solutions in the Dataverse environment."""
+class DataverseEnvironmentInput(BaseModel):
+    """Shared environment selection input for all Dataverse tools."""
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    dataverse_url: str | None = Field(
+        default=None,
+        description=(
+            "Preferred explicit Dataverse organization URL for this request "
+            "(e.g., 'https://yourorg.crm.dynamics.com'). If omitted, the "
+            "server falls back to DATAVERSE_URL for backward compatibility."
+        ),
+    )
+
+    @field_validator("dataverse_url")
+    @classmethod
+    def validate_dataverse_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return normalize_dataverse_url(v)
+
+
+class ListSolutionsInput(DataverseEnvironmentInput):
+    """Input for listing solutions in the Dataverse environment."""
 
     filter: str | None = Field(
         default=None,
@@ -41,10 +63,8 @@ class ListSolutionsInput(BaseModel):
     )
 
 
-class GetSolutionInput(BaseModel):
+class GetSolutionInput(DataverseEnvironmentInput):
     """Input for retrieving a single solution by unique name or ID."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     solution_unique_name: str | None = Field(
         default=None,
@@ -85,10 +105,8 @@ class GetSolutionInput(BaseModel):
         return self
 
 
-class ListSolutionComponentsInput(BaseModel):
+class ListSolutionComponentsInput(DataverseEnvironmentInput):
     """Input for listing components within a specific solution."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     solution_id: str = Field(
         ...,
@@ -125,10 +143,8 @@ class ListSolutionComponentsInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class QueryTableInput(BaseModel):
+class QueryTableInput(DataverseEnvironmentInput):
     """Input for querying records from any Dataverse table."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     table_name: str = Field(
         ...,
@@ -177,10 +193,8 @@ class QueryTableInput(BaseModel):
     )
 
 
-class GetRecordInput(BaseModel):
+class GetRecordInput(DataverseEnvironmentInput):
     """Input for retrieving a single record by its ID."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     table_name: str = Field(
         ...,
@@ -214,10 +228,8 @@ class GetRecordInput(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ListTablesInput(BaseModel):
+class ListTablesInput(DataverseEnvironmentInput):
     """Input for listing available tables/entities in the environment."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     filter: str | None = Field(
         default=None,
@@ -237,10 +249,8 @@ class ListTablesInput(BaseModel):
     )
 
 
-class GetTableMetadataInput(BaseModel):
+class GetTableMetadataInput(DataverseEnvironmentInput):
     """Input for retrieving detailed metadata for a specific table."""
-
-    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
     table_name: str = Field(
         ...,
@@ -249,4 +259,24 @@ class GetTableMetadataInput(BaseModel):
             "'new_customtable'). Use lowercase logical names."
         ),
         min_length=1,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Power Platform admin tools
+# ---------------------------------------------------------------------------
+
+
+class ListEnvironmentsInput(BaseModel):
+    """Input for listing Power Platform environments using the admin API."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    expand_capacity: bool = Field(
+        default=False,
+        description="Include capacity details for each environment",
+    )
+    expand_addons: bool = Field(
+        default=False,
+        description="Include add-on allocation details for each environment",
     )

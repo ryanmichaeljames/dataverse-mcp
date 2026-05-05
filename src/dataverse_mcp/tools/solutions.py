@@ -7,7 +7,7 @@ import logging
 from mcp.server.fastmcp import Context
 from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
-from dataverse_mcp.client import AppContext
+from dataverse_mcp.client import AppContext, get_dataverse_client
 from dataverse_mcp.models import (
     GetSolutionInput,
     ListSolutionComponentsInput,
@@ -66,10 +66,10 @@ _DEFAULT_COMPONENT_SELECT = [
 ]
 
 
-def _get_client(ctx: Context):
-    """Extract the DataverseClient from the FastMCP lifespan context."""
+def _get_client(ctx: Context, dataverse_url: str | None):
+    """Resolve the DataverseClient for the requested environment."""
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    return app_ctx.client
+    return get_dataverse_client(app_ctx, dataverse_url)
 
 
 def _flatten_records(pages, limit: int) -> list[dict]:
@@ -104,7 +104,7 @@ def _enrich_component_type(record: dict) -> dict:
     },
 )
 async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> str:
-    """List solutions in the connected Dataverse environment.
+    """List solutions in the specified Dataverse environment.
 
     Returns solutions with their unique name, friendly name, version, and
     managed status. Use the optional filter parameter to narrow results
@@ -113,11 +113,11 @@ async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> 
     Use this tool to discover which solutions exist before drilling into
     specific solution details or components.
     """
-    client = _get_client(ctx)
     select = params.select or _DEFAULT_SOLUTION_SELECT
     top = params.top
 
     try:
+        client = _get_client(ctx, params.dataverse_url)
 
         def _query():
             pages = client.records.get(
@@ -172,10 +172,10 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
     Use this after dataverse_list_solutions to get full details for
     a specific solution.
     """
-    client = _get_client(ctx)
     select = params.select or _DEFAULT_SOLUTION_SELECT
 
     try:
+        client = _get_client(ctx, params.dataverse_url)
 
         def _query():
             if params.solution_id:
@@ -249,7 +249,6 @@ async def dataverse_list_solution_components(
     61 for Web Resource, 300 for Canvas App). Use dataverse_get_solution
     first to find the solution_id.
     """
-    client = _get_client(ctx)
     top = params.top
 
     # solution_id is already GUID-validated by Pydantic
@@ -258,6 +257,7 @@ async def dataverse_list_solution_components(
         odata_filter += f" and componenttype eq {params.component_type}"
 
     try:
+        client = _get_client(ctx, params.dataverse_url)
 
         def _query():
             pages = client.records.get(

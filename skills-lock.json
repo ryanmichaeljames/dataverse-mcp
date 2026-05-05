@@ -6,11 +6,6 @@
       "sourceType": "github",
       "computedHash": "67c6e536f306655d682651e68b9966c7c9a0a3f31ba8d8a3ce7e596d3b504e36"
     },
-    "copilot-instructions-blueprint-generator": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "computedHash": "45fd25e507349b05f80a0cafc159109071ed6c24ac5f014b9c749fd6846bd62b"
-    },
     "create-readme": {
       "source": "github/awesome-copilot",
       "sourceType": "github",

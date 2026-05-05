@@ -8,7 +8,7 @@ from mcp.server.fastmcp import Context
 from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
 from dataverse_mcp._app import mcp
-from dataverse_mcp.client import AppContext
+from dataverse_mcp.client import AppContext, get_dataverse_client
 from dataverse_mcp.models import GetTableMetadataInput, ListTablesInput
 
 logger = logging.getLogger(__name__)
@@ -23,10 +23,10 @@ _DEFAULT_TABLE_SELECT = [
 ]
 
 
-def _get_client(ctx: Context):
-    """Extract the DataverseClient from the FastMCP lifespan context."""
+def _get_client(ctx: Context, dataverse_url: str | None):
+    """Resolve the DataverseClient for the requested environment."""
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    return app_ctx.client
+    return get_dataverse_client(app_ctx, dataverse_url)
 
 
 @mcp.tool(
@@ -50,10 +50,10 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     dataverse_query_table or inspecting their schema with
     dataverse_get_table_metadata.
     """
-    client = _get_client(ctx)
     select = params.select or _DEFAULT_TABLE_SELECT
 
     try:
+        client = _get_client(ctx, params.dataverse_url)
 
         def _query():
             return client.tables.list(
@@ -104,9 +104,8 @@ async def dataverse_get_table_metadata(
     understand a table's structure before querying it with
     dataverse_query_table.
     """
-    client = _get_client(ctx)
-
     try:
+        client = _get_client(ctx, params.dataverse_url)
 
         def _query():
             return client.tables.get(params.table_name)

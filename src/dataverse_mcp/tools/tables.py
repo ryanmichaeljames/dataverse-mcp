@@ -8,16 +8,16 @@ from mcp.server.fastmcp import Context
 from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
 from dataverse_mcp._app import mcp
-from dataverse_mcp.client import AppContext
+from dataverse_mcp.client import AppContext, get_dataverse_client
 from dataverse_mcp.models import GetRecordInput, QueryTableInput
 
 logger = logging.getLogger(__name__)
 
 
-def _get_client(ctx: Context):
-    """Extract the DataverseClient from the FastMCP lifespan context."""
+def _get_client(ctx: Context, dataverse_url: str | None):
+    """Resolve the DataverseClient for the requested environment."""
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    return app_ctx.client
+    return get_dataverse_client(app_ctx, dataverse_url)
 
 
 def _flatten_records(pages, limit: int) -> list[dict]:
@@ -53,10 +53,10 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
     Use dataverse_list_tables or dataverse_get_table_metadata first to
     discover available tables and their column names.
     """
-    client = _get_client(ctx)
     top = params.top
 
     try:
+        client = _get_client(ctx, params.dataverse_url)
 
         def _query():
             pages = client.records.get(
@@ -109,9 +109,8 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
     Returns the full record (or selected columns) for the given table
     and record GUID. Use dataverse_query_table first to find record IDs.
     """
-    client = _get_client(ctx)
-
     try:
+        client = _get_client(ctx, params.dataverse_url)
 
         def _query():
             record = client.records.get(

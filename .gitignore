@@ -16,6 +16,7 @@ ENV/
 
 # Environment variables
 .env
+.azure-local/
 
 # IDE
 .idea/

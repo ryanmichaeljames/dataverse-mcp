@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-05-05
+
+### Added
+- `dataverse_list_environments` tool to list Power Platform environments available to the authenticated user via the admin API
+
+### Changed
+- Allow one MCP server instance to target different Dataverse environments per tool call via `dataverse_url`, while keeping `DATAVERSE_URL` as a temporary backward-compatible fallback
+- Remove the `.env`-based setup flow from documentation and document MCP `env` configuration as the only supported configuration path
+- Simplify `dataverse_list_environments` so it always returns the full normalized environment payload instead of supporting field selection
+- Refresh README usage guidance to document local source-based VS Code MCP setup, no-build development workflow, and the current environments tool behavior
+
 ## [0.1.0] - 2026-04-09
 
 ### Added
@@ -44,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...v0.1.0
 [0.1.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b1...v0.1.0b2
 [0.1.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/releases/tag/v0.1.0b1

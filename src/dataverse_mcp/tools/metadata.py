@@ -691,7 +691,8 @@ async def dataverse_check_relationship_eligibility(
     - 'referencing'   — can be the related (many) side of a 1:N
     - 'many_to_many'  — can participate in an N:N relationship
 
-    Returns eligible (bool). All three flags are read in a single API call.
+    Returns eligible (bool) for the requested check_type. The API call
+    selects and reads only that specific eligibility flag.
     """
     app_ctx = _get_app_ctx(ctx)
     base_url = str(params.dataverse_url)

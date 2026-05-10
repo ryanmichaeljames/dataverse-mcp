@@ -609,6 +609,163 @@ class DeleteTableInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Column schema write tools
+# ---------------------------------------------------------------------------
+
+_COLUMN_ATTRIBUTE_TYPES = (
+    "String",
+    "Integer",
+    "Decimal",
+    "DateTime",
+    "Boolean",
+    "Lookup",
+    "Picklist",
+    "MultiSelectPicklist",
+)
+
+_COLUMN_REQUIRED_LEVELS = ("None", "Recommended", "ApplicationRequired")
+
+
+class CreateColumnInput(DataverseEnvironmentInput):
+    """Input for adding a new column (attribute) to a Dataverse table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table to add the column to "
+            "(e.g., 'account', 'cr123_widget')."
+        ),
+        min_length=1,
+    )
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the new column. Must include the publisher prefix "
+            "(e.g., 'cr123_Description', 'new_Priority'). The logical name is "
+            "derived as the lowercase version of this value."
+        ),
+        min_length=3,
+    )
+    attribute_type: str = Field(
+        ...,
+        description=(
+            "Column type. One of: String, Integer, Decimal, DateTime, Boolean, "
+            "Lookup, Picklist, MultiSelectPicklist."
+        ),
+    )
+    display_name: str = Field(
+        ...,
+        description="Display label for the column shown in the UI.",
+        min_length=1,
+    )
+    required_level: str | None = Field(
+        default="None",
+        description=(
+            "Whether the column is required. One of: 'None' (optional), "
+            "'Recommended', 'ApplicationRequired' (required). Defaults to 'None'."
+        ),
+    )
+    type_specific_properties: dict | None = Field(
+        default=None,
+        description=(
+            "Optional dict of type-specific properties merged into the attribute "
+            "definition body. Examples: String → {'MaxLength': 100}; "
+            "Integer → {'MinValue': 0, 'MaxValue': 100000}; "
+            "Decimal → {'Precision': 2}; DateTime → {'Format': 'DateOnly'}; "
+            "Boolean → {'DefaultValue': false}; "
+            "Picklist → {'OptionSet': {'@odata.type': '...OptionSetMetadata', 'Options': [...]}}."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), the tool returns a preview of the attribute "
+            "definition that would be posted without calling the API."
+        ),
+    )
+
+    @field_validator("attribute_type")
+    @classmethod
+    def validate_attribute_type(cls, v: str) -> str:
+        if v not in _COLUMN_ATTRIBUTE_TYPES:
+            raise ValueError(
+                f"attribute_type must be one of: {', '.join(_COLUMN_ATTRIBUTE_TYPES)}"
+            )
+        return v
+
+    @field_validator("required_level")
+    @classmethod
+    def validate_required_level(cls, v: str | None) -> str | None:
+        if v is not None and v not in _COLUMN_REQUIRED_LEVELS:
+            raise ValueError(
+                f"required_level must be one of: {', '.join(_COLUMN_REQUIRED_LEVELS)}"
+            )
+        return v
+
+
+class UpdateColumnInput(DataverseEnvironmentInput):
+    """Input for updating an existing column via full PUT replacement."""
+
+    table_logical_name: str = Field(
+        ...,
+        description="Logical name of the table that owns the column.",
+        min_length=1,
+    )
+    column_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the column to update (e.g., 'cr123_description'). "
+            "Fetch the current definition first with dataverse_get_column."
+        ),
+        min_length=1,
+    )
+    full_definition: dict = Field(
+        ...,
+        description=(
+            "Complete attribute definition JSON obtained from dataverse_get_column. "
+            "Apply your changes to this object before passing it here. The Dataverse "
+            "metadata API requires a full PUT — partial updates are not supported."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the PUT. "
+            "When False (default), returns the full_definition as a preview without "
+            "calling the API."
+        ),
+    )
+
+
+class DeleteColumnInput(DataverseEnvironmentInput):
+    """Input for permanently deleting a custom column from a table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description="Logical name of the table that owns the column.",
+        min_length=1,
+    )
+    column_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the column to delete (e.g., 'cr123_description'). "
+            "Only custom columns can be deleted."
+        ),
+        min_length=1,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), fetches and returns the current column definition "
+            "as a preview without deleting anything. "
+            "WARNING: Deletion is permanent and removes all column data."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
 

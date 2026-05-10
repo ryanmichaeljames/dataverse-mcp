@@ -139,6 +139,9 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute (`allow_write` safety guard) |
 | `dataverse_update_table` | Update an existing table's display name or description (`allow_write` safety guard) |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data (`allow_delete` safety guard) |
+| `dataverse_create_column` | Add a new column to a table with typed attribute metadata and display name (`allow_write` safety guard) |
+| `dataverse_update_column` | Update an existing column via full PUT replacement; fetch current definition with `dataverse_get_column` first (`allow_write` safety guard) |
+| `dataverse_delete_column` | Permanently delete a custom column and all its data from a table (`allow_delete` safety guard) |
 | `dataverse_list_solutions` | List solutions with optional OData filter, select, and top |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |

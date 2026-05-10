@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_create_column` tool to add a new column to a table with typed attribute metadata, display name, required level, and type-specific properties; supports `allow_write` safety guard with preview mode (#11)
+- `dataverse_update_column` tool to update an existing column via full PUT replacement; agent must fetch the current definition via `dataverse_get_column` first; supports `allow_write` safety guard with preview mode (#11)
+- `dataverse_delete_column` tool to permanently delete a custom column; fetches current definition for preview; supports `allow_delete` safety guard (#11)
 - `dataverse_create_table` tool to create a new custom table with display names, schema name, ownership type, and primary name attribute; supports `allow_write` safety guard with preview mode (#8)
 - `dataverse_update_table` tool to update an existing table's display name or description by fetching the current definition and PUTting the merged result; supports `allow_write` safety guard with preview mode (#8)
 - `dataverse_delete_table` tool to permanently delete a custom table; supports `allow_delete` safety guard with preview mode (#8)

@@ -13,7 +13,9 @@ from dataverse_mcp._app import mcp
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
     CheckRelationshipEligibilityInput,
+    CreateColumnInput,
     CreateTableInput,
+    DeleteColumnInput,
     DeleteTableInput,
     GetChoiceInput,
     GetColumnInput,
@@ -24,6 +26,7 @@ from dataverse_mcp.models import (
     ListColumnsInput,
     ListRelationshipsInput,
     ListTablesInput,
+    UpdateColumnInput,
     UpdateTableInput,
 )
 
@@ -1333,6 +1336,373 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_table")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Column schema write tools
+# ---------------------------------------------------------------------------
+
+_ATTRIBUTE_TYPE_ODATA_MAP = {
+    "String": "Microsoft.Dynamics.CRM.StringAttributeMetadata",
+    "Integer": "Microsoft.Dynamics.CRM.IntegerAttributeMetadata",
+    "Decimal": "Microsoft.Dynamics.CRM.DecimalAttributeMetadata",
+    "DateTime": "Microsoft.Dynamics.CRM.DateTimeAttributeMetadata",
+    "Boolean": "Microsoft.Dynamics.CRM.BooleanAttributeMetadata",
+    "Lookup": "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+    "Picklist": "Microsoft.Dynamics.CRM.PicklistAttributeMetadata",
+    "MultiSelectPicklist": "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata",
+}
+
+_METADATA_HEADERS = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "OData-MaxVersion": "4.0",
+    "OData-Version": "4.0",
+}
+
+
+@mcp.tool(
+    name="dataverse_create_column",
+    annotations={
+        "title": "Create Column",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> str:
+    """Add a new column (attribute) to a Dataverse table.
+
+    Constructs the correct attribute metadata body based on attribute_type and
+    POSTs it to /EntityDefinitions(LogicalName='{table}')/Attributes.
+
+    Use type_specific_properties to supply type-specific fields such as:
+    - String: {"MaxLength": 100}
+    - Integer: {"MinValue": 0, "MaxValue": 100000}
+    - Decimal: {"Precision": 2}
+    - DateTime: {"Format": "DateOnly"}  (DateOnly | DateAndTime)
+    - Picklist/MultiSelectPicklist: {"OptionSet": {...}}
+
+    When allow_write is False (default), returns a preview of the attribute
+    definition body without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating columns to make the
+    changes visible in the application.
+    """
+    odata_type = _ATTRIBUTE_TYPE_ODATA_MAP[params.attribute_type]
+    body: dict = {
+        "@odata.type": odata_type,
+        "SchemaName": params.schema_name,
+        "DisplayName": _make_label(params.display_name),
+    }
+    if params.required_level is not None:
+        body["RequiredLevel"] = {
+            "@odata.type": "Microsoft.Dynamics.CRM.AttributeRequiredLevelManagedProperty",
+            "Value": params.required_level,
+            "CanBeChanged": True,
+        }
+    if params.type_specific_properties:
+        body.update(params.type_specific_properties)
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "attribute_definition": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')/Attributes",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.headers.get("OData-EntityId", "")
+
+        entity_id = await asyncio.to_thread(_post)
+        logger.info(
+            "Created column %s on table %s", params.schema_name, params.table_logical_name
+        )
+        return json.dumps({
+            "created": True,
+            "table_logical_name": params.table_logical_name,
+            "schema_name": params.schema_name,
+            "entity_id": entity_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning("Timeout in dataverse_create_column — operation may have succeeded: %s", e)
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. The column may "
+                "have been created. Use dataverse_list_columns to verify."
+            ),
+            "table_logical_name": params.table_logical_name,
+            "schema_name": params.schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create column error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_column")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_update_column",
+    annotations={
+        "title": "Update Column",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> str:
+    """Update an existing column's metadata via full PUT replacement.
+
+    The Dataverse metadata API does not support partial updates (PATCH) on
+    attribute definitions. You must provide the complete column definition JSON.
+
+    Recommended workflow:
+    1. Call dataverse_get_column to retrieve the current full definition
+    2. Apply your changes to the returned JSON
+    3. Pass the modified JSON as full_definition to this tool with allow_write=True
+
+    When allow_write is False (default), returns the full_definition as a preview
+    without calling the API.
+
+    Call dataverse_publish_customizations after updating columns.
+    """
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the update operation.",
+            "full_definition": params.full_definition,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    column_enc = _url_quote(params.column_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _put():
+            with httpx.Client(timeout=60.0) as http_client:
+                definition = dict(params.full_definition)
+                definition.pop("@odata.context", None)
+                response = http_client.put(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')"
+                    f"/Attributes(LogicalName='{column_enc}')",
+                    json=definition,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_put)
+        logger.info(
+            "Updated column %s on table %s",
+            params.column_logical_name,
+            params.table_logical_name,
+        )
+        return json.dumps({
+            "updated": True,
+            "table_logical_name": params.table_logical_name,
+            "column_logical_name": params.column_logical_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse update column error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_update_column")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_delete_column",
+    annotations={
+        "title": "Delete Column",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> str:
+    """Permanently delete a custom column and all its data from a table.
+
+    Fetches the current column definition before acting. When allow_delete is
+    False (default), returns the column definition as a preview without
+    deleting anything.
+
+    WARNING: Deletion is permanent and irreversible. All data stored in this
+    column across every record will be lost.
+
+    Call dataverse_publish_customizations after deleting columns.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    column_enc = _url_quote(params.column_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _get_definition():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')"
+                    f"/Attributes(LogicalName='{column_enc}')"
+                    f"?$select=LogicalName,SchemaName,AttributeType,DisplayName,"
+                    f"IsCustomAttribute,IsManaged",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                data.pop("@odata.context", None)
+                return data
+
+        column_def = await asyncio.to_thread(_get_definition)
+
+        if not params.allow_delete:
+            return json.dumps({
+                "preview": True,
+                "message": "Set allow_delete=true to permanently delete this column.",
+                "column": column_def,
+            })
+
+        def _delete():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.delete(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')"
+                    f"/Attributes(LogicalName='{column_enc}')",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_delete)
+        logger.info(
+            "Deleted column %s from table %s",
+            params.column_logical_name,
+            params.table_logical_name,
+        )
+        return json.dumps({
+            "deleted": True,
+            "table_logical_name": params.table_logical_name,
+            "column_logical_name": params.column_logical_name,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning("Timeout in dataverse_delete_column — operation may have succeeded: %s", e)
+        return json.dumps({
+            "error": True,
+            "deleted": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. The column may "
+                "have been deleted. Use dataverse_list_columns to verify."
+            ),
+            "table_logical_name": params.table_logical_name,
+            "column_logical_name": params.column_logical_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse delete column error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_delete_column")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

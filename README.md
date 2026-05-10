@@ -9,7 +9,7 @@ An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft
 - **Record management** — create, update, and delete records with safety guards
 - **Record associations** — associate and disassociate records via navigation properties
 - **Schema exploration** — list tables, inspect table and column metadata, browse relationships, choice columns, and global choices
-- **Table schema management** — create, update, and delete custom tables, columns, relationships, and choices with `allow_write`/`allow_delete` safety guards and preview mode
+- **Table schema management** — create, update, and delete custom tables, columns, relationships, and choices; gated by `DATAVERSE_ALLOW_WRITE` / `DATAVERSE_ALLOW_DELETE` env vars
 - **Security inspection** — retrieve user privileges and check principal access rights on records
 - **Environment discovery** — list Power Platform environments available to the authenticated user
 - **Multi-environment targeting** — one MCP server config can query any Dataverse org the caller specifies
@@ -164,13 +164,6 @@ Set them in the `env` block of your MCP server entry:
 
 You can enable each flag independently — for example, set only `DATAVERSE_ALLOW_WRITE=true` to allow creates and updates while keeping deletes disabled.
 
-Even when a write or delete tool is enabled, it still runs in **preview mode** by default. The tool returns the request URL and body that *would* be sent without making any changes. Pass `allow_write: true` or `allow_delete: true` in the tool call parameters to execute.
-
-The recommended workflow:
-1. Omit the parameter to preview the request
-2. Confirm the output looks correct
-3. Re-run with `allow_write: true` or `allow_delete: true` to apply
-
 ## Tools
 
 Tools are grouped by the env var required to enable them. Read-only tools are always available.
@@ -202,7 +195,7 @@ Tools are grouped by the env var required to enable them. Read-only tools are al
 
 ### Requires `DATAVERSE_ALLOW_WRITE=true`
 
-These tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set in the MCP server `env`. Each tool also requires `allow_write: true` in the tool call parameters to execute — without it, the tool returns a preview of the request without making changes.
+These tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set in the MCP server `env`.
 
 | Tool | Description |
 |------|-------------|
@@ -226,7 +219,7 @@ These tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set in the 
 
 ### Requires `DATAVERSE_ALLOW_DELETE=true`
 
-These tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set in the MCP server `env`. Each tool also requires `allow_delete: true` in the tool call parameters to execute — without it, the tool returns a preview without making changes.
+These tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set in the MCP server `env`.
 
 | Tool | Description |
 |------|-------------|

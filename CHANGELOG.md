@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Write tools (`dataverse_associate_records`, `dataverse_merge_records`, `dataverse_execute_batch`, all create/update schema tools) now require `DATAVERSE_ALLOW_WRITE=true` in the MCP server `env` to be registered
 - Delete tools (`dataverse_disassociate_records`, `dataverse_delete_table`, `dataverse_delete_column`, `dataverse_delete_relationship`, `dataverse_delete_choice`, `dataverse_delete_choice_option`) now require `DATAVERSE_ALLOW_DELETE=true` in the MCP server `env` to be registered
 
+### Removed
+- Per-call `allow_write` and `allow_delete` parameters removed from all write and delete tool inputs — access is now controlled entirely by the MCP server `env` flags
+- Preview mode removed from all write and delete tools
+
 ## [1.1.0] - 2026-05-11
 
 ### Added

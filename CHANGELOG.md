@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_create_table` tool to create a new custom table with display names, schema name, ownership type, and primary name attribute; supports `allow_write` safety guard with preview mode (#8)
+- `dataverse_update_table` tool to update an existing table's display name or description by fetching the current definition and PUTting the merged result; supports `allow_write` safety guard with preview mode (#8)
+- `dataverse_delete_table` tool to permanently delete a custom table; supports `allow_delete` safety guard with preview mode (#8)
+
+### Added
 - `dataverse_whoami` tool to return the authenticated user's `UserId`, `BusinessUnitId`, and `OrganizationId` from the WhoAmI endpoint (#10)
 - `dataverse_get_entity_sets` tool to list OData EntitySet names from the service document with `top` (default 50, max 1000) and `contains` substring filter, returning `has_more` when results are truncated (#10)
 - `dataverse_list_choices` tool to list all global choice (option set) definitions in the environment with optional field selection and pagination (#7)

@@ -486,6 +486,129 @@ class GetChoiceInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Table schema write tools
+# ---------------------------------------------------------------------------
+
+
+class CreateTableInput(DataverseEnvironmentInput):
+    """Input for creating a new custom table in the Dataverse environment."""
+
+    display_name: str = Field(
+        ...,
+        description=(
+            "Singular display name for the table (e.g., 'Widget'). "
+            "Shown in the UI as the record label."
+        ),
+        min_length=1,
+    )
+    display_collection_name: str = Field(
+        ...,
+        description=(
+            "Plural display name for the table (e.g., 'Widgets'). "
+            "Used in navigation and list views."
+        ),
+        min_length=1,
+    )
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the table. Must include a publisher prefix followed "
+            "by an underscore and a PascalCase name (e.g., 'cr123_Widget', "
+            "'new_MyTable'). The logical name will be derived as the lowercase "
+            "version of this value."
+        ),
+        min_length=3,
+    )
+    ownership_type: str = Field(
+        default="UserOwned",
+        description=(
+            "Ownership model for the table. "
+            "'UserOwned' — records are owned by a user or team (default). "
+            "'OrganizationOwned' — records are owned by the organization."
+        ),
+    )
+    primary_name_attribute_schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the required primary name text column "
+            "(e.g., 'cr123_Name'). Must use the same publisher prefix as schema_name."
+        ),
+        min_length=3,
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional description for the table.",
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), the tool returns a preview of the entity "
+            "definition that would be sent without calling the API."
+        ),
+    )
+
+    @field_validator("ownership_type")
+    @classmethod
+    def validate_ownership_type(cls, v: str) -> str:
+        allowed = ("UserOwned", "OrganizationOwned")
+        if v not in allowed:
+            raise ValueError(f"ownership_type must be one of: {', '.join(allowed)}")
+        return v
+
+
+class UpdateTableInput(DataverseEnvironmentInput):
+    """Input for updating an existing table's display metadata."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table to update (e.g., 'account', 'cr123_widget'). "
+            "Use lowercase."
+        ),
+        min_length=1,
+    )
+    display_name: str | None = Field(
+        default=None,
+        description="New singular display name for the table.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="New description for the table.",
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the update operation. "
+            "When False (default), the tool fetches the current definition, "
+            "applies the requested changes, and returns a preview without calling PUT."
+        ),
+    )
+
+
+class DeleteTableInput(DataverseEnvironmentInput):
+    """Input for permanently deleting a custom table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the custom table to delete (e.g., 'cr123_widget'). "
+            "Use lowercase. Only custom tables (IsCustomEntity=true) can be deleted."
+        ),
+        min_length=1,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete operation. "
+            "When False (default), the tool returns the current table definition "
+            "as a preview without deleting anything. "
+            "WARNING: Deletion is permanent and removes all table data."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
 

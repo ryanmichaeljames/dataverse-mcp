@@ -8,7 +8,7 @@ import httpx
 from mcp.server.fastmcp import Context
 from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
-from dataverse_mcp._app import mcp
+from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
     AssociateRecordsInput,
@@ -163,7 +163,7 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_associate_records",
     annotations={
         "title": "Associate Records",
@@ -256,7 +256,7 @@ async def dataverse_associate_records(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_disassociate_records",
     annotations={
         "title": "Disassociate Records",
@@ -344,7 +344,7 @@ async def dataverse_disassociate_records(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_merge_records",
     annotations={
         "title": "Merge Records",
@@ -536,7 +536,7 @@ def _parse_batch_response(response_text: str, boundary: str) -> list[dict]:
     return results
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_execute_batch",
     annotations={
         "title": "Execute Batch",

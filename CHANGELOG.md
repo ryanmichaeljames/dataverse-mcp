@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `DATAVERSE_ALLOW_WRITE` and `DATAVERSE_ALLOW_DELETE` environment variables to gate write and delete tool registration at server startup — when not set, those tools are not exposed to the agent at all
+
+### Changed
+- Write tools (`dataverse_associate_records`, `dataverse_merge_records`, `dataverse_execute_batch`, all create/update schema tools) now require `DATAVERSE_ALLOW_WRITE=true` in the MCP server `env` to be registered
+- Delete tools (`dataverse_disassociate_records`, `dataverse_delete_table`, `dataverse_delete_column`, `dataverse_delete_relationship`, `dataverse_delete_choice`, `dataverse_delete_choice_option`) now require `DATAVERSE_ALLOW_DELETE=true` in the MCP server `env` to be registered
+
 ## [1.1.0] - 2026-05-11
 
 ### Added

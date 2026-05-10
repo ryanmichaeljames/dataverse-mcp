@@ -10,7 +10,7 @@ import httpx
 from mcp.server.fastmcp import Context
 from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
-from dataverse_mcp._app import mcp
+from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
     AddChoiceOptionInput,
@@ -988,7 +988,7 @@ def _build_create_table_body(params: CreateTableInput) -> dict:
     }
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_table",
     annotations={
         "title": "Create Table",
@@ -1091,7 +1091,7 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_table",
     annotations={
         "title": "Update Table",
@@ -1217,7 +1217,7 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_table",
     annotations={
         "title": "Delete Table",
@@ -1377,7 +1377,7 @@ _METADATA_HEADERS = {
 }
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_column",
     annotations={
         "title": "Create Column",
@@ -1513,7 +1513,7 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_column",
     annotations={
         "title": "Update Column",
@@ -1609,7 +1609,7 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_column",
     annotations={
         "title": "Delete Column",
@@ -1759,7 +1759,7 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_one_to_many_relationship",
     annotations={
         "title": "Create One-to-Many Relationship",
@@ -1879,7 +1879,7 @@ async def dataverse_create_one_to_many_relationship(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_many_to_many_relationship",
     annotations={
         "title": "Create Many-to-Many Relationship",
@@ -1986,7 +1986,7 @@ async def dataverse_create_many_to_many_relationship(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_multi_table_lookup",
     annotations={
         "title": "Create Multi-Table (Polymorphic) Lookup",
@@ -2105,7 +2105,7 @@ async def dataverse_create_multi_table_lookup(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_relationship",
     annotations={
         "title": "Update Relationship",
@@ -2195,7 +2195,7 @@ async def dataverse_update_relationship(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_relationship",
     annotations={
         "title": "Delete Relationship",
@@ -2362,7 +2362,7 @@ def _build_option_set_target_params(
     }
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_choice",
     annotations={
         "title": "Create Global Choice",
@@ -2460,7 +2460,7 @@ async def dataverse_create_choice(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_choice",
     annotations={
         "title": "Update Global Choice",
@@ -2548,7 +2548,7 @@ async def dataverse_update_choice(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_choice",
     annotations={
         "title": "Delete Global Choice",
@@ -2632,7 +2632,7 @@ async def dataverse_delete_choice(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_add_choice_option",
     annotations={
         "title": "Add Choice Option",
@@ -2725,7 +2725,7 @@ async def dataverse_add_choice_option(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_choice_option",
     annotations={
         "title": "Update Choice Option",
@@ -2816,7 +2816,7 @@ async def dataverse_update_choice_option(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_choice_option",
     annotations={
         "title": "Delete Choice Option",
@@ -2908,7 +2908,7 @@ async def dataverse_delete_choice_option(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_reorder_choice_options",
     annotations={
         "title": "Reorder Choice Options",
@@ -3002,7 +3002,7 @@ async def dataverse_reorder_choice_options(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_publish_customizations",
     annotations={
         "title": "Publish Customizations",

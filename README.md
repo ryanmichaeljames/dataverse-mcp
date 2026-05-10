@@ -57,6 +57,8 @@ This project does not use a `.env` file for normal setup.
 | `AZURE_TENANT_ID` | For `client_secret` | — | Azure AD tenant ID |
 | `AZURE_CLIENT_ID` | For `client_secret` | — | App registration client ID |
 | `AZURE_CLIENT_SECRET` | For `client_secret` | — | App registration client secret |
+| `DATAVERSE_ALLOW_WRITE` | No | `false` | Set to `true` to enable create, update, and mutation tools |
+| `DATAVERSE_ALLOW_DELETE` | No | `false` | Set to `true` to enable delete and disassociate tools |
 
 ### Authentication Methods
 
@@ -134,33 +136,40 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 
 ### Safety Guards
 
-Write and delete tools require an explicit opt-in parameter before they execute. Without it, the tool runs in **preview mode** — it returns the request URL and body that *would* be sent, without making any changes.
+Write and delete tools are disabled by default and must be explicitly enabled via environment variables in your MCP config. When disabled, those tools are not registered and will not appear to the agent at all.
 
-| Parameter | Type | Default | Used by |
-|-----------|------|---------|---------|
-| `allow_write` | boolean | `false` | Create and update tools |
-| `allow_delete` | boolean | `false` | Delete tools |
+| Environment Variable | Default | Controls |
+|---------------------|---------|----------|
+| `DATAVERSE_ALLOW_WRITE` | `false` | Create, update, associate, merge, and batch mutation tools |
+| `DATAVERSE_ALLOW_DELETE` | `false` | Delete and disassociate tools |
 
-**Preview mode** (default — no changes made):
-
-```json
-{
-  "dataverse_url": "https://yourorg.crm.dynamics.com",
-  "logical_name": "cr123_mytable"
-}
-```
-
-**Execute mode** (changes are applied):
+Set them in the `env` block of your MCP server entry:
 
 ```json
 {
-  "dataverse_url": "https://yourorg.crm.dynamics.com",
-  "logical_name": "cr123_mytable",
-  "allow_delete": true
+  "servers": {
+    "dataverse-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "azure_cli",
+        "DATAVERSE_ALLOW_WRITE": "true",
+        "DATAVERSE_ALLOW_DELETE": "true"
+      }
+    }
+  }
 }
 ```
 
-The recommended workflow is to run the tool in preview mode first, confirm the output looks correct, then re-run with the flag set to `true`.
+You can enable each flag independently — for example, set only `DATAVERSE_ALLOW_WRITE=true` to allow creates and updates while keeping deletes disabled.
+
+Even when a write or delete tool is enabled, it still runs in **preview mode** by default. The tool returns the request URL and body that *would* be sent without making any changes. Pass `allow_write: true` or `allow_delete: true` in the tool call parameters to execute.
+
+The recommended workflow:
+1. Omit the parameter to preview the request
+2. Confirm the output looks correct
+3. Re-run with `allow_write: true` or `allow_delete: true` to apply
 
 ## Tools
 

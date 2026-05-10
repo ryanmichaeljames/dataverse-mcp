@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from urllib.parse import quote as _url_quote
+from xml.etree import ElementTree as ET
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -12,8 +13,18 @@ from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 from dataverse_mcp._app import mcp
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
+    AddChoiceOptionInput,
     CheckRelationshipEligibilityInput,
+    CreateChoiceInput,
+    CreateColumnInput,
+    CreateManyToManyRelationshipInput,
+    CreateMultiTableLookupInput,
+    CreateOneToManyRelationshipInput,
     CreateTableInput,
+    DeleteChoiceInput,
+    DeleteChoiceOptionInput,
+    DeleteColumnInput,
+    DeleteRelationshipInput,
     DeleteTableInput,
     GetChoiceInput,
     GetColumnInput,
@@ -24,6 +35,12 @@ from dataverse_mcp.models import (
     ListColumnsInput,
     ListRelationshipsInput,
     ListTablesInput,
+    PublishCustomizationsInput,
+    ReorderChoiceOptionsInput,
+    UpdateChoiceInput,
+    UpdateChoiceOptionInput,
+    UpdateColumnInput,
+    UpdateRelationshipInput,
     UpdateTableInput,
 )
 
@@ -50,6 +67,7 @@ _DEFAULT_COLUMN_SELECT = [
 ]
 
 _DATAVERSE_API_VERSION = "v9.2"
+_CREATE_COLUMN_RESERVED_KEYS = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
 
 
 def _get_client(ctx: Context, dataverse_url: str | None):
@@ -1333,6 +1351,1848 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_table")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Column schema write tools
+# ---------------------------------------------------------------------------
+
+_ATTRIBUTE_TYPE_ODATA_MAP = {
+    "String": "Microsoft.Dynamics.CRM.StringAttributeMetadata",
+    "Integer": "Microsoft.Dynamics.CRM.IntegerAttributeMetadata",
+    "Decimal": "Microsoft.Dynamics.CRM.DecimalAttributeMetadata",
+    "DateTime": "Microsoft.Dynamics.CRM.DateTimeAttributeMetadata",
+    "Boolean": "Microsoft.Dynamics.CRM.BooleanAttributeMetadata",
+    "Lookup": "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+    "Picklist": "Microsoft.Dynamics.CRM.PicklistAttributeMetadata",
+    "MultiSelectPicklist": "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata",
+}
+
+_METADATA_HEADERS = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "OData-MaxVersion": "4.0",
+    "OData-Version": "4.0",
+}
+
+
+@mcp.tool(
+    name="dataverse_create_column",
+    annotations={
+        "title": "Create Column",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> str:
+    """Add a new column (attribute) to a Dataverse table.
+
+    Constructs the correct attribute metadata body based on attribute_type and
+    POSTs it to /EntityDefinitions(LogicalName='{table}')/Attributes.
+
+    Use type_specific_properties to supply type-specific fields such as:
+    - String: {"MaxLength": 100}
+    - Integer: {"MinValue": 0, "MaxValue": 100000}
+    - Decimal: {"Precision": 2}
+    - DateTime: {"Format": "DateOnly"}  (DateOnly | DateAndTime)
+    - Picklist/MultiSelectPicklist: {"OptionSet": {...}}
+
+    When allow_write is False (default), returns a preview of the attribute
+    definition body without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating columns to make the
+    changes visible in the application.
+    """
+    if params.type_specific_properties:
+        conflicting_keys = sorted(
+            _CREATE_COLUMN_RESERVED_KEYS.intersection(params.type_specific_properties)
+        )
+        if conflicting_keys:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "type_specific_properties contains reserved keys that are managed by "
+                    f"this tool: {', '.join(conflicting_keys)}."
+                ),
+            })
+
+    odata_type = _ATTRIBUTE_TYPE_ODATA_MAP[params.attribute_type]
+    body: dict = {
+        "@odata.type": odata_type,
+        "SchemaName": params.schema_name,
+        "DisplayName": _make_label(params.display_name),
+    }
+    if params.required_level is not None:
+        body["RequiredLevel"] = {
+            "@odata.type": "Microsoft.Dynamics.CRM.AttributeRequiredLevelManagedProperty",
+            "Value": params.required_level,
+            "CanBeChanged": True,
+        }
+    if params.type_specific_properties:
+        body.update(params.type_specific_properties)
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "attribute_definition": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')/Attributes",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.headers.get("OData-EntityId", "")
+
+        entity_id = await asyncio.to_thread(_post)
+        logger.info(
+            "Created column %s on table %s", params.schema_name, params.table_logical_name
+        )
+        return json.dumps({
+            "created": True,
+            "table_logical_name": params.table_logical_name,
+            "schema_name": params.schema_name,
+            "entity_id": entity_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning("Timeout in dataverse_create_column — operation may have succeeded: %s", e)
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. The column may "
+                "have been created. Use dataverse_list_columns to verify."
+            ),
+            "table_logical_name": params.table_logical_name,
+            "schema_name": params.schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create column error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_column")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_update_column",
+    annotations={
+        "title": "Update Column",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> str:
+    """Update an existing column's metadata via full PUT replacement.
+
+    The Dataverse metadata API does not support partial updates (PATCH) on
+    attribute definitions. You must provide the complete column definition JSON.
+
+    Recommended workflow:
+    1. Call dataverse_get_column to retrieve the current full definition
+    2. Apply your changes to the returned JSON
+    3. Pass the modified JSON as full_definition to this tool with allow_write=True
+
+    When allow_write is False (default), returns the full_definition as a preview
+    without calling the API.
+
+    Call dataverse_publish_customizations after updating columns.
+    """
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the update operation.",
+            "full_definition": params.full_definition,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    column_enc = _url_quote(params.column_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _put():
+            with httpx.Client(timeout=60.0) as http_client:
+                definition = dict(params.full_definition)
+                definition.pop("@odata.context", None)
+                response = http_client.put(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')"
+                    f"/Attributes(LogicalName='{column_enc}')",
+                    json=definition,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_put)
+        logger.info(
+            "Updated column %s on table %s",
+            params.column_logical_name,
+            params.table_logical_name,
+        )
+        return json.dumps({
+            "updated": True,
+            "table_logical_name": params.table_logical_name,
+            "column_logical_name": params.column_logical_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse update column error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_update_column")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_delete_column",
+    annotations={
+        "title": "Delete Column",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> str:
+    """Permanently delete a custom column and all its data from a table.
+
+    Fetches the current column definition before acting. When allow_delete is
+    False (default), returns the column definition as a preview without
+    deleting anything.
+
+    WARNING: Deletion is permanent and irreversible. All data stored in this
+    column across every record will be lost.
+
+    Call dataverse_publish_customizations after deleting columns.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    column_enc = _url_quote(params.column_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _get_definition():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')"
+                    f"/Attributes(LogicalName='{column_enc}')"
+                    f"?$select=LogicalName,SchemaName,AttributeType,DisplayName,"
+                    f"IsCustomAttribute,IsManaged",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                data.pop("@odata.context", None)
+                return data
+
+        column_def = await asyncio.to_thread(_get_definition)
+
+        if not params.allow_delete:
+            return json.dumps({
+                "preview": True,
+                "message": "Set allow_delete=true to permanently delete this column.",
+                "column": column_def,
+            })
+
+        # Safety check: only allow deletion of custom, unmanaged columns
+        is_custom = column_def.get("IsCustomAttribute", False)
+        is_managed = column_def.get("IsManaged", False)
+        if not is_custom or is_managed:
+            logger.error(
+                "Cannot delete column %s on table %s: IsCustomAttribute=%s, IsManaged=%s",
+                params.column_logical_name,
+                params.table_logical_name,
+                is_custom,
+                is_managed,
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Cannot delete column '{params.column_logical_name}' on table "
+                    f"'{params.table_logical_name}': only custom, unmanaged columns "
+                    f"can be deleted (IsCustomAttribute={is_custom}, IsManaged={is_managed})."
+                ),
+            })
+
+        def _delete():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.delete(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')"
+                    f"/Attributes(LogicalName='{column_enc}')",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_delete)
+        logger.info(
+            "Deleted column %s from table %s",
+            params.column_logical_name,
+            params.table_logical_name,
+        )
+        return json.dumps({
+            "deleted": True,
+            "table_logical_name": params.table_logical_name,
+            "column_logical_name": params.column_logical_name,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning("Timeout in dataverse_delete_column — operation may have succeeded: %s", e)
+        return json.dumps({
+            "error": True,
+            "deleted": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. The column may "
+                "have been deleted. Use dataverse_list_columns to verify."
+            ),
+            "table_logical_name": params.table_logical_name,
+            "column_logical_name": params.column_logical_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse delete column error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_delete_column")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Relationship schema write tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="dataverse_create_one_to_many_relationship",
+    annotations={
+        "title": "Create One-to-Many Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_one_to_many_relationship(
+    params: CreateOneToManyRelationshipInput, ctx: Context
+) -> str:
+    """Create a 1:N relationship between two tables.
+
+    This simultaneously creates the lookup column on the referencing (many) side.
+    Use dataverse_check_relationship_eligibility before calling this tool to
+    confirm the tables can participate in the relationship.
+
+    When allow_write is False (default), returns a preview of the relationship
+    definition body without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating relationships.
+    """
+    body = {
+        "@odata.type": "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
+        "SchemaName": params.schema_name,
+        "ReferencedEntity": params.referenced_entity,
+        "ReferencingEntity": params.referencing_entity,
+        "CascadeConfiguration": {
+            "Assign": "NoCascade",
+            "Delete": "RemoveLink",
+            "Merge": "NoCascade",
+            "Reparent": "NoCascade",
+            "Share": "NoCascade",
+            "Unshare": "NoCascade",
+        },
+        "Lookup": {
+            "@odata.type": "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+            "SchemaName": params.lookup_schema_name,
+            "DisplayName": _make_label(params.lookup_display_name),
+        },
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "relationship_definition": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.headers.get("OData-EntityId", "")
+
+        entity_id = await asyncio.to_thread(_post)
+        logger.info("Created 1:N relationship %s", params.schema_name)
+        return json.dumps({
+            "created": True,
+            "schema_name": params.schema_name,
+            "entity_id": entity_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_create_one_to_many_relationship — operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The relationship may have been created. "
+                "Use dataverse_get_relationship to verify."
+            ),
+            "schema_name": params.schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create 1:N relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_one_to_many_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_create_many_to_many_relationship",
+    annotations={
+        "title": "Create Many-to-Many Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_many_to_many_relationship(
+    params: CreateManyToManyRelationshipInput, ctx: Context
+) -> str:
+    """Create an N:N relationship and its intersect (junction) table between two tables.
+
+    Use dataverse_check_relationship_eligibility before calling this tool to
+    confirm both tables can participate in a many-to-many relationship.
+
+    When allow_write is False (default), returns a preview of the relationship
+    definition body without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating relationships.
+    """
+    body = {
+        "@odata.type": "Microsoft.Dynamics.CRM.ManyToManyRelationshipMetadata",
+        "SchemaName": params.schema_name,
+        "Entity1LogicalName": params.entity1_logical_name,
+        "Entity2LogicalName": params.entity2_logical_name,
+        "IntersectEntityName": params.intersect_entity_name,
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "relationship_definition": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.headers.get("OData-EntityId", "")
+
+        entity_id = await asyncio.to_thread(_post)
+        logger.info("Created N:N relationship %s", params.schema_name)
+        return json.dumps({
+            "created": True,
+            "schema_name": params.schema_name,
+            "entity_id": entity_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_create_many_to_many_relationship — operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The relationship may have been created. "
+                "Use dataverse_get_relationship to verify."
+            ),
+            "schema_name": params.schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create N:N relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_many_to_many_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_create_multi_table_lookup",
+    annotations={
+        "title": "Create Multi-Table (Polymorphic) Lookup",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_multi_table_lookup(
+    params: CreateMultiTableLookupInput, ctx: Context
+) -> str:
+    """Create a polymorphic lookup column that can reference multiple tables.
+
+    Uses the CreatePolymorphicLookupAttribute bound action. The lookup column
+    is added to owning_entity and can point to any of the target_entities.
+
+    When allow_write is False (default), returns a preview of the request body
+    without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating lookup columns.
+    """
+    relationships = [
+        {
+            "@odata.type": "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
+            "ReferencedEntity": target,
+            "ReferencingEntity": params.owning_entity,
+            "SchemaName": f"{params.lookup_schema_name}_{target}",
+        }
+        for target in params.target_entities
+    ]
+    lookup = {
+        "@odata.type": "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+        "SchemaName": params.lookup_schema_name,
+        "DisplayName": _make_label(params.lookup_display_name),
+    }
+    body = {
+        "OneToManyRelationships": relationships,
+        "Lookup": lookup,
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "request_body": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/CreatePolymorphicLookupAttribute",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        result = await asyncio.to_thread(_post)
+        logger.info("Created polymorphic lookup %s", params.lookup_schema_name)
+        return json.dumps({
+            "created": True,
+            "lookup_schema_name": params.lookup_schema_name,
+            "result": result,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_create_multi_table_lookup — operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The polymorphic lookup may have been created. "
+                "Use dataverse_list_columns to verify."
+            ),
+            "lookup_schema_name": params.lookup_schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create polymorphic lookup error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_multi_table_lookup")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_update_relationship",
+    annotations={
+        "title": "Update Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_relationship(
+    params: UpdateRelationshipInput, ctx: Context
+) -> str:
+    """Update an existing relationship's cascade behavior or configuration.
+
+    The Dataverse metadata API requires a full PUT — partial updates are not
+    supported on RelationshipDefinitions.
+
+    Recommended workflow:
+    1. Call dataverse_get_relationship to retrieve the current full definition
+    2. Apply your changes (e.g., update CascadeConfiguration)
+    3. Pass the modified JSON as full_definition with allow_write=True
+
+    When allow_write is False (default), returns the full_definition as a
+    preview without calling the API.
+
+    Call dataverse_publish_customizations after updating relationships.
+    """
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the update operation.",
+            "full_definition": params.full_definition,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _put():
+            definition = dict(params.full_definition)
+            definition.pop("@odata.context", None)
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.put(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/RelationshipDefinitions({params.metadata_id})",
+                    json=definition,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_put)
+        logger.info("Updated relationship %s", params.metadata_id)
+        return json.dumps({
+            "updated": True,
+            "metadata_id": params.metadata_id,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse update relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_update_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_delete_relationship",
+    annotations={
+        "title": "Delete Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_relationship(
+    params: DeleteRelationshipInput, ctx: Context
+) -> str:
+    """Delete a custom relationship by MetadataId.
+
+    When allow_delete is False (default), returns a preview of what would be
+    deleted without calling the API.
+
+    WARNING: Deletion is permanent. For 1:N relationships, the associated
+    lookup column on the referencing entity is also deleted.
+
+    Call dataverse_publish_customizations after deleting relationships.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _get_definition():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/RelationshipDefinitions({params.metadata_id})",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                data.pop("@odata.context", None)
+                return data
+
+        try:
+            relationship_def = await asyncio.to_thread(_get_definition)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return json.dumps({
+                    "error": True,
+                    "message": (
+                        f"Relationship with MetadataId '{params.metadata_id}' was not found "
+                        "or is not accessible."
+                    ),
+                })
+            raise
+
+        if not params.allow_delete:
+            return json.dumps({
+                "preview": True,
+                "message": (
+                    "Set allow_delete=true to permanently delete this relationship. "
+                    "For 1:N relationships, the lookup column will also be deleted."
+                ),
+                "relationship": relationship_def,
+            })
+
+        is_custom = relationship_def.get("IsCustomRelationship", False)
+        is_managed = relationship_def.get("IsManaged", False)
+        if not is_custom or is_managed:
+            logger.error(
+                "Cannot delete relationship %s: IsCustomRelationship=%s, IsManaged=%s",
+                params.metadata_id,
+                is_custom,
+                is_managed,
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Cannot delete relationship '{params.metadata_id}': only custom, "
+                    f"unmanaged relationships can be deleted "
+                    f"(IsCustomRelationship={is_custom}, IsManaged={is_managed})."
+                ),
+            })
+
+        def _delete():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.delete(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/RelationshipDefinitions({params.metadata_id})",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_delete)
+        logger.info("Deleted relationship %s", params.metadata_id)
+        return json.dumps({
+            "deleted": True,
+            "metadata_id": params.metadata_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_delete_relationship — operation may have succeeded: %s", e
+        )
+        return json.dumps({
+            "error": True,
+            "deleted": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The relationship may have been deleted. "
+                "Use dataverse_get_relationship to verify."
+            ),
+            "metadata_id": params.metadata_id,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse delete relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_delete_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Choice (option set) write tools
+# ---------------------------------------------------------------------------
+
+
+def _build_option_set_target_params(
+    option_set_name: str | None,
+    entity_logical_name: str | None,
+    attribute_logical_name: str | None,
+) -> dict:
+    """Return OData query params for targeting a global or local choice."""
+    if option_set_name:
+        return {"OptionSetName": option_set_name}
+    return {
+        "EntityLogicalName": entity_logical_name,
+        "AttributeLogicalName": attribute_logical_name,
+    }
+
+
+@mcp.tool(
+    name="dataverse_create_choice",
+    annotations={
+        "title": "Create Global Choice",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_choice(
+    params: CreateChoiceInput, ctx: Context
+) -> str:
+    """Create a new global choice (option set) in Dataverse.
+
+    Global choices can be reused across multiple columns. After creating, use
+    dataverse_publish_customizations to make the choice visible in the UI.
+
+    When allow_write is False (default), returns a preview of the request body
+    without calling the API. Set allow_write=True to execute.
+    """
+    options_body = [
+        {
+            "Value": opt.value,
+            "Label": _make_label(opt.label),
+        }
+        for opt in params.options
+    ]
+    body = {
+        "@odata.type": "Microsoft.Dynamics.CRM.OptionSetMetadata",
+        "Name": params.name,
+        "DisplayName": _make_label(params.display_name),
+        "IsGlobal": True,
+        "OptionSetType": "Picklist",
+        "Options": options_body,
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "request_body": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.headers.get("OData-EntityId", "")
+
+        entity_id = await asyncio.to_thread(_post)
+        logger.info("Created global choice %s", params.name)
+        return json.dumps({
+            "created": True,
+            "name": params.name,
+            "entity_id": entity_id,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create choice error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_choice")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_update_choice",
+    annotations={
+        "title": "Update Global Choice",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_choice(
+    params: UpdateChoiceInput, ctx: Context
+) -> str:
+    """Update an existing global choice via full PUT replacement.
+
+    The Dataverse metadata API requires a full PUT — partial updates are not
+    supported on GlobalOptionSetDefinitions.
+
+    Recommended workflow:
+    1. Call dataverse_get_choice to retrieve the current full definition
+    2. Apply your changes (e.g., add or reorder options)
+    3. Pass the modified JSON as full_definition with allow_write=True
+
+    To update individual option labels, use dataverse_update_choice_option.
+    When allow_write is False (default), returns full_definition as a preview.
+    """
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the update operation.",
+            "full_definition": params.full_definition,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _put():
+            definition = dict(params.full_definition)
+            definition.pop("@odata.context", None)
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.put(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/GlobalOptionSetDefinitions({params.metadata_id})",
+                    json=definition,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_put)
+        logger.info("Updated global choice %s", params.metadata_id)
+        return json.dumps({
+            "updated": True,
+            "metadata_id": params.metadata_id,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse update choice error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_update_choice")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_delete_choice",
+    annotations={
+        "title": "Delete Global Choice",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_choice(
+    params: DeleteChoiceInput, ctx: Context
+) -> str:
+    """Delete a global choice (option set) by logical name.
+
+    Confirm no columns reference the choice before deleting — columns using it
+    must be removed first. When allow_delete is False (default), returns a
+    preview without calling the API. Set allow_delete=True to execute.
+
+    Call dataverse_publish_customizations after deleting global choices.
+    """
+    if not params.allow_delete:
+        return json.dumps({
+            "preview": True,
+            "message": (
+                "Set allow_delete=true to permanently delete this global choice. "
+                "Ensure no columns reference it first."
+            ),
+            "name": params.name,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _delete():
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.delete(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/GlobalOptionSetDefinitions(Name='{_url_quote(params.name)}')",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_delete)
+        logger.info("Deleted global choice %s", params.name)
+        return json.dumps({
+            "deleted": True,
+            "name": params.name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse delete choice error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_delete_choice")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_add_choice_option",
+    annotations={
+        "title": "Add Choice Option",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_add_choice_option(
+    params: AddChoiceOptionInput, ctx: Context
+) -> str:
+    """Add a new option to a global or local choice column.
+
+    Provide option_set_name for a global choice, or entity_logical_name +
+    attribute_logical_name for a local (column-specific) choice — not both.
+
+    When allow_write is False (default), returns a preview of the request body.
+    Set allow_write=True to execute. Call dataverse_publish_customizations after.
+    """
+    target_params = _build_option_set_target_params(
+        params.option_set_name, params.entity_logical_name, params.attribute_logical_name
+    )
+    body: dict = {
+        **target_params,
+        "Label": _make_label(params.label),
+        "SolutionUniqueName": None,
+    }
+    if params.value is not None:
+        body["Value"] = params.value
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the insert operation.",
+            "request_body": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/InsertOptionValue",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        result = await asyncio.to_thread(_post)
+        logger.info("Added option to choice (target=%s)", target_params)
+        return json.dumps({
+            "created": True,
+            "value": result.get("NewOptionValue"),
+            "label": params.label,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse add choice option error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_add_choice_option")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_update_choice_option",
+    annotations={
+        "title": "Update Choice Option",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_choice_option(
+    params: UpdateChoiceOptionInput, ctx: Context
+) -> str:
+    """Update the display label of an existing option in a global or local choice.
+
+    Provide option_set_name for a global choice, or entity_logical_name +
+    attribute_logical_name for a local choice — not both.
+
+    When allow_write is False (default), returns a preview of the request body.
+    Set allow_write=True to execute. Call dataverse_publish_customizations after.
+    """
+    target_params = _build_option_set_target_params(
+        params.option_set_name, params.entity_logical_name, params.attribute_logical_name
+    )
+    body = {
+        **target_params,
+        "Value": params.value,
+        "Label": _make_label(params.label),
+        "MergeLabels": params.merge_labels,
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the update operation.",
+            "request_body": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/UpdateOptionValue",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_post)
+        logger.info("Updated option %d in choice (target=%s)", params.value, target_params)
+        return json.dumps({
+            "updated": True,
+            "value": params.value,
+            "label": params.label,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse update choice option error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_update_choice_option")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_delete_choice_option",
+    annotations={
+        "title": "Delete Choice Option",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_choice_option(
+    params: DeleteChoiceOptionInput, ctx: Context
+) -> str:
+    """Remove a specific option value from a global or local choice.
+
+    Provide option_set_name for a global choice, or entity_logical_name +
+    attribute_logical_name for a local choice — not both.
+
+    WARNING: Existing records with this option value will retain the integer code
+    but lose the associated label. When allow_delete is False (default), returns
+    a preview. Set allow_delete=True to execute. Call dataverse_publish_customizations after.
+    """
+    target_params = _build_option_set_target_params(
+        params.option_set_name, params.entity_logical_name, params.attribute_logical_name
+    )
+    body = {
+        **target_params,
+        "Value": params.value,
+    }
+
+    if not params.allow_delete:
+        return json.dumps({
+            "preview": True,
+            "message": (
+                "Set allow_delete=true to permanently remove this option. "
+                "Records with this value will retain the integer code but lose the label."
+            ),
+            "request_body": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/DeleteOptionValue",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_post)
+        logger.info("Deleted option %d from choice (target=%s)", params.value, target_params)
+        return json.dumps({
+            "deleted": True,
+            "value": params.value,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse delete choice option error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_delete_choice_option")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_reorder_choice_options",
+    annotations={
+        "title": "Reorder Choice Options",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_reorder_choice_options(
+    params: ReorderChoiceOptionsInput, ctx: Context
+) -> str:
+    """Reorder the options of a global or local choice.
+
+    Provide option_set_name for a global choice, or entity_logical_name +
+    attribute_logical_name for a local choice — not both.
+
+    The values list must include every existing option value in the desired
+    display order. When allow_write is False (default), returns a preview.
+    Set allow_write=True to execute. Call dataverse_publish_customizations after.
+    """
+    target_params = _build_option_set_target_params(
+        params.option_set_name, params.entity_logical_name, params.attribute_logical_name
+    )
+    body = {
+        **target_params,
+        "Values": params.values,
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the reorder operation.",
+            "request_body": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/OrderOption",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_post)
+        logger.info("Reordered choice options (target=%s)", target_params)
+        return json.dumps({
+            "reordered": True,
+            "values": params.values,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse reorder choice options error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_reorder_choice_options")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Publish tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="dataverse_publish_customizations",
+    annotations={
+        "title": "Publish Customizations",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_publish_customizations(
+    params: PublishCustomizationsInput, ctx: Context
+) -> str:
+    """Publish Dataverse customizations to make schema changes visible in the UI.
+
+    After creating or modifying tables, columns, relationships, or choices,
+    customizations must be published before they appear in model-driven apps.
+
+    Two modes:
+    - Targeted: provide entities, option_sets, and/or relationships lists to
+      publish only those components. Calls PublishXml with ParameterXml.
+    - All: set publish_all=True to publish every unpublished customization in
+      the environment via PublishAllXml. May take several minutes.
+
+    When allow_write is False (default), returns a preview of the ParameterXml
+    that would be sent without calling the API.
+    """
+    if params.publish_all:
+        if not params.allow_write:
+            return json.dumps({
+                "preview": True,
+                "message": "Set allow_write=true to execute PublishAllXml.",
+                "action": "PublishAllXml",
+            })
+
+        app_ctx = _get_app_ctx(ctx)
+        base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+        if not base_url:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "No Dataverse environment URL was provided. Supply dataverse_url "
+                    "on the tool input, or set DATAVERSE_URL as a fallback."
+                ),
+            })
+
+        scope = f"{base_url}/.default"
+
+        try:
+            bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+            def _post_all():
+                with httpx.Client(timeout=600.0) as http_client:
+                    response = http_client.post(
+                        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishAllXml",
+                        headers={
+                            "Authorization": f"Bearer {bearer_token}",
+                            **_METADATA_HEADERS,
+                        },
+                    )
+                    response.raise_for_status()
+
+            await asyncio.to_thread(_post_all)
+            logger.info("Published all customizations")
+            return json.dumps({"published": True, "action": "PublishAllXml"})
+        except httpx.TimeoutException as e:
+            logger.warning(
+                "Timeout in dataverse_publish_customizations (PublishAllXml) — "
+                "operation may have succeeded: %s",
+                e,
+            )
+            return json.dumps({
+                "error": True,
+                "published": None,
+                "is_transient": True,
+                "message": (
+                    "The request timed out. PublishAllXml may have succeeded in the background. "
+                    "Check your model-driven app to verify."
+                ),
+            })
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Dataverse PublishAllXml error: %s (status=%d)",
+                e.response.text,
+                e.response.status_code,
+            )
+            return json.dumps({
+                "error": True,
+                "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            })
+        except Exception as e:
+            logger.exception("Unexpected error in dataverse_publish_customizations (PublishAllXml)")
+            return json.dumps({
+                "error": True,
+                "message": f"Unexpected error: {type(e).__name__}: {e}",
+            })
+
+    # Targeted PublishXml
+    root = ET.Element("importexportxml")
+
+    entities_node = ET.SubElement(root, "entities")
+    for entity_name in params.entities:
+        entity_node = ET.SubElement(entities_node, "entity")
+        entity_node.text = entity_name
+
+    option_sets_node = ET.SubElement(root, "optionsets")
+    for option_set_name in params.option_sets:
+        option_set_node = ET.SubElement(option_sets_node, "optionset")
+        option_set_node.text = option_set_name
+
+    relationships_node = ET.SubElement(root, "relationships")
+    for relationship_name in params.relationships:
+        relationship_node = ET.SubElement(relationships_node, "relationship")
+        relationship_node.text = relationship_name
+
+    parameter_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute PublishXml with this ParameterXml.",
+            "action": "PublishXml",
+            "parameter_xml": parameter_xml,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post_xml():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
+                    json={"ParameterXml": parameter_xml},
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_post_xml)
+        logger.info("Published customizations: %s", parameter_xml)
+        return json.dumps({
+            "published": True,
+            "action": "PublishXml",
+            "parameter_xml": parameter_xml,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_publish_customizations (PublishXml) — "
+            "operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "published": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. PublishXml may have succeeded. "
+                "Check your model-driven app to verify."
+            ),
+            "parameter_xml": parameter_xml,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse PublishXml error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_publish_customizations (PublishXml)")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

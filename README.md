@@ -139,6 +139,22 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute (`allow_write` safety guard) |
 | `dataverse_update_table` | Update an existing table's display name or description (`allow_write` safety guard) |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data (`allow_delete` safety guard) |
+| `dataverse_create_column` | Add a new column to a table with typed attribute metadata and display name (`allow_write` safety guard) |
+| `dataverse_update_column` | Update an existing column via full PUT replacement; fetch current definition with `dataverse_get_column` first (`allow_write` safety guard) |
+| `dataverse_delete_column` | Permanently delete a custom column and all its data from a table (`allow_delete` safety guard) |
+| `dataverse_create_one_to_many_relationship` | Create a 1:N relationship and its lookup column on the referencing table (`allow_write` safety guard) |
+| `dataverse_create_many_to_many_relationship` | Create an N:N relationship and its intersect (junction) table (`allow_write` safety guard) |
+| `dataverse_create_multi_table_lookup` | Create a polymorphic lookup column that references multiple tables (`allow_write` safety guard) |
+| `dataverse_update_relationship` | Update an existing relationship via full PUT; fetch current definition with `dataverse_get_relationship` first (`allow_write` safety guard) |
+| `dataverse_delete_relationship` | Delete a custom relationship by MetadataId (`allow_delete` safety guard) |
+| `dataverse_create_choice` | Create a new global choice with initial options (`allow_write` safety guard) |
+| `dataverse_update_choice` | Update an existing global choice via full PUT; fetch current definition with `dataverse_get_choice` first (`allow_write` safety guard) |
+| `dataverse_delete_choice` | Delete a global choice by logical name; ensure no columns reference it first (`allow_delete` safety guard) |
+| `dataverse_add_choice_option` | Add a new option to a global or local choice (`allow_write` safety guard) |
+| `dataverse_update_choice_option` | Update the display label of an existing option in a global or local choice (`allow_write` safety guard) |
+| `dataverse_delete_choice_option` | Remove a specific option value from a global or local choice (`allow_delete` safety guard) |
+| `dataverse_reorder_choice_options` | Reorder all options of a global or local choice (`allow_write` safety guard) |
+| `dataverse_publish_customizations` | Publish schema changes (tables, choices, relationships) via `PublishXml` or all unpublished changes via `PublishAllXml` (`allow_write` safety guard) |
 | `dataverse_list_solutions` | List solutions with optional OData filter, select, and top |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |

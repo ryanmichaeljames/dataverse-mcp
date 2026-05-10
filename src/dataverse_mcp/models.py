@@ -609,6 +609,777 @@ class DeleteTableInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Column schema write tools
+# ---------------------------------------------------------------------------
+
+_COLUMN_ATTRIBUTE_TYPES = (
+    "String",
+    "Integer",
+    "Decimal",
+    "DateTime",
+    "Boolean",
+    "Lookup",
+    "Picklist",
+    "MultiSelectPicklist",
+)
+
+_COLUMN_REQUIRED_LEVELS = ("None", "Recommended", "ApplicationRequired")
+
+
+class CreateColumnInput(DataverseEnvironmentInput):
+    """Input for adding a new column (attribute) to a Dataverse table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table to add the column to "
+            "(e.g., 'account', 'cr123_widget')."
+        ),
+        min_length=1,
+    )
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the new column. Must include the publisher prefix "
+            "(e.g., 'cr123_Description', 'new_Priority'). The logical name is "
+            "derived as the lowercase version of this value."
+        ),
+        min_length=3,
+    )
+    attribute_type: str = Field(
+        ...,
+        description=(
+            "Column type. One of: String, Integer, Decimal, DateTime, Boolean, "
+            "Lookup, Picklist, MultiSelectPicklist."
+        ),
+    )
+    display_name: str = Field(
+        ...,
+        description="Display label for the column shown in the UI.",
+        min_length=1,
+    )
+    required_level: str | None = Field(
+        default="None",
+        description=(
+            "Whether the column is required. One of: 'None' (optional), "
+            "'Recommended', 'ApplicationRequired' (required). Defaults to 'None'."
+        ),
+    )
+    type_specific_properties: dict | None = Field(
+        default=None,
+        description=(
+            "Optional dict of type-specific properties merged into the attribute "
+            "definition body. Examples: String → {'MaxLength': 100}; "
+            "Integer → {'MinValue': 0, 'MaxValue': 100000}; "
+            "Decimal → {'Precision': 2}; DateTime → {'Format': 'DateOnly'}; "
+            "Boolean → {'DefaultValue': false}; "
+            "Picklist → {'OptionSet': {'@odata.type': '...OptionSetMetadata', 'Options': [...]}}."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), the tool returns a preview of the attribute "
+            "definition that would be posted without calling the API."
+        ),
+    )
+
+    @field_validator("attribute_type")
+    @classmethod
+    def validate_attribute_type(cls, v: str) -> str:
+        if v not in _COLUMN_ATTRIBUTE_TYPES:
+            raise ValueError(
+                f"attribute_type must be one of: {', '.join(_COLUMN_ATTRIBUTE_TYPES)}"
+            )
+        return v
+
+    @field_validator("required_level")
+    @classmethod
+    def validate_required_level(cls, v: str | None) -> str | None:
+        if v is not None and v not in _COLUMN_REQUIRED_LEVELS:
+            raise ValueError(
+                f"required_level must be one of: {', '.join(_COLUMN_REQUIRED_LEVELS)}"
+            )
+        return v
+
+
+class UpdateColumnInput(DataverseEnvironmentInput):
+    """Input for updating an existing column via full PUT replacement."""
+
+    table_logical_name: str = Field(
+        ...,
+        description="Logical name of the table that owns the column.",
+        min_length=1,
+    )
+    column_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the column to update (e.g., 'cr123_description'). "
+            "Fetch the current definition first with dataverse_get_column."
+        ),
+        min_length=1,
+    )
+    full_definition: dict = Field(
+        ...,
+        description=(
+            "Complete attribute definition JSON obtained from dataverse_get_column. "
+            "Apply your changes to this object before passing it here. The Dataverse "
+            "metadata API requires a full PUT — partial updates are not supported."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the PUT. "
+            "When False (default), returns the full_definition as a preview without "
+            "calling the API."
+        ),
+    )
+
+
+class DeleteColumnInput(DataverseEnvironmentInput):
+    """Input for permanently deleting a custom column from a table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description="Logical name of the table that owns the column.",
+        min_length=1,
+    )
+    column_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the column to delete (e.g., 'cr123_description'). "
+            "Only custom columns can be deleted."
+        ),
+        min_length=1,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), fetches and returns the current column definition "
+            "as a preview without deleting anything. "
+            "WARNING: Deletion is permanent and removes all column data."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Relationship schema write tools
+# ---------------------------------------------------------------------------
+
+
+class CreateOneToManyRelationshipInput(DataverseEnvironmentInput):
+    """Input for creating a 1:N relationship between two tables."""
+
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the relationship (e.g., 'cr123_account_contacts'). "
+            "Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    referenced_entity: str = Field(
+        ...,
+        description=(
+            "Logical name of the 'one' (referenced/parent) side table "
+            "(e.g., 'account')."
+        ),
+        min_length=1,
+    )
+    referencing_entity: str = Field(
+        ...,
+        description=(
+            "Logical name of the 'many' (referencing/child) side table "
+            "(e.g., 'contact'). A lookup column is created on this table."
+        ),
+        min_length=1,
+    )
+    lookup_schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the lookup column created on the referencing entity "
+            "(e.g., 'cr123_AccountId'). Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    lookup_display_name: str = Field(
+        ...,
+        description="Display label for the lookup column.",
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the relationship "
+            "definition body without calling the API."
+        ),
+    )
+
+
+class CreateManyToManyRelationshipInput(DataverseEnvironmentInput):
+    """Input for creating an N:N relationship and its intersect (junction) table."""
+
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the relationship (e.g., 'cr123_account_contact'). "
+            "Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    entity1_logical_name: str = Field(
+        ...,
+        description="Logical name of the first entity in the many-to-many relationship.",
+        min_length=1,
+    )
+    entity2_logical_name: str = Field(
+        ...,
+        description="Logical name of the second entity in the many-to-many relationship.",
+        min_length=1,
+    )
+    intersect_entity_name: str = Field(
+        ...,
+        description=(
+            "Name for the junction (intersect) table that Dataverse creates to "
+            "store the relationship links (e.g., 'cr123_account_contact')."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the relationship "
+            "definition body without calling the API."
+        ),
+    )
+
+
+class CreateMultiTableLookupInput(DataverseEnvironmentInput):
+    """Input for creating a polymorphic (multi-table) lookup column."""
+
+    lookup_schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the polymorphic lookup column "
+            "(e.g., 'cr123_Customer'). Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    lookup_display_name: str = Field(
+        ...,
+        description="Display label for the polymorphic lookup column.",
+        min_length=1,
+    )
+    owning_entity: str = Field(
+        ...,
+        description=(
+            "Logical name of the table that will own the lookup column "
+            "(e.g., 'cr123_order')."
+        ),
+        min_length=1,
+    )
+    target_entities: list[str] = Field(
+        ...,
+        description=(
+            "List of table logical names the lookup can reference "
+            "(e.g., ['account', 'contact']). Must contain at least one entry."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the request body "
+            "without calling the API."
+        ),
+    )
+
+
+class UpdateRelationshipInput(DataverseEnvironmentInput):
+    """Input for updating an existing relationship via full PUT replacement."""
+
+    metadata_id: str = Field(
+        ...,
+        description=(
+            "MetadataId GUID of the relationship to update. "
+            "Obtain via dataverse_get_relationship."
+        ),
+        min_length=36,
+    )
+    full_definition: dict = Field(
+        ...,
+        description=(
+            "Complete relationship definition JSON obtained from "
+            "dataverse_get_relationship. Apply your changes before passing here. "
+            "The Dataverse metadata API requires a full PUT."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the PUT. "
+            "When False (default), returns the full_definition as a preview "
+            "without calling the API."
+        ),
+    )
+
+    @field_validator("metadata_id")
+    @classmethod
+    def validate_metadata_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("metadata_id must be a valid GUID")
+        return v
+
+
+class DeleteRelationshipInput(DataverseEnvironmentInput):
+    """Input for permanently deleting a custom relationship."""
+
+    metadata_id: str = Field(
+        ...,
+        description=(
+            "MetadataId GUID of the relationship to delete. "
+            "Obtain via dataverse_get_relationship."
+        ),
+        min_length=36,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), returns the metadata_id as a preview "
+            "without deleting anything. "
+            "WARNING: Deletion is permanent and removes the relationship and "
+            "the associated lookup column."
+        ),
+    )
+
+    @field_validator("metadata_id")
+    @classmethod
+    def validate_metadata_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("metadata_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Choice (option set) write tools
+# ---------------------------------------------------------------------------
+
+
+class ChoiceOptionItem(BaseModel):
+    """A single option value and label for a choice column."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    value: int = Field(
+        ...,
+        description="Integer option code (e.g., 100000000).",
+    )
+    label: str = Field(
+        ...,
+        description="Display label for the option.",
+        min_length=1,
+    )
+
+
+class CreateChoiceInput(DataverseEnvironmentInput):
+    """Input for creating a new global choice (option set)."""
+
+    name: str = Field(
+        ...,
+        description=(
+            "Logical name for the global choice with publisher prefix "
+            "(e.g., 'cr123_mychoice'). Used to reference the choice in columns."
+        ),
+        min_length=3,
+    )
+    display_name: str = Field(
+        ...,
+        description="Display name for the global choice shown in the UI.",
+        min_length=1,
+    )
+    options: list[ChoiceOptionItem] = Field(
+        ...,
+        description=(
+            "Initial list of options. Each option requires 'value' (int) and "
+            "'label' (str). Example: [{'value': 100000000, 'label': 'Option A'}]."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the choice definition "
+            "body without calling the API."
+        ),
+    )
+
+
+class UpdateChoiceInput(DataverseEnvironmentInput):
+    """Input for updating an existing global choice via full PUT replacement."""
+
+    metadata_id: str = Field(
+        ...,
+        description=(
+            "MetadataId GUID of the global choice to update. "
+            "Obtain via dataverse_get_choice."
+        ),
+        min_length=36,
+    )
+    full_definition: dict = Field(
+        ...,
+        description=(
+            "Complete OptionSetMetadata JSON obtained from dataverse_get_choice. "
+            "Apply your changes before passing here. The Dataverse metadata API "
+            "requires a full PUT. To update individual option labels, use "
+            "dataverse_update_choice_option instead."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the PUT. "
+            "When False (default), returns the full_definition as a preview "
+            "without calling the API."
+        ),
+    )
+
+    @field_validator("metadata_id")
+    @classmethod
+    def validate_metadata_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("metadata_id must be a valid GUID")
+        return v
+
+
+class DeleteChoiceInput(DataverseEnvironmentInput):
+    """Input for deleting a global choice by logical name."""
+
+    name: str = Field(
+        ...,
+        description=(
+            "Logical name of the global choice to delete "
+            "(e.g., 'cr123_mychoice'). Confirm no columns reference it first "
+            "via dataverse_get_choice."
+        ),
+        min_length=1,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), returns the name as a preview without "
+            "deleting anything."
+        ),
+    )
+
+
+class AddChoiceOptionInput(DataverseEnvironmentInput):
+    """Input for adding a new option to a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice to add the option to "
+            "(e.g., 'cr123_mychoice'). Provide this OR entity_logical_name + "
+            "attribute_logical_name for a local choice — not both."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the table that owns the local choice column. "
+            "Required when adding to a local (column-specific) choice."
+        ),
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the local choice column. "
+            "Required when entity_logical_name is provided."
+        ),
+    )
+    label: str = Field(
+        ...,
+        description="Display label for the new option.",
+        min_length=1,
+    )
+    value: int | None = Field(
+        default=None,
+        description=(
+            "Integer code for the new option. If omitted, Dataverse assigns one "
+            "automatically. Custom option values typically start at 100000000."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the insert. "
+            "When False (default), returns a preview of the request body "
+            "without calling the API."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "AddChoiceOptionInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+class UpdateChoiceOptionInput(DataverseEnvironmentInput):
+    """Input for updating the label of an existing option in a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice (e.g., 'cr123_mychoice'). "
+            "Provide this OR entity_logical_name + attribute_logical_name."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the table for a local choice column.",
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the local choice column.",
+    )
+    value: int = Field(
+        ...,
+        description="Integer code of the option to update.",
+    )
+    label: str = Field(
+        ...,
+        description="New display label for the option.",
+        min_length=1,
+    )
+    merge_labels: bool = Field(
+        default=False,
+        description=(
+            "When True, preserves labels for other languages and only updates "
+            "the provided label. When False (default), replaces all language labels."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the update. "
+            "When False (default), returns a preview of the request body."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "UpdateChoiceOptionInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+class DeleteChoiceOptionInput(DataverseEnvironmentInput):
+    """Input for removing a specific option value from a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice (e.g., 'cr123_mychoice'). "
+            "Provide this OR entity_logical_name + attribute_logical_name."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the table for a local choice column.",
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the local choice column.",
+    )
+    value: int = Field(
+        ...,
+        description="Integer code of the option to remove.",
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), returns a preview of the request body."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "DeleteChoiceOptionInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+class ReorderChoiceOptionsInput(DataverseEnvironmentInput):
+    """Input for reordering all options in a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice (e.g., 'cr123_mychoice'). "
+            "Provide this OR entity_logical_name + attribute_logical_name."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the table for a local choice column.",
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the local choice column.",
+    )
+    values: list[int] = Field(
+        ...,
+        description=(
+            "Ordered list of all integer option codes in the desired display order. "
+            "Must include every existing option value."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the reorder. "
+            "When False (default), returns a preview of the request body."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "ReorderChoiceOptionsInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
+# Publish tools
+# ---------------------------------------------------------------------------
+
+
+class PublishCustomizationsInput(DataverseEnvironmentInput):
+    """Input for publishing Dataverse customizations."""
+
+    entities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Logical names of tables to publish (e.g., ['account', 'contact']). "
+            "Provide this to publish only specific tables and their components."
+        ),
+    )
+    option_sets: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Logical names of global choices to publish (e.g., ['cr123_mychoice']). "
+            "Provide this to publish only specific global choices."
+        ),
+    )
+    relationships: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Schema names of relationships to publish (e.g., ['cr123_account_contacts']). "
+            "Provide this to publish only specific relationships."
+        ),
+    )
+    publish_all: bool = Field(
+        default=False,
+        description=(
+            "When True, publishes ALL unpublished customizations in the environment "
+            "using PublishAllXml. This may take several minutes for large environments. "
+            "Ignores entities, option_sets, and relationships parameters when True."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the publish operation. "
+            "When False (default), returns a preview of the ParameterXml "
+            "(or the action name when publish_all=True) without calling the API."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_publish_target(self) -> "PublishCustomizationsInput":
+        if not self.publish_all and not (
+            self.entities or self.option_sets or self.relationships
+        ):
+            raise ValueError(
+                "When publish_all is false, provide at least one target in entities, "
+                "option_sets, or relationships."
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
 

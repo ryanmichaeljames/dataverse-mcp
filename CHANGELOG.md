@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_create_column` tool to add a new column to a table with typed attribute metadata, display name, required level, and type-specific properties; supports `allow_write` safety guard with preview mode (#11)
+- `dataverse_update_column` tool to update an existing column via full PUT replacement; agent must fetch the current definition via `dataverse_get_column` first; supports `allow_write` safety guard with preview mode (#11)
+- `dataverse_delete_column` tool to permanently delete a custom column; fetches current definition for preview; supports `allow_delete` safety guard (#11)
+- `dataverse_create_one_to_many_relationship` tool to create a 1:N relationship and its lookup column; supports `allow_write` safety guard with preview mode (#12)
+- `dataverse_create_many_to_many_relationship` tool to create an N:N relationship and its intersect table; supports `allow_write` safety guard with preview mode (#12)
+- `dataverse_create_multi_table_lookup` tool to create a polymorphic (multi-table) lookup column via `CreatePolymorphicLookupAttribute`; supports `allow_write` safety guard with preview mode (#12)
+- `dataverse_update_relationship` tool to update an existing relationship via full PUT; agent must fetch current definition via `dataverse_get_relationship` first; supports `allow_write` safety guard with preview mode (#12)
+- `dataverse_delete_relationship` tool to permanently delete a relationship by MetadataId; supports `allow_delete` safety guard (#12)
+- `dataverse_create_choice` tool to create a new global choice with initial options; supports `allow_write` safety guard with preview mode (#13)
+- `dataverse_update_choice` tool to update an existing global choice via full PUT replacement; agent must fetch the current definition via `dataverse_get_choice` first; supports `allow_write` safety guard with preview mode (#13)
+- `dataverse_delete_choice` tool to permanently delete a global choice by logical name; supports `allow_delete` safety guard (#13)
+- `dataverse_add_choice_option` tool to add a new option to a global or local choice via `InsertOptionValue`; supports `allow_write` safety guard with preview mode (#13)
+- `dataverse_update_choice_option` tool to update the display label of an existing option via `UpdateOptionValue`; supports `allow_write` safety guard with preview mode (#13)
+- `dataverse_delete_choice_option` tool to remove a specific option value from a global or local choice via `DeleteOptionValue`; supports `allow_delete` safety guard (#13)
+- `dataverse_reorder_choice_options` tool to reorder all options of a global or local choice via `OrderOption`; supports `allow_write` safety guard with preview mode (#13)
+- `dataverse_publish_customizations` tool to publish schema changes to make them visible in the UI; supports targeted publish (tables, choices, relationships) via `PublishXml` or full environment publish via `PublishAllXml`; supports `allow_write` safety guard with preview mode (#14)
 - `dataverse_create_table` tool to create a new custom table with display names, schema name, ownership type, and primary name attribute; supports `allow_write` safety guard with preview mode (#8)
 - `dataverse_update_table` tool to update an existing table's display name or description by fetching the current definition and PUTting the merged result; supports `allow_write` safety guard with preview mode (#8)
 - `dataverse_delete_table` tool to permanently delete a custom table; supports `allow_delete` safety guard with preview mode (#8)
@@ -29,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_delete_table` now marks timeout responses as errors (`error: true`) with `is_transient: true` so clients do not misinterpret timed-out deletes as success (#8)
 - `dataverse_update_table` now validates `MetadataId` is present before constructing the PUT URL, returning a clear error if missing (#8)
 - `dataverse_delete_table` now enforces local safety checks, blocking deletion unless `IsCustomEntity=true` and `IsManaged=false` to prevent accidental system/managed table deletion attempts (#8)
+- `dataverse_create_column` now blocks reserved keys in `type_specific_properties` to prevent overriding tool-managed metadata fields
+- `dataverse_delete_column` and `dataverse_delete_relationship` now fetch current metadata for preview and enforce custom/unmanaged deletion safety checks before DELETE
+- Create operation annotations now mark `idempotentHint: false` for non-idempotent POST create tools (`dataverse_create_column`, `dataverse_create_one_to_many_relationship`, `dataverse_create_many_to_many_relationship`, `dataverse_create_multi_table_lookup`)
+- `PublishCustomizationsInput` now requires at least one targeted publish item when `publish_all=false`
+- Targeted `PublishXml` payload generation now escapes input safely via XML element construction
 
 ## [1.0.0] - 2026-05-05
 

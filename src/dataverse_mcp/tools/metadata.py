@@ -333,14 +333,18 @@ async def _fetch_picklist_options(
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')"
         f"/Attributes/{cast}"
-        f"?$select=LogicalName&$expand=OptionSet($select=Options)"
-        f"&$filter=LogicalName eq '{col_enc}'"
     )
+    params = {
+        "$select": "LogicalName",
+        "$expand": "OptionSet($select=Options)",
+        "$filter": f"LogicalName eq '{col_enc}'",
+    }
 
     def _request():
         with httpx.Client(timeout=30.0) as http_client:
             response = http_client.get(
                 url,
+                params=params,
                 headers={
                     "Authorization": f"Bearer {bearer_token}",
                     "Accept": "application/json",

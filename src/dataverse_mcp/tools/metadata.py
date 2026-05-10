@@ -13,10 +13,12 @@ from dataverse_mcp._app import mcp
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
     CheckRelationshipEligibilityInput,
+    GetChoiceInput,
     GetColumnInput,
     GetRelationshipInput,
     GetTableMetadataInput,
     ListChoiceColumnOptionsInput,
+    ListChoicesInput,
     ListColumnsInput,
     ListRelationshipsInput,
     ListTablesInput,
@@ -664,6 +666,165 @@ async def dataverse_get_relationship(
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Choice (global option set) metadata tools
+# ---------------------------------------------------------------------------
+
+_DEFAULT_CHOICE_SELECT = ",".join([
+    "MetadataId",
+    "Name",
+    "DisplayName",
+    "OptionSetType",
+    "IsGlobal",
+    "IsManaged",
+])
+
+
+@mcp.tool(
+    name="dataverse_list_choices",
+    annotations={
+        "title": "List Global Choices",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
+    """List global choice (option set) definitions in the Dataverse environment.
+
+    Returns metadata for all global choices. The Dataverse API does not
+    support $filter or $top on this endpoint; top is applied client-side.
+    Options values and labels are not available on the list endpoint — use
+    dataverse_get_choice to retrieve full option details for a specific choice.
+
+    Use dataverse_get_choice to retrieve full details for a specific choice
+    by name or MetadataId.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = str(params.dataverse_url)
+    scope = f"{base_url}/.default"
+    # Strip 'Options' — not selectable on the polymorphic collection type
+    raw_select = [f for f in (params.select or [])] if params.select else None
+    select = ",".join(raw_select) if raw_select else _DEFAULT_CHOICE_SELECT
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        query_params: dict[str, str] = {"$select": select}
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
+                    params=query_params,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        payload = await asyncio.to_thread(_request)
+        all_choices = payload.get("value", [])
+        # API ignores $top on this endpoint — slice client-side
+        top = params.top or 50
+        choices = all_choices[:top]
+        has_more = len(all_choices) > top or "@odata.nextLink" in payload
+        return json.dumps({
+            "choices": choices,
+            "count": len(choices),
+            "has_more": has_more,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse metadata API error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_list_choices")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_get_choice",
+    annotations={
+        "title": "Get Global Choice",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
+    """Get a specific global choice (option set) definition by name or MetadataId.
+
+    Returns all option values, integer codes, and labels for the choice.
+    Use this when you need the full option set for a global choice before
+    filtering records or building picklist column definitions.
+
+    Provide either name (logical name, e.g., 'incident_prioritycode') or
+    metadata_id (GUID). If both are provided, name takes precedence.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = str(params.dataverse_url)
+    scope = f"{base_url}/.default"
+
+    if params.name:
+        name_enc = _url_quote(params.name, safe="")
+        path = f"GlobalOptionSetDefinitions(Name='{name_enc}')"
+    else:
+        path = f"GlobalOptionSetDefinitions({params.metadata_id})"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{path}",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        choice = await asyncio.to_thread(_request)
+        choice.pop("@odata.context", None)
+        return json.dumps({"choice": choice})
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse metadata API error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_get_choice")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

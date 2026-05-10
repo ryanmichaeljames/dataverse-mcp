@@ -979,7 +979,7 @@ def _build_create_table_body(params: CreateTableInput) -> dict:
         "title": "Create Table",
         "readOnlyHint": False,
         "destructiveHint": False,
-        "idempotentHint": True,
+        "idempotentHint": False,
         "openWorldHint": True,
     },
 )

@@ -45,6 +45,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_delete_table` now marks timeout responses as errors (`error: true`) with `is_transient: true` so clients do not misinterpret timed-out deletes as success (#8)
 - `dataverse_update_table` now validates `MetadataId` is present before constructing the PUT URL, returning a clear error if missing (#8)
 - `dataverse_delete_table` now enforces local safety checks, blocking deletion unless `IsCustomEntity=true` and `IsManaged=false` to prevent accidental system/managed table deletion attempts (#8)
+- `dataverse_create_column` now blocks reserved keys in `type_specific_properties` to prevent overriding tool-managed metadata fields
+- `dataverse_delete_column` and `dataverse_delete_relationship` now fetch current metadata for preview and enforce custom/unmanaged deletion safety checks before DELETE
+- Create operation annotations now mark `idempotentHint: false` for non-idempotent POST create tools (`dataverse_create_column`, `dataverse_create_one_to_many_relationship`, `dataverse_create_many_to_many_relationship`, `dataverse_create_multi_table_lookup`)
+- `PublishCustomizationsInput` now requires at least one targeted publish item when `publish_all=false`, and targeted `PublishXml` payload generation now escapes input safely via XML element construction
 
 ## [1.0.0] - 2026-05-05
 

@@ -1367,6 +1367,17 @@ class PublishCustomizationsInput(DataverseEnvironmentInput):
         ),
     )
 
+    @model_validator(mode="after")
+    def validate_publish_target(self) -> "PublishCustomizationsInput":
+        if not self.publish_all and not (
+            self.entities or self.option_sets or self.relationships
+        ):
+            raise ValueError(
+                "When publish_all is false, provide at least one target in entities, "
+                "option_sets, or relationships."
+            )
+        return self
+
 
 # ---------------------------------------------------------------------------
 # Service discovery tools

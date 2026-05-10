@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 from urllib.parse import quote as _url_quote
+from xml.etree import ElementTree as ET
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -1384,7 +1385,7 @@ _METADATA_HEADERS = {
         "title": "Create Column",
         "readOnlyHint": False,
         "destructiveHint": False,
-        "idempotentHint": True,
+        "idempotentHint": False,
         "openWorldHint": True,
     },
 )
@@ -1407,6 +1408,18 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     Call dataverse_publish_customizations after creating columns to make the
     changes visible in the application.
     """
+    reserved_keys = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
+    if params.type_specific_properties:
+        conflicting_keys = sorted(reserved_keys.intersection(params.type_specific_properties))
+        if conflicting_keys:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "type_specific_properties contains reserved keys that are managed by "
+                    f"this tool: {', '.join(conflicting_keys)}."
+                ),
+            })
+
     odata_type = _ATTRIBUTE_TYPE_ODATA_MAP[params.attribute_type]
     body: dict = {
         "@odata.type": odata_type,
@@ -1666,6 +1679,26 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
                 "column": column_def,
             })
 
+        # Safety check: only allow deletion of custom, unmanaged columns
+        is_custom = column_def.get("IsCustomAttribute", False)
+        is_managed = column_def.get("IsManaged", False)
+        if not is_custom or is_managed:
+            logger.error(
+                "Cannot delete column %s on table %s: IsCustomAttribute=%s, IsManaged=%s",
+                params.column_logical_name,
+                params.table_logical_name,
+                is_custom,
+                is_managed,
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Cannot delete column '{params.column_logical_name}' on table "
+                    f"'{params.table_logical_name}': only custom, unmanaged columns "
+                    f"can be deleted (IsCustomAttribute={is_custom}, IsManaged={is_managed})."
+                ),
+            })
+
         def _delete():
             with httpx.Client(timeout=300.0) as http_client:
                 response = http_client.delete(
@@ -1733,7 +1766,7 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
         "title": "Create One-to-Many Relationship",
         "readOnlyHint": False,
         "destructiveHint": False,
-        "idempotentHint": True,
+        "idempotentHint": False,
         "openWorldHint": True,
     },
 )
@@ -1853,7 +1886,7 @@ async def dataverse_create_one_to_many_relationship(
         "title": "Create Many-to-Many Relationship",
         "readOnlyHint": False,
         "destructiveHint": False,
-        "idempotentHint": True,
+        "idempotentHint": False,
         "openWorldHint": True,
     },
 )
@@ -1960,7 +1993,7 @@ async def dataverse_create_many_to_many_relationship(
         "title": "Create Multi-Table (Polymorphic) Lookup",
         "readOnlyHint": False,
         "destructiveHint": False,
-        "idempotentHint": True,
+        "idempotentHint": False,
         "openWorldHint": True,
     },
 )
@@ -2186,16 +2219,6 @@ async def dataverse_delete_relationship(
 
     Call dataverse_publish_customizations after deleting relationships.
     """
-    if not params.allow_delete:
-        return json.dumps({
-            "preview": True,
-            "message": (
-                "Set allow_delete=true to permanently delete this relationship. "
-                "For 1:N relationships, the lookup column will also be deleted."
-            ),
-            "metadata_id": params.metadata_id,
-        })
-
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
     if not base_url:
@@ -2211,6 +2234,53 @@ async def dataverse_delete_relationship(
 
     try:
         bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _get_definition():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/RelationshipDefinitions({params.metadata_id})",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                data = response.json()
+                data.pop("@odata.context", None)
+                return data
+
+        relationship_def = await asyncio.to_thread(_get_definition)
+
+        if not params.allow_delete:
+            return json.dumps({
+                "preview": True,
+                "message": (
+                    "Set allow_delete=true to permanently delete this relationship. "
+                    "For 1:N relationships, the lookup column will also be deleted."
+                ),
+                "relationship": relationship_def,
+            })
+
+        is_custom = relationship_def.get("IsCustomRelationship", False)
+        is_managed = relationship_def.get("IsManaged", False)
+        if not is_custom or is_managed:
+            logger.error(
+                "Cannot delete relationship %s: IsCustomRelationship=%s, IsManaged=%s",
+                params.metadata_id,
+                is_custom,
+                is_managed,
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Cannot delete relationship '{params.metadata_id}': only custom, "
+                    f"unmanaged relationships can be deleted "
+                    f"(IsCustomRelationship={is_custom}, IsManaged={is_managed})."
+                ),
+            })
 
         def _delete():
             with httpx.Client(timeout=300.0) as http_client:
@@ -3020,25 +3090,24 @@ async def dataverse_publish_customizations(
             })
 
     # Targeted PublishXml
-    entity_elements = "".join(
-        f"<entity>{e}</entity>" for e in params.entities
-    )
-    option_set_elements = "".join(
-        f"<optionset>{o}</optionset>" for o in params.option_sets
-    )
-    relationship_elements = "".join(
-        f"<relationship>{r}</relationship>" for r in params.relationships
-    )
-    entities_block = f"<entities>{entity_elements}</entities>" if params.entities else "<entities/>"
-    optionsets_block = f"<optionsets>{option_set_elements}</optionsets>" if params.option_sets else "<optionsets/>"
-    relationships_block = f"<relationships>{relationship_elements}</relationships>" if params.relationships else "<relationships/>"
-    parameter_xml = (
-        f"<importexportxml>"
-        f"{entities_block}"
-        f"{optionsets_block}"
-        f"{relationships_block}"
-        f"</importexportxml>"
-    )
+    root = ET.Element("importexportxml")
+
+    entities_node = ET.SubElement(root, "entities")
+    for entity_name in params.entities:
+        entity_node = ET.SubElement(entities_node, "entity")
+        entity_node.text = entity_name
+
+    option_sets_node = ET.SubElement(root, "optionsets")
+    for option_set_name in params.option_sets:
+        option_set_node = ET.SubElement(option_sets_node, "optionset")
+        option_set_node.text = option_set_name
+
+    relationships_node = ET.SubElement(root, "relationships")
+    for relationship_name in params.relationships:
+        relationship_node = ET.SubElement(relationships_node, "relationship")
+        relationship_node.text = relationship_name
+
+    parameter_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
 
     if not params.allow_write:
         return json.dumps({

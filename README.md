@@ -143,6 +143,8 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_retrieve_principal_access` | Check the access rights a user has to a specific record (ReadAccess, WriteAccess, DeleteAccess, etc.) |
 | `dataverse_associate_records` | Associate two records via a collection-valued navigation property (`$ref`); supports preview mode |
 | `dataverse_disassociate_records` | Remove an association between two records via a navigation property; supports preview mode |
+| `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident); subordinate is deactivated after merge; supports preview mode |
+| `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; supports atomic change sets and `continue_on_error`; returns per-operation results |
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute (`allow_write` safety guard) |
 | `dataverse_update_table` | Update an existing table's display name or description (`allow_write` safety guard) |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data (`allow_delete` safety guard) |

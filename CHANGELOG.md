@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_retrieve_principal_access` tool to check the access rights a system user has to a specific record; returns `AccessRights` bitmask and named rights list (#9)
 - `dataverse_associate_records` tool to create an association between two records via a collection-valued navigation property (`$ref`); supports `allow_write` safety guard with preview mode (#16)
 - `dataverse_disassociate_records` tool to remove an association between two records; supports `allow_delete` safety guard with preview mode (#16)
+- `dataverse_merge_records` tool to merge a subordinate record into a target record using the Dataverse `Merge` action; supports `account`, `contact`, `lead`, and `incident` entity types; `allow_write` safety guard with preview mode (#15)
+- `dataverse_execute_batch` tool to execute up to 1,000 OData operations in a single `$batch` request; supports atomic change sets, `continue_on_error`, and preview mode; parses per-operation responses (#15)
 
 ### Changed
 - Server description updated from "read-only" to reflect full CRUD capability; `pyproject.toml`, `__init__.py`, `copilot-instructions.md`, and `README.md` updated accordingly

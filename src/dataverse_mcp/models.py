@@ -1590,3 +1590,176 @@ class DisassociateRecordsInput(DataverseEnvironmentInput):
         if not _GUID_PATTERN.match(v):
             raise ValueError("must be a valid GUID")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Record merge and batch tools
+# ---------------------------------------------------------------------------
+
+_MERGE_ENTITY_TYPES = {"account", "contact", "lead", "incident"}
+
+
+class MergeRecordsInput(DataverseEnvironmentInput):
+    """Input for merging a subordinate record into a target record."""
+
+    entity_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the entity type to merge. "
+            "Must be one of: 'account', 'contact', 'lead', 'incident'."
+        ),
+        min_length=1,
+    )
+    target_id: str = Field(
+        ...,
+        description="GUID of the target record to keep after the merge.",
+        min_length=36,
+    )
+    subordinate_id: str = Field(
+        ...,
+        description=(
+            "GUID of the subordinate record to merge into the target. "
+            "The subordinate is deactivated (not deleted) after the merge."
+        ),
+        min_length=36,
+    )
+    update_content: dict | None = Field(
+        default=None,
+        description=(
+            "Optional dict of field name/value pairs from the subordinate record "
+            "to carry over to the target after the merge. "
+            "Example: {'telephone1': '555-1234'}"
+        ),
+    )
+    perform_parenting_checks: bool = Field(
+        default=False,
+        description=(
+            "Whether to check and reparent records during the merge. "
+            "Set to True only when parenting relationships must be maintained."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the merge. "
+            "When False (default), returns a preview of the request body "
+            "without calling the API."
+        ),
+    )
+
+    @field_validator("entity_logical_name")
+    @classmethod
+    def validate_entity_type(cls, v: str) -> str:
+        if v.lower() not in _MERGE_ENTITY_TYPES:
+            raise ValueError(
+                f"entity_logical_name must be one of: {', '.join(sorted(_MERGE_ENTITY_TYPES))}"
+            )
+        return v.lower()
+
+    @field_validator("target_id", "subordinate_id")
+    @classmethod
+    def validate_merge_guids(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("must be a valid GUID")
+        return v
+
+
+class BatchOperationItem(BaseModel):
+    """A single operation within a batch request."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    method: str = Field(
+        ...,
+        description=(
+            "HTTP method for this operation. "
+            "One of: 'GET', 'POST', 'PUT', 'PATCH', 'DELETE'."
+        ),
+        pattern=r"^(GET|POST|PUT|PATCH|DELETE)$",
+    )
+    url: str = Field(
+        ...,
+        description=(
+            "Relative URL path for this operation (e.g., '/accounts(00000000-...)'). "
+            "Must start with '/'."
+        ),
+        min_length=1,
+        pattern=r"^/[^\r\n]*$",
+    )
+    body: dict | None = Field(
+        default=None,
+        description=(
+            "Optional JSON body for POST, PUT, or PATCH operations. "
+            "Not used for GET or DELETE."
+        ),
+    )
+    change_set_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional identifier to group this operation into an atomic change set. "
+            "All operations sharing the same change_set_id are executed atomically — "
+            "if any fails, all are rolled back. "
+            "Must contain only alphanumeric characters, hyphens, and underscores."
+        ),
+        min_length=1,
+        pattern=r"^[A-Za-z0-9_-]+$",
+    )
+
+
+class ExecuteBatchInput(DataverseEnvironmentInput):
+    """Input for executing multiple OData operations in a single batch request."""
+
+    operations: list[BatchOperationItem] = Field(
+        ...,
+        description=(
+            "Ordered list of OData operations to execute in the batch. "
+            "Maximum 1,000 operations per request. "
+            "Operations within the same change_set_id are executed atomically."
+        ),
+        min_length=1,
+    )
+    continue_on_error: bool = Field(
+        default=False,
+        description=(
+            "When True, adds 'Prefer: odata.continue-on-error' — the batch "
+            "continues processing remaining operations even if one fails. "
+            "When False (default), the batch stops on the first error."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard for batches containing mutations (POST, PUT, PATCH, DELETE). "
+            "Set to True to execute the batch. "
+            "When False (default), returns a preview of the batch operations instead of executing. "
+            "Read-only batches (GET only) are always executed regardless of this flag."
+        ),
+    )
+
+    @field_validator("operations")
+    @classmethod
+    def validate_operation_count(cls, v: list) -> list:
+        if len(v) > 1000:
+            raise ValueError("batch operations must not exceed 1,000 per request")
+        return v
+
+    @field_validator("operations")
+    @classmethod
+    def validate_change_set_contiguous(cls, v: list) -> list:
+        """Ensure operations with the same change_set_id are contiguous."""
+        seen: set[str] = set()
+        current_cs: str | None = None
+        for op in v:
+            cs = op.change_set_id
+            if cs is None:
+                current_cs = None
+                continue
+            if cs != current_cs:
+                if cs in seen:
+                    raise ValueError(
+                        f"Operations for change_set_id '{cs}' must be contiguous — "
+                        "interleaved change sets are not allowed."
+                    )
+                seen.add(cs)
+                current_cs = cs
+        return v

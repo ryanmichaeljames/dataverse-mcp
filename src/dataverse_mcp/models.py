@@ -426,6 +426,66 @@ class CheckRelationshipEligibilityInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Choice (global option set) metadata tools
+# ---------------------------------------------------------------------------
+
+
+class ListChoicesInput(DataverseEnvironmentInput):
+    """Input for listing global choice (option set) definitions in the environment."""
+
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Metadata properties to return (PascalCase). Defaults to "
+            "MetadataId, Name, DisplayName, OptionSetType, IsGlobal, IsManaged. "
+            "Note: 'Options' is not selectable on the list endpoint — use "
+            "dataverse_get_choice to retrieve the full option values and labels "
+            "for a specific choice. "
+            "Example: ['Name', 'DisplayName', 'OptionSetType']"
+        ),
+    )
+    top: int | None = Field(
+        default=50,
+        description="Maximum number of choices to return (1–500).",
+        ge=1,
+        le=500,
+    )
+
+
+class GetChoiceInput(DataverseEnvironmentInput):
+    """Input for retrieving a single global choice by name or MetadataId."""
+
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice "
+            "(e.g., 'incident_prioritycode', 'new_my_globalchoice'). "
+            "Use lowercase. Either name or metadata_id must be provided."
+        ),
+    )
+    metadata_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID MetadataId of the global choice definition. "
+            "Either name or metadata_id must be provided."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def require_name_or_metadata_id(self) -> "GetChoiceInput":
+        if not self.name and not self.metadata_id:
+            raise ValueError("At least one of 'name' or 'metadata_id' must be provided.")
+        return self
+
+    @field_validator("metadata_id")
+    @classmethod
+    def validate_metadata_id(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError("metadata_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Power Platform admin tools
 # ---------------------------------------------------------------------------
 

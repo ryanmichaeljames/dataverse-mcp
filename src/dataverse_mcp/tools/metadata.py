@@ -1048,7 +1048,9 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     except httpx.TimeoutException as e:
         logger.warning("Timeout in dataverse_create_table — operation may have succeeded: %s", e)
         return json.dumps({
+            "error": True,
             "created": None,
+            "is_transient": True,
             "message": (
                 "The request timed out before the server responded. Dataverse table "
                 "creation can take several minutes. Use dataverse_list_tables or "
@@ -1150,6 +1152,15 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
             })
 
         metadata_id = definition.get("MetadataId")
+        if not metadata_id:
+            logger.error("MetadataId missing from table definition for %s", params.table_logical_name)
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"MetadataId not found in table definition for '{params.table_logical_name}'. "
+                    "Cannot construct update URL without MetadataId."
+                ),
+            })
 
         def _put_definition():
             with httpx.Client(timeout=60.0) as http_client:
@@ -1257,6 +1268,25 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
                     "This operation is irreversible."
                 ),
                 "table": definition,
+            })
+
+        # Safety check: only allow deletion of custom, unmanaged tables
+        is_custom = definition.get("IsCustomEntity", False)
+        is_managed = definition.get("IsManaged", False)
+        if not is_custom or is_managed:
+            logger.error(
+                "Cannot delete table %s: IsCustomEntity=%s, IsManaged=%s",
+                params.table_logical_name,
+                is_custom,
+                is_managed,
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Cannot delete table '{params.table_logical_name}': "
+                    f"only custom, unmanaged tables can be deleted "
+                    f"(IsCustomEntity={is_custom}, IsManaged={is_managed})."
+                ),
             })
 
         def _delete():

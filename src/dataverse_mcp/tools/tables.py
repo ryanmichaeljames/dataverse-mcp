@@ -391,7 +391,7 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
         "PerformParentingChecks": params.perform_parenting_checks,
     }
     if params.update_content:
-        body["UpdateContent"] = {"@odata.type": entity_type, **params.update_content}
+        body["UpdateContent"] = {**params.update_content, "@odata.type": entity_type}
 
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/Merge"
 
@@ -439,8 +439,6 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
 def _build_batch_body(operations: list, base_url: str, batch_boundary: str) -> str:
     """Build a multipart/mixed batch request body."""
     parts: list[str] = []
-    # Track change set boundaries
-    change_set_boundaries: dict[str, str] = {}
 
     # Group operations: change-set ops go into their own multipart part
     # Non-change-set ops are individual request parts
@@ -454,7 +452,6 @@ def _build_batch_body(operations: list, base_url: str, batch_boundary: str) -> s
         if op.change_set_id and op.change_set_id not in processed_change_sets:
             cs_id = op.change_set_id
             cs_boundary = f"changeset_{cs_id}"
-            change_set_boundaries[cs_id] = cs_boundary
             processed_change_sets.add(cs_id)
 
             cs_ops = [o for o in ops if o.change_set_id == cs_id]
@@ -558,8 +555,10 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
     change_set_id are executed atomically — if any fails, all in that set
     are rolled back.
 
-    Use allow_write=False (default) to preview the operations list without
-    executing. Set allow_write=True to send the batch.
+    When allow_write=False (default) and the batch contains mutations (POST,
+    PUT, PATCH, DELETE), returns a preview of the operations without executing.
+    Read-only batches (GET only) are always executed regardless of allow_write.
+    Set allow_write=True to execute mutation batches.
 
     Returns a list of per-operation results: [{index, status_code, body}].
     Change set results are flattened into the list in order.
@@ -597,9 +596,9 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
 
     batch_boundary = "batch_dataverse_mcp"
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/$batch"
-    batch_body = _build_batch_body(params.operations, base_url, batch_boundary)
 
     try:
+        batch_body = _build_batch_body(params.operations, base_url, batch_boundary)
         token = await asyncio.to_thread(get_bearer_token, app_ctx, f"{base_url}/.default")
         req_headers = {
             "Authorization": f"Bearer {token}",

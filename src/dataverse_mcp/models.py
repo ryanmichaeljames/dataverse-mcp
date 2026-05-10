@@ -1684,6 +1684,7 @@ class BatchOperationItem(BaseModel):
             "Must start with '/'."
         ),
         min_length=1,
+        pattern=r"^/[^\r\n]*$",
     )
     body: dict | None = Field(
         default=None,
@@ -1697,9 +1698,11 @@ class BatchOperationItem(BaseModel):
         description=(
             "Optional identifier to group this operation into an atomic change set. "
             "All operations sharing the same change_set_id are executed atomically — "
-            "if any fails, all are rolled back."
+            "if any fails, all are rolled back. "
+            "Must contain only alphanumeric characters, hyphens, and underscores."
         ),
         min_length=1,
+        pattern=r"^[A-Za-z0-9_-]+$",
     )
 
 
@@ -1726,9 +1729,10 @@ class ExecuteBatchInput(DataverseEnvironmentInput):
     allow_write: bool = Field(
         default=False,
         description=(
-            "Safety guard. Required when any operation in the batch is a mutation "
-            "(POST, PUT, PATCH, DELETE). Set to True to execute the batch. "
-            "When False (default), returns a preview of the batch operations."
+            "Safety guard for batches containing mutations (POST, PUT, PATCH, DELETE). "
+            "Set to True to execute the batch. "
+            "When False (default), returns a preview of the batch operations instead of executing. "
+            "Read-only batches (GET only) are always executed regardless of this flag."
         ),
     )
 
@@ -1737,4 +1741,25 @@ class ExecuteBatchInput(DataverseEnvironmentInput):
     def validate_operation_count(cls, v: list) -> list:
         if len(v) > 1000:
             raise ValueError("batch operations must not exceed 1,000 per request")
+        return v
+
+    @field_validator("operations")
+    @classmethod
+    def validate_change_set_contiguous(cls, v: list) -> list:
+        """Ensure operations with the same change_set_id are contiguous."""
+        seen: set[str] = set()
+        current_cs: str | None = None
+        for op in v:
+            cs = op.change_set_id
+            if cs is None:
+                current_cs = None
+                continue
+            if cs != current_cs:
+                if cs in seen:
+                    raise ValueError(
+                        f"Operations for change_set_id '{cs}' must be contiguous — "
+                        "interleaved change sets are not allowed."
+                    )
+                seen.add(cs)
+                current_cs = cs
         return v

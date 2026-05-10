@@ -486,6 +486,19 @@ class GetChoiceInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Service discovery tools
+# ---------------------------------------------------------------------------
+
+
+class WhoAmIInput(DataverseEnvironmentInput):
+    """Input for the WhoAmI identity check tool."""
+
+
+class GetEntitySetsInput(DataverseEnvironmentInput):
+    """Input for retrieving all OData EntitySet names from the service document."""
+
+
+# ---------------------------------------------------------------------------
 # Power Platform admin tools
 # ---------------------------------------------------------------------------
 

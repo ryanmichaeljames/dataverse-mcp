@@ -34,6 +34,7 @@ from dataverse_mcp.models import (
     ListColumnsInput,
     ListRelationshipsInput,
     ListTablesInput,
+    PublishCustomizationsInput,
     ReorderChoiceOptionsInput,
     UpdateChoiceInput,
     UpdateChoiceOptionInput,
@@ -2910,6 +2911,206 @@ async def dataverse_reorder_choice_options(
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_reorder_choice_options")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Publish tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="dataverse_publish_customizations",
+    annotations={
+        "title": "Publish Customizations",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_publish_customizations(
+    params: PublishCustomizationsInput, ctx: Context
+) -> str:
+    """Publish Dataverse customizations to make schema changes visible in the UI.
+
+    After creating or modifying tables, columns, relationships, or choices,
+    customizations must be published before they appear in model-driven apps.
+
+    Two modes:
+    - Targeted: provide entities, option_sets, and/or relationships lists to
+      publish only those components. Calls PublishXml with ParameterXml.
+    - All: set publish_all=True to publish every unpublished customization in
+      the environment via PublishAllXml. May take several minutes.
+
+    When allow_write is False (default), returns a preview of the ParameterXml
+    that would be sent without calling the API.
+    """
+    if params.publish_all:
+        if not params.allow_write:
+            return json.dumps({
+                "preview": True,
+                "message": "Set allow_write=true to execute PublishAllXml.",
+                "action": "PublishAllXml",
+            })
+
+        app_ctx = _get_app_ctx(ctx)
+        base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+        if not base_url:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "No Dataverse environment URL was provided. Supply dataverse_url "
+                    "on the tool input, or set DATAVERSE_URL as a fallback."
+                ),
+            })
+
+        scope = f"{base_url}/.default"
+
+        try:
+            bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+            def _post_all():
+                with httpx.Client(timeout=600.0) as http_client:
+                    response = http_client.post(
+                        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishAllXml",
+                        headers={
+                            "Authorization": f"Bearer {bearer_token}",
+                            **_METADATA_HEADERS,
+                        },
+                    )
+                    response.raise_for_status()
+
+            await asyncio.to_thread(_post_all)
+            logger.info("Published all customizations")
+            return json.dumps({"published": True, "action": "PublishAllXml"})
+        except httpx.TimeoutException as e:
+            logger.warning(
+                "Timeout in dataverse_publish_customizations (PublishAllXml) — "
+                "operation may have succeeded: %s",
+                e,
+            )
+            return json.dumps({
+                "error": True,
+                "published": None,
+                "is_transient": True,
+                "message": (
+                    "The request timed out. PublishAllXml may have succeeded in the background. "
+                    "Check your model-driven app to verify."
+                ),
+            })
+        except httpx.HTTPStatusError as e:
+            logger.error(
+                "Dataverse PublishAllXml error: %s (status=%d)",
+                e.response.text,
+                e.response.status_code,
+            )
+            return json.dumps({
+                "error": True,
+                "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            })
+        except Exception as e:
+            logger.exception("Unexpected error in dataverse_publish_customizations (PublishAllXml)")
+            return json.dumps({
+                "error": True,
+                "message": f"Unexpected error: {type(e).__name__}: {e}",
+            })
+
+    # Targeted PublishXml
+    entity_elements = "".join(
+        f"<entity>{e}</entity>" for e in params.entities
+    )
+    option_set_elements = "".join(
+        f"<optionset>{o}</optionset>" for o in params.option_sets
+    )
+    relationship_elements = "".join(
+        f"<relationship>{r}</relationship>" for r in params.relationships
+    )
+    entities_block = f"<entities>{entity_elements}</entities>" if params.entities else "<entities/>"
+    optionsets_block = f"<optionsets>{option_set_elements}</optionsets>" if params.option_sets else "<optionsets/>"
+    relationships_block = f"<relationships>{relationship_elements}</relationships>" if params.relationships else "<relationships/>"
+    parameter_xml = (
+        f"<importexportxml>"
+        f"{entities_block}"
+        f"{optionsets_block}"
+        f"{relationships_block}"
+        f"</importexportxml>"
+    )
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute PublishXml with this ParameterXml.",
+            "action": "PublishXml",
+            "parameter_xml": parameter_xml,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post_xml():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
+                    json={"ParameterXml": parameter_xml},
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_post_xml)
+        logger.info("Published customizations: %s", parameter_xml)
+        return json.dumps({
+            "published": True,
+            "action": "PublishXml",
+            "parameter_xml": parameter_xml,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_publish_customizations (PublishXml) — "
+            "operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "published": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. PublishXml may have succeeded. "
+                "Check your model-driven app to verify."
+            ),
+            "parameter_xml": parameter_xml,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse PublishXml error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_publish_customizations (PublishXml)")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

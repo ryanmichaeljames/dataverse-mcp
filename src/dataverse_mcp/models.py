@@ -1322,6 +1322,53 @@ class ReorderChoiceOptionsInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Publish tools
+# ---------------------------------------------------------------------------
+
+
+class PublishCustomizationsInput(DataverseEnvironmentInput):
+    """Input for publishing Dataverse customizations."""
+
+    entities: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Logical names of tables to publish (e.g., ['account', 'contact']). "
+            "Provide this to publish only specific tables and their components."
+        ),
+    )
+    option_sets: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Logical names of global choices to publish (e.g., ['cr123_mychoice']). "
+            "Provide this to publish only specific global choices."
+        ),
+    )
+    relationships: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Schema names of relationships to publish (e.g., ['cr123_account_contacts']). "
+            "Provide this to publish only specific relationships."
+        ),
+    )
+    publish_all: bool = Field(
+        default=False,
+        description=(
+            "When True, publishes ALL unpublished customizations in the environment "
+            "using PublishAllXml. This may take several minutes for large environments. "
+            "Ignores entities, option_sets, and relationships parameters when True."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the publish operation. "
+            "When False (default), returns a preview of the ParameterXml "
+            "(or the action name when publish_all=True) without calling the API."
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
 

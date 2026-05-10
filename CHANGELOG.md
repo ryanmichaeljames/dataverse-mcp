@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_update_choice_option` tool to update the display label of an existing option via `UpdateOptionValue`; supports `allow_write` safety guard with preview mode (#13)
 - `dataverse_delete_choice_option` tool to remove a specific option value from a global or local choice via `DeleteOptionValue`; supports `allow_delete` safety guard (#13)
 - `dataverse_reorder_choice_options` tool to reorder all options of a global or local choice via `OrderOption`; supports `allow_write` safety guard with preview mode (#13)
+- `dataverse_publish_customizations` tool to publish schema changes to make them visible in the UI; supports targeted publish (tables, choices, relationships) via `PublishXml` or full environment publish via `PublishAllXml`; supports `allow_write` safety guard with preview mode (#14)
 - `dataverse_create_table` tool to create a new custom table with display names, schema name, ownership type, and primary name attribute; supports `allow_write` safety guard with preview mode (#8)
 - `dataverse_update_table` tool to update an existing table's display name or description by fetching the current definition and PUTting the merged result; supports `allow_write` safety guard with preview mode (#8)
 - `dataverse_delete_table` tool to permanently delete a custom table; supports `allow_delete` safety guard with preview mode (#8)

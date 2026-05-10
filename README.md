@@ -154,6 +154,7 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_update_choice_option` | Update the display label of an existing option in a global or local choice (`allow_write` safety guard) |
 | `dataverse_delete_choice_option` | Remove a specific option value from a global or local choice (`allow_delete` safety guard) |
 | `dataverse_reorder_choice_options` | Reorder all options of a global or local choice (`allow_write` safety guard) |
+| `dataverse_publish_customizations` | Publish schema changes (tables, choices, relationships) via `PublishXml` or all unpublished changes via `PublishAllXml` (`allow_write` safety guard) |
 | `dataverse_list_solutions` | List solutions with optional OData filter, select, and top |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |

@@ -486,6 +486,35 @@ class GetChoiceInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Service discovery tools
+# ---------------------------------------------------------------------------
+
+
+class WhoAmIInput(DataverseEnvironmentInput):
+    """Input for the WhoAmI identity check tool."""
+
+
+class GetEntitySetsInput(DataverseEnvironmentInput):
+    """Input for retrieving OData EntitySet names from the service document."""
+
+    contains: str | None = Field(
+        default=None,
+        description=(
+            "Case-insensitive substring filter applied to EntitySet names. "
+            "Use this to narrow results (e.g., 'account' returns 'accounts', "
+            "'accountleads', etc.). If omitted, all entity sets are returned up "
+            "to the 'top' limit."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of entity sets to return (1–1000).",
+        ge=1,
+        le=1000,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Power Platform admin tools
 # ---------------------------------------------------------------------------
 

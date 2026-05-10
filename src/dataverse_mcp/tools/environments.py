@@ -10,10 +10,11 @@ from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import mcp
 from dataverse_mcp.client import AppContext, get_bearer_token
-from dataverse_mcp.models import ListEnvironmentsInput
+from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, WhoAmIInput
 
 logger = logging.getLogger(__name__)
 
+_DATAVERSE_API_VERSION = "v9.2"
 _ENVIRONMENTS_ENDPOINT = (
     "https://api.bap.microsoft.com/providers/"
     "Microsoft.BusinessAppPlatform/scopes/admin/environments"
@@ -123,6 +124,176 @@ async def dataverse_list_environments(
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_environments")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Service discovery tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="dataverse_whoami",
+    annotations={
+        "title": "Who Am I",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
+    """Return the authenticated user's identity from the Dataverse WhoAmI endpoint.
+
+    Returns UserId, BusinessUnitId, and OrganizationId for the caller.
+    Call this at the start of a session to confirm authentication is working
+    and to obtain the caller's system user GUID (useful for privilege checks
+    or filtering records owned by the current user).
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    try:
+        bearer_token = await asyncio.to_thread(
+            get_bearer_token, app_ctx, f"{base_url}/.default"
+        )
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/WhoAmI",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        payload = await asyncio.to_thread(_request)
+        return json.dumps({
+            "UserId": payload.get("UserId"),
+            "BusinessUnitId": payload.get("BusinessUnitId"),
+            "OrganizationId": payload.get("OrganizationId"),
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse WhoAmI API error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_whoami")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_get_entity_sets",
+    annotations={
+        "title": "Get Entity Sets",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) -> str:
+    """List OData EntitySet names available in the Dataverse environment.
+
+    Queries the OData service document and returns EntitySet entries with
+    their name (the URL-safe collection name) and url. Use this to discover the
+    exact entity_set_name for a table before composing record query URLs —
+    faster and smaller than fetching the full $metadata document.
+
+    For example, the 'account' table has EntitySet name 'accounts', and
+    'systemuser' has EntitySet name 'systemusers'.
+
+    Use 'contains' to filter by a substring (e.g., 'account') and 'top' to
+    limit the number of results. Check 'has_more' in the response to determine
+    if additional entries exist beyond the current page.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    try:
+        bearer_token = await asyncio.to_thread(
+            get_bearer_token, app_ctx, f"{base_url}/.default"
+        )
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        payload = await asyncio.to_thread(_request)
+        all_entries = payload.get("value", [])
+
+        # Apply optional substring filter
+        if params.contains:
+            needle = params.contains.lower()
+            all_entries = [
+                e for e in all_entries if needle in (e.get("name") or "").lower()
+            ]
+
+        has_more = len(all_entries) > params.top
+        entity_sets = [
+            {"name": entry.get("name"), "url": entry.get("url")}
+            for entry in all_entries[: params.top]
+        ]
+        return json.dumps({
+            "entity_sets": entity_sets,
+            "count": len(entity_sets),
+            "has_more": has_more,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse service document API error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_get_entity_sets")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

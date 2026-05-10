@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_get_column` tool to retrieve full metadata for a single column including type-specific properties (#5)
 - `dataverse_list_choice_column_options` tool to get all option values (integer code + label) for Picklist and MultiSelectPicklist columns (#5)
 
+### Fixed
+- `dataverse_list_relationships` now returns `has_more` and consistently applies the `top` limit (#6)
+- `dataverse_check_relationship_eligibility` now uses Dataverse relationship eligibility endpoints (`CanBeReferenced`, `CanBeReferencing`, `CanManyToMany`) (#6)
+
 ## [1.0.0] - 2026-05-05
 
 ### Added

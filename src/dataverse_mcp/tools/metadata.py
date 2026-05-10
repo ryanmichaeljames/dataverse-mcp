@@ -492,15 +492,14 @@ async def _fetch_relationships_httpx(
     base_url: str,
     bearer_token: str,
     url_path: str,
-    top: int | None,
+    top: int,
     select: str | None = None,
 ) -> list[dict]:
     """Fetch relationship definitions from the Dataverse metadata API via httpx."""
     params: dict[str, str | int] = {}
     if select:
         params["$select"] = select
-    if top:
-        params["$top"] = top
+    params["$top"] = top
 
     def _request():
         with httpx.Client(timeout=30.0) as http_client:
@@ -583,6 +582,7 @@ async def dataverse_list_relationships(
         return json.dumps({
             "relationships": all_rels,
             "count": len(all_rels),
+            "has_more": len(all_rels) >= params.top,
         })
     except httpx.HTTPStatusError as e:
         logger.error(
@@ -685,26 +685,33 @@ async def dataverse_check_relationship_eligibility(
 ) -> str:
     """Check whether a table can participate in a relationship.
 
-    Reads the relationship eligibility flags directly from the table's
-    EntityDefinition metadata:
+    Calls Dataverse relationship eligibility endpoints for the target table:
     - 'referenced'    — can be the primary (one) side of a 1:N
     - 'referencing'   — can be the related (many) side of a 1:N
     - 'many_to_many'  — can participate in an N:N relationship
 
-    Returns eligible (bool) for the requested check_type. The API call
-    selects and reads only that specific eligibility flag.
+    Returns eligible (bool) for the requested check_type.
     """
     app_ctx = _get_app_ctx(ctx)
     base_url = str(params.dataverse_url)
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
 
-    check_field_map = {
-        "referenced": "CanBePrimaryEntityInRelationship",
-        "referencing": "CanBeRelatedEntityInRelationship",
-        "many_to_many": "CanBeInManyToMany",
+    check_endpoint_map = {
+        "referenced": "CanBeReferenced",
+        "referencing": "CanBeReferencing",
+        "many_to_many": "CanManyToMany",
     }
-    field = check_field_map[params.check_type]
+    endpoint = check_endpoint_map[params.check_type]
+
+    def _to_bool(value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            return value.strip().lower() in {"true", "1", "yes"}
+        return False
 
     try:
         bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
@@ -713,8 +720,7 @@ async def dataverse_check_relationship_eligibility(
             with httpx.Client(timeout=30.0) as http_client:
                 response = http_client.get(
                     f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')",
-                    params={"$select": field},
+                    f"EntityDefinitions(LogicalName='{table_enc}')/{endpoint}",
                     headers={
                         "Authorization": f"Bearer {bearer_token}",
                         "Accept": "application/json",
@@ -726,12 +732,12 @@ async def dataverse_check_relationship_eligibility(
                 return response.json()
 
         result = await asyncio.to_thread(_request)
-        raw = result.get(field, False)
+        raw = result.get(endpoint, result.get("value", result))
         eligible = raw.get("Value", raw) if isinstance(raw, dict) else raw
         return json.dumps({
             "table_logical_name": params.table_logical_name,
             "check_type": params.check_type,
-            "eligible": eligible,
+            "eligible": _to_bool(eligible),
         })
     except httpx.HTTPStatusError as e:
         logger.error(

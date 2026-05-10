@@ -363,7 +363,7 @@ class ListRelationshipsInput(DataverseEnvironmentInput):
             "Ignored when table_logical_name is omitted."
         ),
     )
-    top: int | None = Field(
+    top: int = Field(
         default=50,
         description="Maximum number of relationships to return (1–500).",
         ge=1,
@@ -387,8 +387,8 @@ class GetRelationshipInput(DataverseEnvironmentInput):
         ...,
         description=(
             "Schema name of the relationship (e.g., 'account_contacts', "
-            "'contact_customer_accounts'). Schema names are PascalCase and "
-            "case-sensitive."
+            "'contact_customer_accounts'). Schema names are case-sensitive "
+            "and must match exactly."
         ),
         min_length=1,
     )

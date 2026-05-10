@@ -132,6 +132,36 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 
 `dataverse_list_environments` does not require `dataverse_url` and always returns the full normalized environment payload. Optional flags let you include capacity and add-on details.
 
+### Safety Guards
+
+Write and delete tools require an explicit opt-in parameter before they execute. Without it, the tool runs in **preview mode** — it returns the request URL and body that *would* be sent, without making any changes.
+
+| Parameter | Type | Default | Used by |
+|-----------|------|---------|---------|
+| `allow_write` | boolean | `false` | Create and update tools |
+| `allow_delete` | boolean | `false` | Delete tools |
+
+**Preview mode** (default — no changes made):
+
+```json
+{
+  "dataverse_url": "https://yourorg.crm.dynamics.com",
+  "logical_name": "cr123_mytable"
+}
+```
+
+**Execute mode** (changes are applied):
+
+```json
+{
+  "dataverse_url": "https://yourorg.crm.dynamics.com",
+  "logical_name": "cr123_mytable",
+  "allow_delete": true
+}
+```
+
+The recommended workflow is to run the tool in preview mode first, confirm the output looks correct, then re-run with the flag set to `true`.
+
 ## Tools
 
 | Tool | Description |

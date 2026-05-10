@@ -173,6 +173,10 @@ The recommended workflow:
 
 ## Tools
 
+Tools are grouped by the env var required to enable them. Read-only tools are always available.
+
+### Always available (read-only)
+
 | Tool | Description |
 |------|-------------|
 | `dataverse_list_environments` | List Power Platform environments available to the authenticated user via the admin API, returning the full normalized payload |
@@ -180,34 +184,58 @@ The recommended workflow:
 | `dataverse_get_entity_sets` | List all OData EntitySet names from the service document — discover the correct collection URL for any table |
 | `dataverse_retrieve_user_privileges` | List all security privileges assigned to a system user via their role memberships |
 | `dataverse_retrieve_principal_access` | Check the access rights a user has to a specific record (ReadAccess, WriteAccess, DeleteAccess, etc.) |
-| `dataverse_associate_records` | Associate two records via a collection-valued navigation property (`$ref`); supports preview mode |
-| `dataverse_disassociate_records` | Remove an association between two records via a navigation property; supports preview mode |
-| `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident); subordinate is deactivated after merge; supports preview mode |
-| `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; supports atomic change sets and `continue_on_error`; returns per-operation results |
-| `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute (`allow_write` safety guard) |
-| `dataverse_update_table` | Update an existing table's display name or description (`allow_write` safety guard) |
-| `dataverse_delete_table` | Permanently delete a custom table and all its data (`allow_delete` safety guard) |
-| `dataverse_create_column` | Add a new column to a table with typed attribute metadata and display name (`allow_write` safety guard) |
-| `dataverse_update_column` | Update an existing column via full PUT replacement; fetch current definition with `dataverse_get_column` first (`allow_write` safety guard) |
-| `dataverse_delete_column` | Permanently delete a custom column and all its data from a table (`allow_delete` safety guard) |
-| `dataverse_create_one_to_many_relationship` | Create a 1:N relationship and its lookup column on the referencing table (`allow_write` safety guard) |
-| `dataverse_create_many_to_many_relationship` | Create an N:N relationship and its intersect (junction) table (`allow_write` safety guard) |
-| `dataverse_create_multi_table_lookup` | Create a polymorphic lookup column that references multiple tables (`allow_write` safety guard) |
-| `dataverse_update_relationship` | Update an existing relationship via full PUT; fetch current definition with `dataverse_get_relationship` first (`allow_write` safety guard) |
-| `dataverse_delete_relationship` | Delete a custom relationship by MetadataId (`allow_delete` safety guard) |
-| `dataverse_create_choice` | Create a new global choice with initial options (`allow_write` safety guard) |
-| `dataverse_update_choice` | Update an existing global choice via full PUT; fetch current definition with `dataverse_get_choice` first (`allow_write` safety guard) |
-| `dataverse_delete_choice` | Delete a global choice by logical name; ensure no columns reference it first (`allow_delete` safety guard) |
-| `dataverse_add_choice_option` | Add a new option to a global or local choice (`allow_write` safety guard) |
-| `dataverse_update_choice_option` | Update the display label of an existing option in a global or local choice (`allow_write` safety guard) |
-| `dataverse_delete_choice_option` | Remove a specific option value from a global or local choice (`allow_delete` safety guard) |
-| `dataverse_reorder_choice_options` | Reorder all options of a global or local choice (`allow_write` safety guard) |
-| `dataverse_publish_customizations` | Publish schema changes (tables, choices, relationships) via `PublishXml` or all unpublished changes via `PublishAllXml` (`allow_write` safety guard) |
 | `dataverse_list_solutions` | List solutions with optional OData filter, select, and top |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |
 | `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, top |
 | `dataverse_get_record` | Get a single record by table name and GUID |
+| `dataverse_list_tables` | List available tables/entities with optional filter |
+| `dataverse_get_table_metadata` | Get schema details for a specific table |
+| `dataverse_list_columns` | List all column definitions for a table with optional type filter and field selection |
+| `dataverse_get_column` | Get full metadata for a single column including type-specific properties (MaxLength, Precision, RequiredLevel, Format) |
+| `dataverse_list_choice_column_options` | Get all option values (integer code + label) for a Picklist or MultiSelectPicklist column |
+| `dataverse_list_relationships` | List relationship definitions for a table (1:N, N:1, N:N) or all relationships in the environment |
+| `dataverse_get_relationship` | Get full metadata for a single relationship by schema name, including cascade config and navigation property names |
+| `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship (referenced, referencing, or many-to-many) via Dataverse eligibility endpoints (`CanBeReferenced`, `CanBeReferencing`, `CanManyToMany`) |
+| `dataverse_list_choices` | List all global choice (option set) definitions in the environment |
+| `dataverse_get_choice` | Get a specific global choice by name or MetadataId, including all option values and labels |
+
+### Requires `DATAVERSE_ALLOW_WRITE=true`
+
+These tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set in the MCP server `env`. Each tool also requires `allow_write: true` in the tool call parameters to execute — without it, the tool returns a preview of the request without making changes.
+
+| Tool | Description |
+|------|-------------|
+| `dataverse_associate_records` | Associate two records via a collection-valued navigation property (`$ref`) |
+| `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident); subordinate is deactivated after merge |
+| `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; supports atomic change sets and `continue_on_error`; returns per-operation results |
+| `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute |
+| `dataverse_update_table` | Update an existing table's display name or description |
+| `dataverse_create_column` | Add a new column to a table with typed attribute metadata and display name |
+| `dataverse_update_column` | Update an existing column via full PUT replacement; fetch current definition with `dataverse_get_column` first |
+| `dataverse_create_one_to_many_relationship` | Create a 1:N relationship and its lookup column on the referencing table |
+| `dataverse_create_many_to_many_relationship` | Create an N:N relationship and its intersect (junction) table |
+| `dataverse_create_multi_table_lookup` | Create a polymorphic lookup column that references multiple tables |
+| `dataverse_update_relationship` | Update an existing relationship via full PUT; fetch current definition with `dataverse_get_relationship` first |
+| `dataverse_create_choice` | Create a new global choice with initial options |
+| `dataverse_update_choice` | Update an existing global choice via full PUT; fetch current definition with `dataverse_get_choice` first |
+| `dataverse_add_choice_option` | Add a new option to a global or local choice |
+| `dataverse_update_choice_option` | Update the display label of an existing option in a global or local choice |
+| `dataverse_reorder_choice_options` | Reorder all options of a global or local choice |
+| `dataverse_publish_customizations` | Publish schema changes (tables, choices, relationships) via `PublishXml` or all unpublished changes via `PublishAllXml` |
+
+### Requires `DATAVERSE_ALLOW_DELETE=true`
+
+These tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set in the MCP server `env`. Each tool also requires `allow_delete: true` in the tool call parameters to execute — without it, the tool returns a preview without making changes.
+
+| Tool | Description |
+|------|-------------|
+| `dataverse_disassociate_records` | Remove an association between two records via a navigation property |
+| `dataverse_delete_table` | Permanently delete a custom table and all its data |
+| `dataverse_delete_column` | Permanently delete a custom column and all its data from a table |
+| `dataverse_delete_relationship` | Delete a custom relationship by MetadataId |
+| `dataverse_delete_choice` | Delete a global choice by logical name; ensure no columns reference it first |
+| `dataverse_delete_choice_option` | Remove a specific option value from a global or local choice |
 | `dataverse_list_tables` | List available tables/entities with optional filter |
 | `dataverse_get_table_metadata` | Get schema details for a specific table |
 | `dataverse_list_columns` | List all column definitions for a table with optional type filter and field selection |

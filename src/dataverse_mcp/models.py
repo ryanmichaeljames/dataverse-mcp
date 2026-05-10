@@ -968,6 +968,360 @@ class DeleteRelationshipInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Choice (option set) write tools
+# ---------------------------------------------------------------------------
+
+
+class ChoiceOptionItem(BaseModel):
+    """A single option value and label for a choice column."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    value: int = Field(
+        ...,
+        description="Integer option code (e.g., 100000000).",
+    )
+    label: str = Field(
+        ...,
+        description="Display label for the option.",
+        min_length=1,
+    )
+
+
+class CreateChoiceInput(DataverseEnvironmentInput):
+    """Input for creating a new global choice (option set)."""
+
+    name: str = Field(
+        ...,
+        description=(
+            "Logical name for the global choice with publisher prefix "
+            "(e.g., 'cr123_mychoice'). Used to reference the choice in columns."
+        ),
+        min_length=3,
+    )
+    display_name: str = Field(
+        ...,
+        description="Display name for the global choice shown in the UI.",
+        min_length=1,
+    )
+    options: list[ChoiceOptionItem] = Field(
+        ...,
+        description=(
+            "Initial list of options. Each option requires 'value' (int) and "
+            "'label' (str). Example: [{'value': 100000000, 'label': 'Option A'}]."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the choice definition "
+            "body without calling the API."
+        ),
+    )
+
+
+class UpdateChoiceInput(DataverseEnvironmentInput):
+    """Input for updating an existing global choice via full PUT replacement."""
+
+    metadata_id: str = Field(
+        ...,
+        description=(
+            "MetadataId GUID of the global choice to update. "
+            "Obtain via dataverse_get_choice."
+        ),
+        min_length=36,
+    )
+    full_definition: dict = Field(
+        ...,
+        description=(
+            "Complete OptionSetMetadata JSON obtained from dataverse_get_choice. "
+            "Apply your changes before passing here. The Dataverse metadata API "
+            "requires a full PUT. To update individual option labels, use "
+            "dataverse_update_choice_option instead."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the PUT. "
+            "When False (default), returns the full_definition as a preview "
+            "without calling the API."
+        ),
+    )
+
+    @field_validator("metadata_id")
+    @classmethod
+    def validate_metadata_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("metadata_id must be a valid GUID")
+        return v
+
+
+class DeleteChoiceInput(DataverseEnvironmentInput):
+    """Input for deleting a global choice by logical name."""
+
+    name: str = Field(
+        ...,
+        description=(
+            "Logical name of the global choice to delete "
+            "(e.g., 'cr123_mychoice'). Confirm no columns reference it first "
+            "via dataverse_get_choice."
+        ),
+        min_length=1,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), returns the name as a preview without "
+            "deleting anything."
+        ),
+    )
+
+
+class AddChoiceOptionInput(DataverseEnvironmentInput):
+    """Input for adding a new option to a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice to add the option to "
+            "(e.g., 'cr123_mychoice'). Provide this OR entity_logical_name + "
+            "attribute_logical_name for a local choice — not both."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the table that owns the local choice column. "
+            "Required when adding to a local (column-specific) choice."
+        ),
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the local choice column. "
+            "Required when entity_logical_name is provided."
+        ),
+    )
+    label: str = Field(
+        ...,
+        description="Display label for the new option.",
+        min_length=1,
+    )
+    value: int | None = Field(
+        default=None,
+        description=(
+            "Integer code for the new option. If omitted, Dataverse assigns one "
+            "automatically. Custom option values typically start at 100000000."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the insert. "
+            "When False (default), returns a preview of the request body "
+            "without calling the API."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "AddChoiceOptionInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+class UpdateChoiceOptionInput(DataverseEnvironmentInput):
+    """Input for updating the label of an existing option in a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice (e.g., 'cr123_mychoice'). "
+            "Provide this OR entity_logical_name + attribute_logical_name."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the table for a local choice column.",
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the local choice column.",
+    )
+    value: int = Field(
+        ...,
+        description="Integer code of the option to update.",
+    )
+    label: str = Field(
+        ...,
+        description="New display label for the option.",
+        min_length=1,
+    )
+    merge_labels: bool = Field(
+        default=False,
+        description=(
+            "When True, preserves labels for other languages and only updates "
+            "the provided label. When False (default), replaces all language labels."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the update. "
+            "When False (default), returns a preview of the request body."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "UpdateChoiceOptionInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+class DeleteChoiceOptionInput(DataverseEnvironmentInput):
+    """Input for removing a specific option value from a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice (e.g., 'cr123_mychoice'). "
+            "Provide this OR entity_logical_name + attribute_logical_name."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the table for a local choice column.",
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the local choice column.",
+    )
+    value: int = Field(
+        ...,
+        description="Integer code of the option to remove.",
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), returns a preview of the request body."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "DeleteChoiceOptionInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+class ReorderChoiceOptionsInput(DataverseEnvironmentInput):
+    """Input for reordering all options in a local or global choice."""
+
+    option_set_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the global choice (e.g., 'cr123_mychoice'). "
+            "Provide this OR entity_logical_name + attribute_logical_name."
+        ),
+    )
+    entity_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the table for a local choice column.",
+    )
+    attribute_logical_name: str | None = Field(
+        default=None,
+        description="Logical name of the local choice column.",
+    )
+    values: list[int] = Field(
+        ...,
+        description=(
+            "Ordered list of all integer option codes in the desired display order. "
+            "Must include every existing option value."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the reorder. "
+            "When False (default), returns a preview of the request body."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_choice_target(self) -> "ReorderChoiceOptionsInput":
+        has_global = bool(self.option_set_name)
+        has_local = bool(self.entity_logical_name or self.attribute_logical_name)
+        if has_global and has_local:
+            raise ValueError(
+                "Provide either option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local) — not both."
+            )
+        if not has_global and not has_local:
+            raise ValueError(
+                "Provide option_set_name (global) or entity_logical_name + "
+                "attribute_logical_name (local)."
+            )
+        if has_local and not (self.entity_logical_name and self.attribute_logical_name):
+            raise ValueError(
+                "Both entity_logical_name and attribute_logical_name are required "
+                "for local choices."
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
 

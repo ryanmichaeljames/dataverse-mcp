@@ -387,8 +387,9 @@ class GetRelationshipInput(DataverseEnvironmentInput):
         ...,
         description=(
             "Schema name of the relationship (e.g., 'account_contacts', "
-            "'contact_customer_accounts'). Schema names are case-sensitive "
-            "and must match exactly."
+            "'contact_customer_accounts'). Schema names are case-sensitive and "
+            "their exact casing/format depends on how the relationship was "
+            "defined. Always match the SchemaName value exactly."
         ),
         min_length=1,
     )

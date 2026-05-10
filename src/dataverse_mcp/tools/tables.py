@@ -23,6 +23,14 @@ def _get_client(ctx: Context, dataverse_url: str | None):
     return get_dataverse_client(app_ctx, dataverse_url)
 
 
+def _resolve_base_url(app_ctx: AppContext, dataverse_url: str | None) -> str | None:
+    """Resolve the Dataverse base URL from input or configured fallback."""
+    base_url = dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return None
+    return base_url.rstrip("/")
+
+
 def _flatten_records(pages, limit: int) -> list[dict]:
     """Flatten paginated Record results into a list of dicts, up to limit."""
     records = []
@@ -176,7 +184,15 @@ async def dataverse_associate_records(
     allow_write=False.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = (params.dataverse_url or app_ctx.fallback_dataverse_url).rstrip("/")
+    base_url = _resolve_base_url(app_ctx, params.dataverse_url)
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
 
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
@@ -199,9 +215,10 @@ async def dataverse_associate_records(
         })
 
     try:
-        token = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: get_bearer_token(app_ctx, f"{base_url}/.default"),
+        token = await asyncio.to_thread(
+            get_bearer_token,
+            app_ctx,
+            f"{base_url}/.default",
         )
         headers = {
             "Authorization": f"Bearer {token}",
@@ -209,18 +226,22 @@ async def dataverse_associate_records(
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0",
         }
-        with httpx.Client(timeout=30) as client:
-            response = client.post(url, headers=headers, json=body)
-            if response.status_code == 204:
-                return json.dumps({"success": True})
-            try:
-                err = response.json()
-            except Exception:
-                err = response.text
-            return json.dumps({
-                "error": True,
-                "message": f"HTTP {response.status_code}: {err}",
-            })
+
+        def _post():
+            with httpx.Client(timeout=30) as client:
+                return client.post(url, headers=headers, json=body)
+
+        response = await asyncio.to_thread(_post)
+        if response.status_code == 204:
+            return json.dumps({"success": True})
+        try:
+            err = response.json()
+        except Exception:
+            err = response.text
+        return json.dumps({
+            "error": True,
+            "message": f"HTTP {response.status_code}: {err}",
+        })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_associate_records")
         return json.dumps({
@@ -254,7 +275,15 @@ async def dataverse_disassociate_records(
     allow_delete=False.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = (params.dataverse_url or app_ctx.fallback_dataverse_url).rstrip("/")
+    base_url = _resolve_base_url(app_ctx, params.dataverse_url)
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
 
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
@@ -271,27 +300,32 @@ async def dataverse_disassociate_records(
         })
 
     try:
-        token = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: get_bearer_token(app_ctx, f"{base_url}/.default"),
+        token = await asyncio.to_thread(
+            get_bearer_token,
+            app_ctx,
+            f"{base_url}/.default",
         )
         headers = {
             "Authorization": f"Bearer {token}",
             "OData-MaxVersion": "4.0",
             "OData-Version": "4.0",
         }
-        with httpx.Client(timeout=30) as client:
-            response = client.delete(url, headers=headers)
-            if response.status_code == 204:
-                return json.dumps({"success": True})
-            try:
-                err = response.json()
-            except Exception:
-                err = response.text
-            return json.dumps({
-                "error": True,
-                "message": f"HTTP {response.status_code}: {err}",
-            })
+
+        def _delete():
+            with httpx.Client(timeout=30) as client:
+                return client.delete(url, headers=headers)
+
+        response = await asyncio.to_thread(_delete)
+        if response.status_code == 204:
+            return json.dumps({"success": True})
+        try:
+            err = response.json()
+        except Exception:
+            err = response.text
+        return json.dumps({
+            "error": True,
+            "message": f"HTTP {response.status_code}: {err}",
+        })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_disassociate_records")
         return json.dumps({

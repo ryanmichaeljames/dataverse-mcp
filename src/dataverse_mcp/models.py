@@ -262,6 +262,80 @@ class GetTableMetadataInput(DataverseEnvironmentInput):
     )
 
 
+class ListColumnsInput(DataverseEnvironmentInput):
+    """Input for listing column (attribute) definitions for a table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table whose columns to list "
+            "(e.g., 'account', 'contact', 'new_customtable'). Use lowercase."
+        ),
+        min_length=1,
+    )
+    attribute_type: str | None = Field(
+        default=None,
+        description=(
+            "Filter columns by AttributeType. Common values: "
+            "'String', 'Integer', 'Decimal', 'Double', 'Boolean', "
+            "'DateTime', 'Lookup', 'Picklist', 'MultiSelectPicklist', "
+            "'Memo', 'Money', 'Uniqueidentifier', 'File', 'Image'. "
+            "Case-sensitive (use PascalCase)."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Metadata properties to return (PascalCase). Defaults to "
+            "LogicalName, SchemaName, AttributeType, DisplayName, "
+            "RequiredLevel, IsValidForRead, IsValidForCreate, IsValidForUpdate. "
+            "Example: ['LogicalName', 'AttributeType', 'MaxLength']"
+        ),
+    )
+
+
+class GetColumnInput(DataverseEnvironmentInput):
+    """Input for retrieving full metadata for a single table column."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table (e.g., 'account', 'contact'). "
+            "Use lowercase."
+        ),
+        min_length=1,
+    )
+    column_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the column (e.g., 'name', 'telephone1', "
+            "'new_customfield'). Use lowercase."
+        ),
+        min_length=1,
+    )
+
+
+class ListChoiceColumnOptionsInput(DataverseEnvironmentInput):
+    """Input for listing option values for a Picklist or MultiSelectPicklist column."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table (e.g., 'account', 'lead'). "
+            "Use lowercase."
+        ),
+        min_length=1,
+    )
+    column_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the Picklist or MultiSelectPicklist column "
+            "(e.g., 'statuscode', 'new_category'). Use lowercase."
+        ),
+        min_length=1,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Power Platform admin tools
 # ---------------------------------------------------------------------------

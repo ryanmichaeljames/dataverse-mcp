@@ -220,17 +220,15 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
 async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) -> str:
     """List OData EntitySet names available in the Dataverse environment.
 
-    Queries the OData service document and returns EntitySet entries with
-    their name (the URL-safe collection name) and url. Use this to discover the
-    exact entity_set_name for a table before composing record query URLs —
-    faster and smaller than fetching the full $metadata document.
+    Queries the OData service document and returns each EntitySet's name and url.
+    Use this to discover the exact entity_set_name for a table before composing
+    record query URLs — faster and smaller than fetching the full $metadata document.
 
     For example, the 'account' table has EntitySet name 'accounts', and
     'systemuser' has EntitySet name 'systemusers'.
 
-    Use 'contains' to filter by a substring (e.g., 'account') and 'top' to
-    limit the number of results. Check 'has_more' in the response to determine
-    if additional entries exist beyond the current page.
+    Use 'contains' to filter by a substring and 'top' to limit results.
+    Check 'has_more' in the response to determine if additional entries exist.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url

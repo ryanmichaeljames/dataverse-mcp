@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PublishCustomizationsInput` now requires at least one targeted publish item when `publish_all=false`
 - Targeted `PublishXml` payload generation now escapes input safely via XML element construction
 - `dataverse_associate_records` and `dataverse_disassociate_records` now return a clear JSON error when no Dataverse URL is available and move blocking HTTP calls off the async event loop (#16)
+- Improved clarity and conciseness of tool docstrings across `solutions.py`, `tables.py`, `environments.py`, and `metadata.py` — removed duplicate sentences, simplified HTTP implementation details, and tightened wording (#24)
 
 ## [1.0.0] - 2026-05-05
 

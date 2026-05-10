@@ -178,8 +178,7 @@ async def dataverse_associate_records(
 ) -> str:
     """Create an association between two records via a collection-valued navigation property.
 
-    Sends POST /{entity_set_name}({record_id})/{navigation_property}/$ref with
-    {"@odata.id": "<absolute_uri>"} to link the related record.
+    Links the related record by POSTing an @odata.id reference to the navigation property.
 
     Use dataverse_list_relationships to discover the correct navigation_property name.
     Use dataverse_get_entity_sets to resolve entity set names.
@@ -272,8 +271,7 @@ async def dataverse_disassociate_records(
 ) -> str:
     """Remove an association between two records via a collection-valued navigation property.
 
-    Sends DELETE /{entity_set_name}({record_id})/{navigation_property}({related_record_id})/$ref
-    to unlink the related record.
+    Unlinks the related record by sending a DELETE to the navigation property $ref endpoint.
 
     Set allow_delete=False (default) to preview the URL without executing it.
     Set allow_delete=True to perform the disassociation.

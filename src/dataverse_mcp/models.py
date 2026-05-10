@@ -1485,3 +1485,108 @@ class ListEnvironmentsInput(BaseModel):
         default=False,
         description="Include add-on allocation details for each environment",
     )
+
+
+# ---------------------------------------------------------------------------
+# Record association write tools
+# ---------------------------------------------------------------------------
+
+
+class AssociateRecordsInput(DataverseEnvironmentInput):
+    """Input for creating an association between two records."""
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the primary record's table "
+            "(e.g., 'accounts'). Use dataverse_get_entity_sets to discover."
+        ),
+        min_length=1,
+    )
+    record_id: str = Field(
+        ...,
+        description="GUID of the primary record.",
+        min_length=36,
+    )
+    navigation_property: str = Field(
+        ...,
+        description=(
+            "Collection-valued navigation property name on the primary entity "
+            "(case-sensitive). Use dataverse_list_relationships to discover "
+            "the correct name (e.g., 'contact_customer_accounts')."
+        ),
+        min_length=1,
+    )
+    related_entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the related record's table "
+            "(e.g., 'contacts')."
+        ),
+        min_length=1,
+    )
+    related_record_id: str = Field(
+        ...,
+        description="GUID of the related record to associate.",
+        min_length=36,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the association. "
+            "When False (default), returns a preview of the request "
+            "without calling the API."
+        ),
+    )
+
+    @field_validator("record_id", "related_record_id")
+    @classmethod
+    def validate_guids(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("must be a valid GUID")
+        return v
+
+
+class DisassociateRecordsInput(DataverseEnvironmentInput):
+    """Input for removing an association between two records."""
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the primary record's table "
+            "(e.g., 'accounts')."
+        ),
+        min_length=1,
+    )
+    record_id: str = Field(
+        ...,
+        description="GUID of the primary record.",
+        min_length=36,
+    )
+    navigation_property: str = Field(
+        ...,
+        description=(
+            "Collection-valued navigation property name on the primary entity "
+            "(case-sensitive). Use dataverse_list_relationships to discover."
+        ),
+        min_length=1,
+    )
+    related_record_id: str = Field(
+        ...,
+        description="GUID of the related record to disassociate.",
+        min_length=36,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the disassociation. "
+            "When False (default), returns a preview without calling the API."
+        ),
+    )
+
+    @field_validator("record_id", "related_record_id")
+    @classmethod
+    def validate_guids(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("must be a valid GUID")
+        return v

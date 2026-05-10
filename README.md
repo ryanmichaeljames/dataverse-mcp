@@ -138,6 +138,8 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_get_entity_sets` | List all OData EntitySet names from the service document — discover the correct collection URL for any table |
 | `dataverse_retrieve_user_privileges` | List all security privileges assigned to a system user via their role memberships |
 | `dataverse_retrieve_principal_access` | Check the access rights a user has to a specific record (ReadAccess, WriteAccess, DeleteAccess, etc.) |
+| `dataverse_associate_records` | Associate two records via a collection-valued navigation property (`$ref`); supports preview mode |
+| `dataverse_disassociate_records` | Remove an association between two records via a navigation property; supports preview mode |
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute (`allow_write` safety guard) |
 | `dataverse_update_table` | Update an existing table's display name or description (`allow_write` safety guard) |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data (`allow_delete` safety guard) |

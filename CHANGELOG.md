@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dataverse_list_columns` tool to list all column (attribute) definitions for a table with optional type and field filtering (#5)
+- `dataverse_get_column` tool to retrieve full metadata for a single column including type-specific properties (#5)
+- `dataverse_list_choice_column_options` tool to get all option values (integer code + label) for Picklist and MultiSelectPicklist columns (#5)
+
 ## [1.0.0] - 2026-05-05
 
 ### Added
@@ -56,7 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
 [Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...v1.0.0
+[1.0.0]:https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...v0.1.0
 [0.1.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b1...v0.1.0b2
 [0.1.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/releases/tag/v0.1.0b1

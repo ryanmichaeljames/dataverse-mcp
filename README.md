@@ -6,7 +6,7 @@ An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft
 
 - **Solution inspection** — list solutions, get solution details, browse solution components
 - **Table querying** — flexible OData-style queries against any Dataverse table
-- **Schema exploration** — list tables, inspect table metadata (primary key, name attribute)
+- **Schema exploration** — list tables, inspect table and column metadata, browse choice column options
 - **Environment discovery** — list Power Platform environments available to the authenticated user
 - **Multi-environment targeting** — one MCP server config can query any Dataverse org the caller specifies
 - **Agent-friendly** — rich tool descriptions designed for AI agent discoverability
@@ -140,6 +140,9 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_get_record` | Get a single record by table name and GUID |
 | `dataverse_list_tables` | List available tables/entities with optional filter |
 | `dataverse_get_table_metadata` | Get schema details for a specific table |
+| `dataverse_list_columns` | List all column definitions for a table with optional type filter and field selection |
+| `dataverse_get_column` | Get full metadata for a single column including type-specific properties (MaxLength, Precision, RequiredLevel, Format) |
+| `dataverse_list_choice_column_options` | Get all option values (integer code + label) for a Picklist or MultiSelectPicklist column |
 
 ## Project Structure
 

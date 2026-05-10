@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_retrieve_user_privileges` tool to list all security privileges assigned to a system user via their role memberships; returns `PrivilegeName`, `Depth`, and `BusinessUnitId` for each privilege (#9)
+- `dataverse_retrieve_principal_access` tool to check the access rights a system user has to a specific record; returns `AccessRights` bitmask and named rights list (#9)
+- `dataverse_associate_records` tool to create an association between two records via a collection-valued navigation property (`$ref`); supports `allow_write` safety guard with preview mode (#16)
+- `dataverse_disassociate_records` tool to remove an association between two records; supports `allow_delete` safety guard with preview mode (#16)
+
+### Changed
+- Server description updated from "read-only" to reflect full CRUD capability; `pyproject.toml`, `__init__.py`, `copilot-instructions.md`, and `README.md` updated accordingly
+- Tool annotation guidelines updated: `readOnlyHint`, `destructiveHint`, and `idempotentHint` are now set per-tool based on actual behavior rather than always read-only
 - `dataverse_create_column` tool to add a new column to a table with typed attribute metadata, display name, required level, and type-specific properties; supports `allow_write` safety guard with preview mode (#11)
 - `dataverse_update_column` tool to update an existing column via full PUT replacement; agent must fetch the current definition via `dataverse_get_column` first; supports `allow_write` safety guard with preview mode (#11)
 - `dataverse_delete_column` tool to permanently delete a custom column; fetches current definition for preview; supports `allow_delete` safety guard (#11)
@@ -50,6 +58,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Create operation annotations now mark `idempotentHint: false` for non-idempotent POST create tools (`dataverse_create_column`, `dataverse_create_one_to_many_relationship`, `dataverse_create_many_to_many_relationship`, `dataverse_create_multi_table_lookup`)
 - `PublishCustomizationsInput` now requires at least one targeted publish item when `publish_all=false`
 - Targeted `PublishXml` payload generation now escapes input safely via XML element construction
+- `dataverse_associate_records` and `dataverse_disassociate_records` now return a clear JSON error when no Dataverse URL is available and move blocking HTTP calls off the async event loop (#16)
 
 ## [1.0.0] - 2026-05-05
 

@@ -6,8 +6,11 @@ An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft
 
 - **Solution inspection** — list solutions, get solution details, browse solution components
 - **Table querying** — flexible OData-style queries against any Dataverse table
+- **Record management** — create, update, and delete records with safety guards
+- **Record associations** — associate and disassociate records via navigation properties
 - **Schema exploration** — list tables, inspect table and column metadata, browse relationships, choice columns, and global choices
-- **Table schema management** — create, update, and delete custom tables with `allow_write`/`allow_delete` safety guards and preview mode
+- **Table schema management** — create, update, and delete custom tables, columns, relationships, and choices with `allow_write`/`allow_delete` safety guards and preview mode
+- **Security inspection** — retrieve user privileges and check principal access rights on records
 - **Environment discovery** — list Power Platform environments available to the authenticated user
 - **Multi-environment targeting** — one MCP server config can query any Dataverse org the caller specifies
 - **Agent-friendly** — rich tool descriptions designed for AI agent discoverability
@@ -136,6 +139,10 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_list_environments` | List Power Platform environments available to the authenticated user via the admin API, returning the full normalized payload |
 | `dataverse_whoami` | Return the authenticated user's `UserId`, `BusinessUnitId`, and `OrganizationId` from the WhoAmI endpoint |
 | `dataverse_get_entity_sets` | List all OData EntitySet names from the service document — discover the correct collection URL for any table |
+| `dataverse_retrieve_user_privileges` | List all security privileges assigned to a system user via their role memberships |
+| `dataverse_retrieve_principal_access` | Check the access rights a user has to a specific record (ReadAccess, WriteAccess, DeleteAccess, etc.) |
+| `dataverse_associate_records` | Associate two records via a collection-valued navigation property (`$ref`); supports preview mode |
+| `dataverse_disassociate_records` | Remove an association between two records via a navigation property; supports preview mode |
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute (`allow_write` safety guard) |
 | `dataverse_update_table` | Update an existing table's display name or description (`allow_write` safety guard) |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data (`allow_delete` safety guard) |

@@ -10,7 +10,7 @@ from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import mcp
 from dataverse_mcp.client import AppContext, get_bearer_token
-from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, WhoAmIInput
+from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, RetrievePrincipalAccessInput, RetrieveUserPrivilegesInput, WhoAmIInput
 
 logger = logging.getLogger(__name__)
 
@@ -294,6 +294,184 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_entity_sets")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Security tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="dataverse_retrieve_user_privileges",
+    annotations={
+        "title": "Retrieve User Privileges",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_retrieve_user_privileges(
+    params: RetrieveUserPrivilegesInput, ctx: Context
+) -> str:
+    """Retrieve all security privileges assigned to a system user via their roles.
+
+    Returns a list of RolePrivilege objects, each containing PrivilegeName,
+    Depth (Basic/Local/Deep/Global/None), and BusinessUnitId.
+
+    Use dataverse_whoami to get the current caller's UserId, then call this
+    tool to verify available privileges before attempting operations that may
+    fail due to missing permissions.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    try:
+        bearer_token = await asyncio.to_thread(
+            get_bearer_token, app_ctx, f"{base_url}/.default"
+        )
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/systemusers({params.user_id})"
+                    f"/Microsoft.Dynamics.CRM.RetrieveUserPrivileges",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        payload = await asyncio.to_thread(_request)
+        privileges = payload.get("RolePrivileges", [])
+        return json.dumps({
+            "privileges": privileges,
+            "count": len(privileges),
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse RetrieveUserPrivileges error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_retrieve_user_privileges")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_retrieve_principal_access",
+    annotations={
+        "title": "Retrieve Principal Access",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_retrieve_principal_access(
+    params: RetrievePrincipalAccessInput, ctx: Context
+) -> str:
+    """Return the access rights a system user has to a specific record.
+
+    Returns the AccessRights bitmask and a list of named rights
+    (ReadAccess, WriteAccess, DeleteAccess, AssignAccess, ShareAccess, etc.).
+
+    Use this to confirm whether a user can act on a record before delegating
+    an operation that may fail if the user lacks the required access.
+
+    entity_set_name is the OData collection name (e.g., 'accounts', 'contacts').
+    Use dataverse_get_entity_sets to discover the correct name.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    target_ref = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{params.entity_set_name}({params.record_id})"
+
+    try:
+        bearer_token = await asyncio.to_thread(
+            get_bearer_token, app_ctx, f"{base_url}/.default"
+        )
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/systemusers({params.user_id})"
+                    f"/Microsoft.Dynamics.CRM.RetrievePrincipalAccess"
+                    f"(Target=@tid)",
+                    params={"@tid": f"{{'@odata.id':'{target_ref}'}}"},
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        payload = await asyncio.to_thread(_request)
+        access_rights = payload.get("AccessRights", "")
+
+        # Parse the bitmask string into named access rights
+        named_rights = [
+            right.strip()
+            for right in access_rights.split(",")
+            if right.strip()
+        ] if access_rights else []
+
+        return json.dumps({
+            "access_rights": access_rights,
+            "named_rights": named_rights,
+            "user_id": params.user_id,
+            "entity_set_name": params.entity_set_name,
+            "record_id": params.record_id,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse RetrievePrincipalAccess error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_retrieve_principal_access")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

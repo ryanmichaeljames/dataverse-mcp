@@ -6,7 +6,8 @@ An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft
 
 - **Solution inspection** — list solutions, get solution details, browse solution components
 - **Table querying** — flexible OData-style queries against any Dataverse table
-- **Schema exploration** — list tables, inspect table and column metadata, browse choice column options
+- **Schema exploration** — list tables, inspect table and column metadata, browse relationships, choice columns, and global choices
+- **Table schema management** — create, update, and delete custom tables with `allow_write`/`allow_delete` safety guards and preview mode
 - **Environment discovery** — list Power Platform environments available to the authenticated user
 - **Multi-environment targeting** — one MCP server config can query any Dataverse org the caller specifies
 - **Agent-friendly** — rich tool descriptions designed for AI agent discoverability
@@ -135,6 +136,9 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_list_environments` | List Power Platform environments available to the authenticated user via the admin API, returning the full normalized payload |
 | `dataverse_whoami` | Return the authenticated user's `UserId`, `BusinessUnitId`, and `OrganizationId` from the WhoAmI endpoint |
 | `dataverse_get_entity_sets` | List all OData EntitySet names from the service document — discover the correct collection URL for any table |
+| `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute (`allow_write` safety guard) |
+| `dataverse_update_table` | Update an existing table's display name or description (`allow_write` safety guard) |
+| `dataverse_delete_table` | Permanently delete a custom table and all its data (`allow_delete` safety guard) |
 | `dataverse_list_solutions` | List solutions with optional OData filter, select, and top |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |

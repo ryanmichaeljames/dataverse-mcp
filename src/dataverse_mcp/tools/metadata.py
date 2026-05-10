@@ -13,6 +13,8 @@ from dataverse_mcp._app import mcp
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
     CheckRelationshipEligibilityInput,
+    CreateTableInput,
+    DeleteTableInput,
     GetChoiceInput,
     GetColumnInput,
     GetRelationshipInput,
@@ -22,6 +24,7 @@ from dataverse_mcp.models import (
     ListColumnsInput,
     ListRelationshipsInput,
     ListTablesInput,
+    UpdateTableInput,
 )
 
 logger = logging.getLogger(__name__)
@@ -912,6 +915,424 @@ async def dataverse_check_relationship_eligibility(
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_check_relationship_eligibility")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Table schema write tools
+# ---------------------------------------------------------------------------
+
+
+def _make_label(text: str | None, language_code: int = 1033) -> dict:
+    """Build a Dataverse Label object for use in entity/attribute definitions."""
+    localized = []
+    if text:
+        localized = [{
+            "@odata.type": "Microsoft.Dynamics.CRM.LocalizedLabel",
+            "Label": text,
+            "LanguageCode": language_code,
+        }]
+    return {
+        "@odata.type": "Microsoft.Dynamics.CRM.Label",
+        "LocalizedLabels": localized,
+    }
+
+
+def _build_create_table_body(params: CreateTableInput) -> dict:
+    """Build the entity definition body for POST /EntityDefinitions."""
+    return {
+        "@odata.type": "Microsoft.Dynamics.CRM.EntityMetadata",
+        "SchemaName": params.schema_name,
+        "DisplayName": _make_label(params.display_name),
+        "DisplayCollectionName": _make_label(params.display_collection_name),
+        "Description": _make_label(params.description),
+        "OwnershipType": params.ownership_type,
+        "HasActivities": False,
+        "HasNotes": False,
+        "Attributes": [
+            {
+                "@odata.type": "Microsoft.Dynamics.CRM.StringAttributeMetadata",
+                "AttributeType": "String",
+                "AttributeTypeName": {"Value": "StringType"},
+                "SchemaName": params.primary_name_attribute_schema_name,
+                "DisplayName": _make_label("Name"),
+                "Description": _make_label(None),
+                "IsPrimaryName": True,
+                "RequiredLevel": {
+                    "Value": "None",
+                    "CanBeChanged": True,
+                    "ManagedPropertyLogicalName": "canmodifyrequirementlevelsettings",
+                },
+                "MaxLength": 100,
+                "FormatName": {"Value": "Text"},
+            }
+        ],
+    }
+
+
+@mcp.tool(
+    name="dataverse_create_table",
+    annotations={
+        "title": "Create Table",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
+    """Create a new custom table (entity) in the Dataverse environment.
+
+    Builds and POSTs an EntityMetadata definition including the table schema,
+    display names, ownership type, and a required primary name string attribute.
+
+    When allow_write is False (default), returns the entity definition that
+    would be sent as a preview — no API call is made. Set allow_write to True
+    to execute the create operation.
+
+    The schema_name must include a publisher prefix (e.g., 'cr123_Widget').
+    The table logical name will be the lowercase form of schema_name.
+    """
+    body = _build_create_table_body(params)
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "entity_definition": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _request():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response
+
+        response = await asyncio.to_thread(_request)
+        location = response.headers.get("OData-EntityId") or response.headers.get("location", "")
+        logger.info("Created table %s — location: %s", params.schema_name, location)
+        return json.dumps({
+            "created": True,
+            "schema_name": params.schema_name,
+            "logical_name": params.schema_name.lower(),
+            "location": location,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning("Timeout in dataverse_create_table — operation may have succeeded: %s", e)
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. Dataverse table "
+                "creation can take several minutes. Use dataverse_list_tables or "
+                "dataverse_get_table_metadata to verify whether the table was created."
+            ),
+            "schema_name": params.schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create table error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_table")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_update_table",
+    annotations={
+        "title": "Update Table",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
+    """Update an existing table's display name or description.
+
+    Fetches the current full entity definition, applies the requested changes,
+    and PUTs the merged definition back. The Dataverse metadata API requires a
+    full PUT — partial updates (PATCH) are not supported on EntityDefinitions.
+
+    When allow_write is False (default), fetches the current definition, applies
+    the changes, and returns the merged definition as a preview without calling
+    PUT. Set allow_write to True to execute the update.
+
+    At least one of display_name or description must be provided.
+    """
+    if not params.display_name and params.description is None:
+        return json.dumps({
+            "error": True,
+            "message": "Provide at least one of display_name or description to update.",
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _get_definition():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        definition = await asyncio.to_thread(_get_definition)
+        definition.pop("@odata.context", None)
+
+        if params.display_name:
+            definition["DisplayName"] = _make_label(params.display_name)
+        if params.description is not None:
+            definition["Description"] = _make_label(params.description)
+
+        if not params.allow_write:
+            return json.dumps({
+                "preview": True,
+                "message": "Set allow_write=true to execute the update operation.",
+                "entity_definition": definition,
+            })
+
+        metadata_id = definition.get("MetadataId")
+        if not metadata_id:
+            logger.error("MetadataId missing from table definition for %s", params.table_logical_name)
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"MetadataId not found in table definition for '{params.table_logical_name}'. "
+                    "Cannot construct update URL without MetadataId."
+                ),
+            })
+
+        def _put_definition():
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.put(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions({metadata_id})",
+                    json=definition,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "Content-Type": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_put_definition)
+        logger.info("Updated table %s", params.table_logical_name)
+        return json.dumps({
+            "updated": True,
+            "table_logical_name": params.table_logical_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse update table error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_update_table")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_delete_table",
+    annotations={
+        "title": "Delete Table",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
+    """Permanently delete a custom table and all its data from the environment.
+
+    WARNING: This operation is irreversible. All records in the table will be
+    permanently deleted along with the table definition.
+
+    When allow_delete is False (default), fetches and returns the current table
+    definition as a preview without deleting anything. Set allow_delete to True
+    to execute the delete operation.
+
+    Only custom tables (IsCustomEntity=true) can be deleted. Attempting to
+    delete a system table will return an error from the API.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _get_definition():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')"
+                    f"?$select=LogicalName,SchemaName,DisplayName,IsCustomEntity,IsManaged",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        definition = await asyncio.to_thread(_get_definition)
+        definition.pop("@odata.context", None)
+
+        if not params.allow_delete:
+            return json.dumps({
+                "preview": True,
+                "message": (
+                    "Set allow_delete=true to permanently delete this table and all its data. "
+                    "This operation is irreversible."
+                ),
+                "table": definition,
+            })
+
+        # Safety check: only allow deletion of custom, unmanaged tables
+        is_custom = definition.get("IsCustomEntity", False)
+        is_managed = definition.get("IsManaged", False)
+        if not is_custom or is_managed:
+            logger.error(
+                "Cannot delete table %s: IsCustomEntity=%s, IsManaged=%s",
+                params.table_logical_name,
+                is_custom,
+                is_managed,
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Cannot delete table '{params.table_logical_name}': "
+                    f"only custom, unmanaged tables can be deleted "
+                    f"(IsCustomEntity={is_custom}, IsManaged={is_managed})."
+                ),
+            })
+
+        def _delete():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.delete(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_delete)
+        logger.info("Deleted table %s", params.table_logical_name)
+        return json.dumps({
+            "deleted": True,
+            "table_logical_name": params.table_logical_name,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning("Timeout in dataverse_delete_table — operation may have succeeded: %s", e)
+        return json.dumps({
+            "error": True,
+            "deleted": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. Dataverse table "
+                "deletion can take several minutes. Use dataverse_list_tables or "
+                "dataverse_get_table_metadata to verify whether the table was deleted."
+            ),
+            "table_logical_name": params.table_logical_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse delete table error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_delete_table")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

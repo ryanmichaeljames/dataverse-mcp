@@ -618,11 +618,13 @@ async def dataverse_get_relationship(
     """Get full metadata for a single relationship by schema name.
 
     Returns cascade configuration, navigation property names, and all
-    structural details for the relationship. Schema names are PascalCase
-    and case-sensitive (e.g., 'account_contacts').
+    structural details for the relationship. Schema names are case-sensitive
+    and must exactly match the SchemaName returned by
+    dataverse_list_relationships (e.g., 'account_contacts').
 
-    Use dataverse_list_relationships first to discover schema names.
-    The navigation property names are required for OData $expand queries.
+    Use dataverse_list_relationships first to discover the correct
+    SchemaName. The navigation property names are required for OData
+    $expand queries.
     """
     app_ctx = _get_app_ctx(ctx)
     base_url = str(params.dataverse_url)

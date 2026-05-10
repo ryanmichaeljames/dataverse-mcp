@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import os
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -487,7 +488,7 @@ def _parse_batch_response(response_text: str, boundary: str) -> list[dict]:
     return results
 
 
-@write_tool(
+@mcp.tool(
     name="dataverse_execute_batch",
     annotations={
         "title": "Execute Batch",
@@ -518,6 +519,16 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
         })
 
     has_mutations = any(op.method != "GET" for op in params.operations)
+    if has_mutations:
+        write_enabled = os.environ.get("DATAVERSE_ALLOW_WRITE", "").lower() == "true"
+        if not write_enabled:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "Batch operations containing non-GET methods require "
+                    "DATAVERSE_ALLOW_WRITE=true in the MCP server environment."
+                ),
+            })
 
     batch_boundary = "batch_dataverse_mcp"
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/$batch"

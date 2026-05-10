@@ -182,6 +182,7 @@ Tools are grouped by the env var required to enable them. Read-only tools are al
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |
 | `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, top |
 | `dataverse_get_record` | Get a single record by table name and GUID |
+| `dataverse_execute_batch` | Execute GET-only `$batch` queries (up to 1,000 operations); batch requests with mutations require `DATAVERSE_ALLOW_WRITE=true` |
 | `dataverse_list_tables` | List available tables/entities with optional filter |
 | `dataverse_get_table_metadata` | Get schema details for a specific table |
 | `dataverse_list_columns` | List all column definitions for a table with optional type filter and field selection |
@@ -201,7 +202,6 @@ These tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set in the 
 |------|-------------|
 | `dataverse_associate_records` | Associate two records via a collection-valued navigation property (`$ref`) |
 | `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident); subordinate is deactivated after merge |
-| `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; supports atomic change sets and `continue_on_error`; returns per-operation results |
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute |
 | `dataverse_update_table` | Update an existing table's display name or description |
 | `dataverse_create_column` | Add a new column to a table with typed attribute metadata and display name |
@@ -229,16 +229,6 @@ These tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set in the
 | `dataverse_delete_relationship` | Delete a custom relationship by MetadataId |
 | `dataverse_delete_choice` | Delete a global choice by logical name; ensure no columns reference it first |
 | `dataverse_delete_choice_option` | Remove a specific option value from a global or local choice |
-| `dataverse_list_tables` | List available tables/entities with optional filter |
-| `dataverse_get_table_metadata` | Get schema details for a specific table |
-| `dataverse_list_columns` | List all column definitions for a table with optional type filter and field selection |
-| `dataverse_get_column` | Get full metadata for a single column including type-specific properties (MaxLength, Precision, RequiredLevel, Format) |
-| `dataverse_list_choice_column_options` | Get all option values (integer code + label) for a Picklist or MultiSelectPicklist column |
-| `dataverse_list_relationships` | List relationship definitions for a table (1:N, N:1, N:N) or all relationships in the environment |
-| `dataverse_get_relationship` | Get full metadata for a single relationship by schema name, including cascade config and navigation property names |
-| `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship (referenced, referencing, or many-to-many) via Dataverse eligibility endpoints (`CanBeReferenced`, `CanBeReferencing`, `CanManyToMany`) |
-| `dataverse_list_choices` | List all global choice (option set) definitions in the environment |
-| `dataverse_get_choice` | Get a specific global choice by name or MetadataId, including all option values and labels |
 
 ## Project Structure
 

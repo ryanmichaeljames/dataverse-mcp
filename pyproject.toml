@@ -1,7 +1,7 @@
 [project]
 name = "dataverse-mcp"
 version = "1.0.0"
-description = "A read-only MCP server for querying Microsoft Dataverse environments during development"
+description = "An MCP server for interacting with Microsoft Dataverse environments during development"
 readme = "README.md"
 requires-python = ">=3.10"
 authors = [

@@ -11,7 +11,7 @@ When generating code for this repository:
 
 ## Project Overview
 
-This is a **read-only** MCP (Model Context Protocol) server that enables VS Code Copilot agents to query a Microsoft Dataverse environment during development. It uses the official `PowerPlatform-Dataverse-Client` Python SDK and exposes tools for retrieving solutions, querying tables, and inspecting metadata.
+This is an MCP (Model Context Protocol) server that enables VS Code Copilot agents to interact with a Microsoft Dataverse environment during development. It uses the official `PowerPlatform-Dataverse-Client` Python SDK and exposes tools for querying, mutating, and inspecting Dataverse data and metadata.
 
 **Transport**: stdio (local VS Code Copilot integration)
 
@@ -104,11 +104,15 @@ async def dataverse_example_tool(params: ExampleToolInput) -> str:
     pass
 ```
 
-### Tool Annotations — ALL tools in this project are read-only:
-- `readOnlyHint`: Always `True`
-- `destructiveHint`: Always `False`
-- `idempotentHint`: Always `True`
+### Tool Annotations
+
+Set annotations based on the tool's actual behavior:
+- `readOnlyHint`: `True` for read/query tools, `False` for write/delete tools
+- `destructiveHint`: `True` for delete tools, `False` otherwise
+- `idempotentHint`: `True` for GET/PUT/DELETE tools, `False` for POST create tools
 - `openWorldHint`: Always `True`
+
+Write tools MUST include an `allow_write` or `allow_delete` safety guard (bool, default `False`) with preview mode that returns the request URL/body without executing it.
 
 ## Error Handling
 
@@ -286,7 +290,7 @@ Breaking changes: append `!` to type (e.g., `feat!`) and add `BREAKING CHANGE:` 
 
 - Never expose credentials in logs or responses
 - Never hardcode secrets — use environment variables
-- All tools are read-only — no write, update, or delete operations
+- Write tools require explicit `allow_write=True` or `allow_delete=True` to execute; default is preview-only
 - Validate all inputs via Pydantic before passing to SDK
 - Sanitize OData filter strings to prevent injection
 

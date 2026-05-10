@@ -1,1 +1,1 @@
-"""Dataverse MCP Server — read-only MCP tools for querying Microsoft Dataverse."""
+"""Dataverse MCP Server — MCP tools for interacting with Microsoft Dataverse."""

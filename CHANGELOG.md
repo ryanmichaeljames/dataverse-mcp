@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_retrieve_principal_access` tool to check the access rights a system user has to a specific record; returns `AccessRights` bitmask and named rights list (#9)
 - `dataverse_associate_records` tool to create an association between two records via a collection-valued navigation property (`$ref`); supports `allow_write` safety guard with preview mode (#16)
 - `dataverse_disassociate_records` tool to remove an association between two records; supports `allow_delete` safety guard with preview mode (#16)
+
+### Changed
+- Server description updated from "read-only" to reflect full CRUD capability; `pyproject.toml`, `__init__.py`, `copilot-instructions.md`, and `README.md` updated accordingly
+- Tool annotation guidelines updated: `readOnlyHint`, `destructiveHint`, and `idempotentHint` are now set per-tool based on actual behavior rather than always read-only
 - `dataverse_create_column` tool to add a new column to a table with typed attribute metadata, display name, required level, and type-specific properties; supports `allow_write` safety guard with preview mode (#11)
 - `dataverse_update_column` tool to update an existing column via full PUT replacement; agent must fetch the current definition via `dataverse_get_column` first; supports `allow_write` safety guard with preview mode (#11)
 - `dataverse_delete_column` tool to permanently delete a custom column; fetches current definition for preview; supports `allow_delete` safety guard (#11)

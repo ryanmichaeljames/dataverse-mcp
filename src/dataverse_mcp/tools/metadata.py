@@ -1281,7 +1281,9 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
     except httpx.TimeoutException as e:
         logger.warning("Timeout in dataverse_delete_table — operation may have succeeded: %s", e)
         return json.dumps({
+            "error": True,
             "deleted": None,
+            "is_transient": True,
             "message": (
                 "The request timed out before the server responded. Dataverse table "
                 "deletion can take several minutes. Use dataverse_list_tables or "

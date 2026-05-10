@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `dataverse_list_relationships` now returns `has_more` and consistently applies the `top` limit (#6)
 - `dataverse_check_relationship_eligibility` now uses Dataverse relationship eligibility endpoints (`CanBeReferenced`, `CanBeReferencing`, `CanManyToMany`) (#6)
+- `dataverse_delete_table` now marks timeout responses as errors (`error: true`) with `is_transient: true` so clients do not misinterpret timed-out deletes as success (#8)
 
 ## [1.0.0] - 2026-05-05
 

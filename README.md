@@ -6,7 +6,8 @@ An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft
 
 - **Solution inspection** — list solutions, get solution details, browse solution components
 - **Table querying** — flexible OData-style queries against any Dataverse table
-- **Schema exploration** — list tables, inspect table and column metadata, browse choice column options
+- **Schema exploration** — list tables, inspect table and column metadata, browse relationships, choice columns, and global choices
+- **Table schema management** — create, update, and delete custom tables with `allow_write`/`allow_delete` safety guards and preview mode
 - **Environment discovery** — list Power Platform environments available to the authenticated user
 - **Multi-environment targeting** — one MCP server config can query any Dataverse org the caller specifies
 - **Agent-friendly** — rich tool descriptions designed for AI agent discoverability

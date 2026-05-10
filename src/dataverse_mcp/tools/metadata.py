@@ -12,10 +12,13 @@ from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 from dataverse_mcp._app import mcp
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
+    CheckRelationshipEligibilityInput,
     GetColumnInput,
+    GetRelationshipInput,
     GetTableMetadataInput,
     ListChoiceColumnOptionsInput,
     ListColumnsInput,
+    ListRelationshipsInput,
     ListTablesInput,
 )
 
@@ -447,6 +450,298 @@ async def dataverse_list_choice_column_options(
         return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_choice_column_options")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Relationship metadata tools
+# ---------------------------------------------------------------------------
+
+_ONE_TO_MANY_SELECT = ",".join([
+    "SchemaName",
+    "RelationshipType",
+    "ReferencedEntity",
+    "ReferencedAttribute",
+    "ReferencingEntity",
+    "ReferencingAttribute",
+    "ReferencingEntityNavigationPropertyName",
+    "ReferencedEntityNavigationPropertyName",
+])
+
+_MANY_TO_MANY_SELECT = ",".join([
+    "SchemaName",
+    "RelationshipType",
+    "Entity1LogicalName",
+    "Entity2LogicalName",
+    "Entity1IntersectAttribute",
+    "Entity2IntersectAttribute",
+    "IntersectEntityName",
+])
+
+_REL_TYPE_SELECT = {
+    "OneToMany": _ONE_TO_MANY_SELECT,
+    "ManyToOne": _ONE_TO_MANY_SELECT,
+    "ManyToMany": _MANY_TO_MANY_SELECT,
+}
+
+
+async def _fetch_relationships_httpx(
+    base_url: str,
+    bearer_token: str,
+    url_path: str,
+    top: int | None,
+    select: str | None = None,
+) -> list[dict]:
+    """Fetch relationship definitions from the Dataverse metadata API via httpx."""
+    params: dict[str, str | int] = {}
+    if select:
+        params["$select"] = select
+    if top:
+        params["$top"] = top
+
+    def _request():
+        with httpx.Client(timeout=30.0) as http_client:
+            response = http_client.get(
+                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{url_path}",
+                params=params,
+                headers={
+                    "Authorization": f"Bearer {bearer_token}",
+                    "Accept": "application/json",
+                    "OData-MaxVersion": "4.0",
+                    "OData-Version": "4.0",
+                },
+            )
+            response.raise_for_status()
+            return response.json()
+
+    payload = await asyncio.to_thread(_request)
+    return payload.get("value", [])
+
+
+@mcp.tool(
+    name="dataverse_list_relationships",
+    annotations={
+        "title": "List Relationships",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_relationships(
+    params: ListRelationshipsInput, ctx: Context
+) -> str:
+    """List relationship definitions for a table or the whole environment.
+
+    When table_logical_name is supplied, queries that table's OneToMany,
+    ManyToOne, and/or ManyToMany relationships depending on relationship_type.
+    When table_logical_name is omitted, returns all RelationshipDefinitions
+    in the environment (relationship_type is ignored in this case).
+
+    Use the returned SchemaName to call dataverse_get_relationship for full
+    cascade and navigation property details. Use
+    ReferencingEntityNavigationPropertyName /
+    ReferencedEntityNavigationPropertyName in OData $expand queries.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = str(params.dataverse_url)
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        if params.table_logical_name:
+            table_enc = _url_quote(params.table_logical_name, safe="")
+            base_entity = f"EntityDefinitions(LogicalName='{table_enc}')"
+            types_to_fetch = (
+                [params.relationship_type]
+                if params.relationship_type
+                else ["OneToMany", "ManyToOne", "ManyToMany"]
+            )
+            all_rels: list[dict] = []
+            for rel_type in types_to_fetch:
+                rels = await _fetch_relationships_httpx(
+                    base_url,
+                    bearer_token,
+                    f"{base_entity}/{rel_type}Relationships",
+                    params.top,
+                    select=_REL_TYPE_SELECT[rel_type],
+                )
+                all_rels.extend(rels)
+        else:
+            # Polymorphic collection — omit $select to avoid type-specific field errors
+            all_rels = await _fetch_relationships_httpx(
+                base_url,
+                bearer_token,
+                "RelationshipDefinitions",
+                params.top,
+            )
+
+        return json.dumps({
+            "relationships": all_rels,
+            "count": len(all_rels),
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse metadata API error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_list_relationships")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_get_relationship",
+    annotations={
+        "title": "Get Relationship",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_relationship(
+    params: GetRelationshipInput, ctx: Context
+) -> str:
+    """Get full metadata for a single relationship by schema name.
+
+    Returns cascade configuration, navigation property names, and all
+    structural details for the relationship. Schema names are PascalCase
+    and case-sensitive (e.g., 'account_contacts').
+
+    Use dataverse_list_relationships first to discover schema names.
+    The navigation property names are required for OData $expand queries.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = str(params.dataverse_url)
+    scope = f"{base_url}/.default"
+    schema_enc = _url_quote(params.schema_name, safe="")
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"RelationshipDefinitions(SchemaName='{schema_enc}')",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        relationship = await asyncio.to_thread(_request)
+        relationship.pop("@odata.context", None)
+        return json.dumps({"relationship": relationship})
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse metadata API error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_get_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_check_relationship_eligibility",
+    annotations={
+        "title": "Check Relationship Eligibility",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_check_relationship_eligibility(
+    params: CheckRelationshipEligibilityInput, ctx: Context
+) -> str:
+    """Check whether a table can participate in a relationship.
+
+    Reads the relationship eligibility flags directly from the table's
+    EntityDefinition metadata:
+    - 'referenced'    — can be the primary (one) side of a 1:N
+    - 'referencing'   — can be the related (many) side of a 1:N
+    - 'many_to_many'  — can participate in an N:N relationship
+
+    Returns eligible (bool). All three flags are read in a single API call.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    base_url = str(params.dataverse_url)
+    scope = f"{base_url}/.default"
+    table_enc = _url_quote(params.table_logical_name, safe="")
+
+    check_field_map = {
+        "referenced": "CanBePrimaryEntityInRelationship",
+        "referencing": "CanBeRelatedEntityInRelationship",
+        "many_to_many": "CanBeInManyToMany",
+    }
+    field = check_field_map[params.check_type]
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                response = http_client.get(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+                    f"EntityDefinitions(LogicalName='{table_enc}')",
+                    params={"$select": field},
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "Accept": "application/json",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        result = await asyncio.to_thread(_request)
+        raw = result.get(field, False)
+        eligible = raw.get("Value", raw) if isinstance(raw, dict) else raw
+        return json.dumps({
+            "table_logical_name": params.table_logical_name,
+            "check_type": params.check_type,
+            "eligible": eligible,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse eligibility API error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_check_relationship_eligibility")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_list_relationships` tool to list relationship definitions for a table (OneToMany, ManyToOne, ManyToMany) or all relationships in the environment (#6)
+- `dataverse_get_relationship` tool to retrieve full metadata for a single relationship by schema name, including cascade config and navigation property names (#6)
+- `dataverse_check_relationship_eligibility` tool to check whether a table can participate in a relationship before attempting to create one (#6)
+
+### Added
 - `dataverse_list_columns` tool to list all column (attribute) definitions for a table with optional type and field filtering (#5)
 - `dataverse_get_column` tool to retrieve full metadata for a single column including type-specific properties (#5)
 - `dataverse_list_choice_column_options` tool to get all option values (integer code + label) for Picklist and MultiSelectPicklist columns (#5)

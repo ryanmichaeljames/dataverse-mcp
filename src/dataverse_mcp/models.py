@@ -337,6 +337,94 @@ class ListChoiceColumnOptionsInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Relationship metadata tools
+# ---------------------------------------------------------------------------
+
+_RELATIONSHIP_TYPES = ("OneToMany", "ManyToOne", "ManyToMany")
+
+
+class ListRelationshipsInput(DataverseEnvironmentInput):
+    """Input for listing relationship definitions for a table or the whole environment."""
+
+    table_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the table to scope the query to "
+            "(e.g., 'account', 'contact'). "
+            "If omitted, all relationships in the environment are returned."
+        ),
+    )
+    relationship_type: str | None = Field(
+        default=None,
+        description=(
+            "Filter by relationship type. "
+            "Accepted values: 'OneToMany', 'ManyToOne', 'ManyToMany'. "
+            "If omitted and table_logical_name is set, all three types are returned. "
+            "Ignored when table_logical_name is omitted."
+        ),
+    )
+    top: int | None = Field(
+        default=50,
+        description="Maximum number of relationships to return (1–500).",
+        ge=1,
+        le=500,
+    )
+
+    @field_validator("relationship_type")
+    @classmethod
+    def validate_relationship_type(cls, v: str | None) -> str | None:
+        if v is not None and v not in _RELATIONSHIP_TYPES:
+            raise ValueError(
+                f"relationship_type must be one of: {', '.join(_RELATIONSHIP_TYPES)}"
+            )
+        return v
+
+
+class GetRelationshipInput(DataverseEnvironmentInput):
+    """Input for retrieving full metadata for a single relationship by schema name."""
+
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name of the relationship (e.g., 'account_contacts', "
+            "'contact_customer_accounts'). Schema names are PascalCase and "
+            "case-sensitive."
+        ),
+        min_length=1,
+    )
+
+
+class CheckRelationshipEligibilityInput(DataverseEnvironmentInput):
+    """Input for checking whether a table can participate in a relationship."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table to check (e.g., 'account', 'contact'). "
+            "Use lowercase."
+        ),
+        min_length=1,
+    )
+    check_type: str = Field(
+        ...,
+        description=(
+            "The eligibility check to perform. "
+            "'referenced' — can this table be the primary (one) side of a 1:N? "
+            "'referencing' — can this table be the related (many) side of a 1:N? "
+            "'many_to_many' — can this table participate in an N:N?"
+        ),
+    )
+
+    @field_validator("check_type")
+    @classmethod
+    def validate_check_type(cls, v: str) -> str:
+        allowed = ("referenced", "referencing", "many_to_many")
+        if v not in allowed:
+            raise ValueError(f"check_type must be one of: {', '.join(allowed)}")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Power Platform admin tools
 # ---------------------------------------------------------------------------
 

@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_list_columns` tool to list all column (attribute) definitions for a table with optional type and field filtering (#5)
 - `dataverse_get_column` tool to retrieve full metadata for a single column including type-specific properties (#5)
 - `dataverse_list_choice_column_options` tool to get all option values (integer code + label) for Picklist and MultiSelectPicklist columns (#5)
+- Improved clarity and conciseness of tool docstrings across `solutions.py`, `tables.py`, `environments.py`, and `metadata.py` — removed duplicate sentences, simplified HTTP implementation details, and tightened wording (#24)
 
 ### Fixed
 - `dataverse_list_relationships` now returns `has_more` and consistently applies the `top` limit (#6)
@@ -61,7 +62,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PublishCustomizationsInput` now requires at least one targeted publish item when `publish_all=false`
 - Targeted `PublishXml` payload generation now escapes input safely via XML element construction
 - `dataverse_associate_records` and `dataverse_disassociate_records` now return a clear JSON error when no Dataverse URL is available and move blocking HTTP calls off the async event loop (#16)
-- Improved clarity and conciseness of tool docstrings across `solutions.py`, `tables.py`, `environments.py`, and `metadata.py` — removed duplicate sentences, simplified HTTP implementation details, and tightened wording (#24)
 
 ## [1.0.0] - 2026-05-05
 

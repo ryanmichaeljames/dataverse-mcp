@@ -145,7 +145,7 @@ Use `dataverse_list_environments` first if you need to discover which Power Plat
 | `dataverse_list_choice_column_options` | Get all option values (integer code + label) for a Picklist or MultiSelectPicklist column |
 | `dataverse_list_relationships` | List relationship definitions for a table (1:N, N:1, N:N) or all relationships in the environment |
 | `dataverse_get_relationship` | Get full metadata for a single relationship by schema name, including cascade config and navigation property names |
-| `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship (referenced, referencing, or many-to-many) |
+| `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship (referenced, referencing, or many-to-many) via Dataverse eligibility endpoints (`CanBeReferenced`, `CanBeReferencing`, `CanManyToMany`) |
 
 ## Project Structure
 

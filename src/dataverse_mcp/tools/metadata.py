@@ -67,6 +67,7 @@ _DEFAULT_COLUMN_SELECT = [
 ]
 
 _DATAVERSE_API_VERSION = "v9.2"
+_CREATE_COLUMN_RESERVED_KEYS = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
 
 
 def _get_client(ctx: Context, dataverse_url: str | None):
@@ -1408,9 +1409,10 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     Call dataverse_publish_customizations after creating columns to make the
     changes visible in the application.
     """
-    reserved_keys = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
     if params.type_specific_properties:
-        conflicting_keys = sorted(reserved_keys.intersection(params.type_specific_properties))
+        conflicting_keys = sorted(
+            _CREATE_COLUMN_RESERVED_KEYS.intersection(params.type_specific_properties)
+        )
         if conflicting_keys:
             return json.dumps({
                 "error": True,
@@ -2252,7 +2254,18 @@ async def dataverse_delete_relationship(
                 data.pop("@odata.context", None)
                 return data
 
-        relationship_def = await asyncio.to_thread(_get_definition)
+        try:
+            relationship_def = await asyncio.to_thread(_get_definition)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return json.dumps({
+                    "error": True,
+                    "message": (
+                        f"Relationship with MetadataId '{params.metadata_id}' was not found "
+                        "or is not accessible."
+                    ),
+                })
+            raise
 
         if not params.allow_delete:
             return json.dumps({

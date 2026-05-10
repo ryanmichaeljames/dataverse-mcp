@@ -218,15 +218,19 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) -> str:
-    """List all OData EntitySet names available in the Dataverse environment.
+    """List OData EntitySet names available in the Dataverse environment.
 
-    Queries the OData service document and returns every EntitySet entry with
-    its name (the URL-safe collection name) and url. Use this to discover the
+    Queries the OData service document and returns EntitySet entries with
+    their name (the URL-safe collection name) and url. Use this to discover the
     exact entity_set_name for a table before composing record query URLs —
     faster and smaller than fetching the full $metadata document.
 
     For example, the 'account' table has EntitySet name 'accounts', and
     'systemuser' has EntitySet name 'systemusers'.
+
+    Use 'contains' to filter by a substring (e.g., 'account') and 'top' to
+    limit the number of results. Check 'has_more' in the response to determine
+    if additional entries exist beyond the current page.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -259,13 +263,24 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
                 return response.json()
 
         payload = await asyncio.to_thread(_request)
+        all_entries = payload.get("value", [])
+
+        # Apply optional substring filter
+        if params.contains:
+            needle = params.contains.lower()
+            all_entries = [
+                e for e in all_entries if needle in (e.get("name") or "").lower()
+            ]
+
+        has_more = len(all_entries) > params.top
         entity_sets = [
             {"name": entry.get("name"), "url": entry.get("url")}
-            for entry in payload.get("value", [])
+            for entry in all_entries[: params.top]
         ]
         return json.dumps({
             "entity_sets": entity_sets,
             "count": len(entity_sets),
+            "has_more": has_more,
         })
     except httpx.HTTPStatusError as e:
         logger.error(

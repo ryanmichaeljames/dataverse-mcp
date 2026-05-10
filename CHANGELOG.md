@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_list_columns` tool to list all column (attribute) definitions for a table with optional type and field filtering (#5)
 - `dataverse_get_column` tool to retrieve full metadata for a single column including type-specific properties (#5)
 - `dataverse_list_choice_column_options` tool to get all option values (integer code + label) for Picklist and MultiSelectPicklist columns (#5)
+- Improved clarity and conciseness of tool docstrings across `solutions.py`, `tables.py`, `environments.py`, and `metadata.py` — removed duplicate sentences, simplified HTTP implementation details, and tightened wording (#24)
 
 ### Fixed
 - `dataverse_list_relationships` now returns `has_more` and consistently applies the `top` limit (#6)

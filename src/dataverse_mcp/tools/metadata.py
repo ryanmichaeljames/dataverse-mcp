@@ -722,11 +722,8 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
 
     Returns metadata for all global choices. The Dataverse API does not
     support $filter or $top on this endpoint; top is applied client-side.
-    Options values and labels are not available on the list endpoint — use
-    dataverse_get_choice to retrieve full option details for a specific choice.
-
-    Use dataverse_get_choice to retrieve full details for a specific choice
-    by name or MetadataId.
+    Option values and labels are not included — use dataverse_get_choice
+    to retrieve full option details for a specific choice by name or MetadataId.
     """
     app_ctx = _get_app_ctx(ctx)
     base_url = str(params.dataverse_url)

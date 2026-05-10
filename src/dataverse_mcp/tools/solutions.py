@@ -241,13 +241,13 @@ async def dataverse_list_solution_components(
 ) -> str:
     """List components within a specific solution.
 
-    Returns the components (entities, web resources, workflows, etc.)
-    that belong to the specified solution. Each component includes both
-    the integer type code and a human-readable type name.
+    Returns the components (entities, web resources, workflows, etc.) that belong
+    to the specified solution. Each component includes both the integer type code
+    and a human-readable type name.
 
-    Use component_type to filter by a specific type (e.g., 1 for Entity,
-    61 for Web Resource, 300 for Canvas App). Use dataverse_get_solution
-    first to find the solution_id.
+    Use component_type to filter by a specific type code (e.g., 1=Entity,
+    61=Web Resource, 300=Canvas App). Use dataverse_get_solution first to
+    find the solution_id.
     """
     top = params.top
 

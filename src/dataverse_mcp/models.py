@@ -1380,6 +1380,65 @@ class PublishCustomizationsInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Security tools
+# ---------------------------------------------------------------------------
+
+
+class RetrieveUserPrivilegesInput(DataverseEnvironmentInput):
+    """Input for retrieving all security privileges assigned to a system user."""
+
+    user_id: str = Field(
+        ...,
+        description=(
+            "GUID of the system user whose privileges to retrieve. "
+            "Use dataverse_whoami to get the current caller's UserId."
+        ),
+        min_length=36,
+    )
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("user_id must be a valid GUID")
+        return v
+
+
+class RetrievePrincipalAccessInput(DataverseEnvironmentInput):
+    """Input for checking a user's access rights to a specific record."""
+
+    user_id: str = Field(
+        ...,
+        description=(
+            "GUID of the system user to check access for. "
+            "Use dataverse_whoami to get the current caller's UserId."
+        ),
+        min_length=36,
+    )
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the target record's table "
+            "(e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    record_id: str = Field(
+        ...,
+        description="GUID of the target record to check access against.",
+        min_length=36,
+    )
+
+    @field_validator("user_id", "record_id")
+    @classmethod
+    def validate_guids(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
 

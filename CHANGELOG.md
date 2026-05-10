@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_retrieve_user_privileges` tool to list all security privileges assigned to a system user via their role memberships; returns `PrivilegeName`, `Depth`, and `BusinessUnitId` for each privilege (#9)
+- `dataverse_retrieve_principal_access` tool to check the access rights a system user has to a specific record; returns `AccessRights` bitmask and named rights list (#9)
 - `dataverse_create_column` tool to add a new column to a table with typed attribute metadata, display name, required level, and type-specific properties; supports `allow_write` safety guard with preview mode (#11)
 - `dataverse_update_column` tool to update an existing column via full PUT replacement; agent must fetch the current definition via `dataverse_get_column` first; supports `allow_write` safety guard with preview mode (#11)
 - `dataverse_delete_column` tool to permanently delete a custom column; fetches current definition for preview; supports `allow_delete` safety guard (#11)

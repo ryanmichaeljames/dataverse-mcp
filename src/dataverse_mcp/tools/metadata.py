@@ -386,8 +386,7 @@ async def dataverse_list_choice_column_options(
     option sets shared across tables are not currently supported.
     """
     app_ctx = _get_app_ctx(ctx)
-    client = _get_client(ctx, params.dataverse_url)
-    base_url = client._base_url
+    base_url = str(params.dataverse_url)
     scope = f"{base_url}/.default"
 
     try:

@@ -48,7 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_create_column` now blocks reserved keys in `type_specific_properties` to prevent overriding tool-managed metadata fields
 - `dataverse_delete_column` and `dataverse_delete_relationship` now fetch current metadata for preview and enforce custom/unmanaged deletion safety checks before DELETE
 - Create operation annotations now mark `idempotentHint: false` for non-idempotent POST create tools (`dataverse_create_column`, `dataverse_create_one_to_many_relationship`, `dataverse_create_many_to_many_relationship`, `dataverse_create_multi_table_lookup`)
-- `PublishCustomizationsInput` now requires at least one targeted publish item when `publish_all=false`, and targeted `PublishXml` payload generation now escapes input safely via XML element construction
+- `PublishCustomizationsInput` now requires at least one targeted publish item when `publish_all=false`
+- Targeted `PublishXml` payload generation now escapes input safely via XML element construction
 
 ## [1.0.0] - 2026-05-05
 

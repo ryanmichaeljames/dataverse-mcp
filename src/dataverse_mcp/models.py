@@ -766,6 +766,208 @@ class DeleteColumnInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Relationship schema write tools
+# ---------------------------------------------------------------------------
+
+
+class CreateOneToManyRelationshipInput(DataverseEnvironmentInput):
+    """Input for creating a 1:N relationship between two tables."""
+
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the relationship (e.g., 'cr123_account_contacts'). "
+            "Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    referenced_entity: str = Field(
+        ...,
+        description=(
+            "Logical name of the 'one' (referenced/parent) side table "
+            "(e.g., 'account')."
+        ),
+        min_length=1,
+    )
+    referencing_entity: str = Field(
+        ...,
+        description=(
+            "Logical name of the 'many' (referencing/child) side table "
+            "(e.g., 'contact'). A lookup column is created on this table."
+        ),
+        min_length=1,
+    )
+    lookup_schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the lookup column created on the referencing entity "
+            "(e.g., 'cr123_AccountId'). Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    lookup_display_name: str = Field(
+        ...,
+        description="Display label for the lookup column.",
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the relationship "
+            "definition body without calling the API."
+        ),
+    )
+
+
+class CreateManyToManyRelationshipInput(DataverseEnvironmentInput):
+    """Input for creating an N:N relationship and its intersect (junction) table."""
+
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the relationship (e.g., 'cr123_account_contact'). "
+            "Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    entity1_logical_name: str = Field(
+        ...,
+        description="Logical name of the first entity in the many-to-many relationship.",
+        min_length=1,
+    )
+    entity2_logical_name: str = Field(
+        ...,
+        description="Logical name of the second entity in the many-to-many relationship.",
+        min_length=1,
+    )
+    intersect_entity_name: str = Field(
+        ...,
+        description=(
+            "Name for the junction (intersect) table that Dataverse creates to "
+            "store the relationship links (e.g., 'cr123_account_contact')."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the relationship "
+            "definition body without calling the API."
+        ),
+    )
+
+
+class CreateMultiTableLookupInput(DataverseEnvironmentInput):
+    """Input for creating a polymorphic (multi-table) lookup column."""
+
+    lookup_schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the polymorphic lookup column "
+            "(e.g., 'cr123_Customer'). Must include a publisher prefix."
+        ),
+        min_length=3,
+    )
+    lookup_display_name: str = Field(
+        ...,
+        description="Display label for the polymorphic lookup column.",
+        min_length=1,
+    )
+    owning_entity: str = Field(
+        ...,
+        description=(
+            "Logical name of the table that will own the lookup column "
+            "(e.g., 'cr123_order')."
+        ),
+        min_length=1,
+    )
+    target_entities: list[str] = Field(
+        ...,
+        description=(
+            "List of table logical names the lookup can reference "
+            "(e.g., ['account', 'contact']). Must contain at least one entry."
+        ),
+        min_length=1,
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the create operation. "
+            "When False (default), returns a preview of the request body "
+            "without calling the API."
+        ),
+    )
+
+
+class UpdateRelationshipInput(DataverseEnvironmentInput):
+    """Input for updating an existing relationship via full PUT replacement."""
+
+    metadata_id: str = Field(
+        ...,
+        description=(
+            "MetadataId GUID of the relationship to update. "
+            "Obtain via dataverse_get_relationship."
+        ),
+        min_length=36,
+    )
+    full_definition: dict = Field(
+        ...,
+        description=(
+            "Complete relationship definition JSON obtained from "
+            "dataverse_get_relationship. Apply your changes before passing here. "
+            "The Dataverse metadata API requires a full PUT."
+        ),
+    )
+    allow_write: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the PUT. "
+            "When False (default), returns the full_definition as a preview "
+            "without calling the API."
+        ),
+    )
+
+    @field_validator("metadata_id")
+    @classmethod
+    def validate_metadata_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("metadata_id must be a valid GUID")
+        return v
+
+
+class DeleteRelationshipInput(DataverseEnvironmentInput):
+    """Input for permanently deleting a custom relationship."""
+
+    metadata_id: str = Field(
+        ...,
+        description=(
+            "MetadataId GUID of the relationship to delete. "
+            "Obtain via dataverse_get_relationship."
+        ),
+        min_length=36,
+    )
+    allow_delete: bool = Field(
+        default=False,
+        description=(
+            "Safety guard. Set to True to execute the delete. "
+            "When False (default), returns the metadata_id as a preview "
+            "without deleting anything. "
+            "WARNING: Deletion is permanent and removes the relationship and "
+            "the associated lookup column."
+        ),
+    )
+
+    @field_validator("metadata_id")
+    @classmethod
+    def validate_metadata_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("metadata_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
 

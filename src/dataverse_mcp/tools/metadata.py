@@ -14,8 +14,12 @@ from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_cli
 from dataverse_mcp.models import (
     CheckRelationshipEligibilityInput,
     CreateColumnInput,
+    CreateManyToManyRelationshipInput,
+    CreateMultiTableLookupInput,
+    CreateOneToManyRelationshipInput,
     CreateTableInput,
     DeleteColumnInput,
+    DeleteRelationshipInput,
     DeleteTableInput,
     GetChoiceInput,
     GetColumnInput,
@@ -27,6 +31,7 @@ from dataverse_mcp.models import (
     ListRelationshipsInput,
     ListTablesInput,
     UpdateColumnInput,
+    UpdateRelationshipInput,
     UpdateTableInput,
 )
 
@@ -1703,6 +1708,547 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_column")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+# ---------------------------------------------------------------------------
+# Relationship schema write tools
+# ---------------------------------------------------------------------------
+
+
+@mcp.tool(
+    name="dataverse_create_one_to_many_relationship",
+    annotations={
+        "title": "Create One-to-Many Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_one_to_many_relationship(
+    params: CreateOneToManyRelationshipInput, ctx: Context
+) -> str:
+    """Create a 1:N relationship between two tables.
+
+    This simultaneously creates the lookup column on the referencing (many) side.
+    Use dataverse_check_relationship_eligibility before calling this tool to
+    confirm the tables can participate in the relationship.
+
+    When allow_write is False (default), returns a preview of the relationship
+    definition body without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating relationships.
+    """
+    body = {
+        "@odata.type": "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
+        "SchemaName": params.schema_name,
+        "ReferencedEntity": params.referenced_entity,
+        "ReferencingEntity": params.referencing_entity,
+        "CascadeConfiguration": {
+            "Assign": "NoCascade",
+            "Delete": "RemoveLink",
+            "Merge": "NoCascade",
+            "Reparent": "NoCascade",
+            "Share": "NoCascade",
+            "Unshare": "NoCascade",
+        },
+        "Lookup": {
+            "@odata.type": "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+            "SchemaName": params.lookup_schema_name,
+            "DisplayName": _make_label(params.lookup_display_name),
+        },
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "relationship_definition": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.headers.get("OData-EntityId", "")
+
+        entity_id = await asyncio.to_thread(_post)
+        logger.info("Created 1:N relationship %s", params.schema_name)
+        return json.dumps({
+            "created": True,
+            "schema_name": params.schema_name,
+            "entity_id": entity_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_create_one_to_many_relationship — operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The relationship may have been created. "
+                "Use dataverse_get_relationship to verify."
+            ),
+            "schema_name": params.schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create 1:N relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_one_to_many_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_create_many_to_many_relationship",
+    annotations={
+        "title": "Create Many-to-Many Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_many_to_many_relationship(
+    params: CreateManyToManyRelationshipInput, ctx: Context
+) -> str:
+    """Create an N:N relationship and its intersect (junction) table between two tables.
+
+    Use dataverse_check_relationship_eligibility before calling this tool to
+    confirm both tables can participate in a many-to-many relationship.
+
+    When allow_write is False (default), returns a preview of the relationship
+    definition body without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating relationships.
+    """
+    body = {
+        "@odata.type": "Microsoft.Dynamics.CRM.ManyToManyRelationshipMetadata",
+        "SchemaName": params.schema_name,
+        "Entity1LogicalName": params.entity1_logical_name,
+        "Entity2LogicalName": params.entity2_logical_name,
+        "IntersectEntityName": params.intersect_entity_name,
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "relationship_definition": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.headers.get("OData-EntityId", "")
+
+        entity_id = await asyncio.to_thread(_post)
+        logger.info("Created N:N relationship %s", params.schema_name)
+        return json.dumps({
+            "created": True,
+            "schema_name": params.schema_name,
+            "entity_id": entity_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_create_many_to_many_relationship — operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The relationship may have been created. "
+                "Use dataverse_get_relationship to verify."
+            ),
+            "schema_name": params.schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create N:N relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_many_to_many_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_create_multi_table_lookup",
+    annotations={
+        "title": "Create Multi-Table (Polymorphic) Lookup",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_multi_table_lookup(
+    params: CreateMultiTableLookupInput, ctx: Context
+) -> str:
+    """Create a polymorphic lookup column that can reference multiple tables.
+
+    Uses the CreatePolymorphicLookupAttribute bound action. The lookup column
+    is added to owning_entity and can point to any of the target_entities.
+
+    When allow_write is False (default), returns a preview of the request body
+    without calling the API. Set allow_write=True to execute.
+
+    Call dataverse_publish_customizations after creating lookup columns.
+    """
+    relationships = [
+        {
+            "@odata.type": "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
+            "ReferencedEntity": target,
+            "ReferencingEntity": params.owning_entity,
+            "SchemaName": f"{params.lookup_schema_name}_{target}",
+        }
+        for target in params.target_entities
+    ]
+    lookup = {
+        "@odata.type": "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+        "SchemaName": params.lookup_schema_name,
+        "DisplayName": _make_label(params.lookup_display_name),
+    }
+    body = {
+        "OneToManyRelationships": relationships,
+        "Lookup": lookup,
+    }
+
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the create operation.",
+            "request_body": body,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _post():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/CreatePolymorphicLookupAttribute",
+                    json=body,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+                return response.json()
+
+        result = await asyncio.to_thread(_post)
+        logger.info("Created polymorphic lookup %s", params.lookup_schema_name)
+        return json.dumps({
+            "created": True,
+            "lookup_schema_name": params.lookup_schema_name,
+            "result": result,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_create_multi_table_lookup — operation may have succeeded: %s",
+            e,
+        )
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The polymorphic lookup may have been created. "
+                "Use dataverse_list_columns to verify."
+            ),
+            "lookup_schema_name": params.lookup_schema_name,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse create polymorphic lookup error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_create_multi_table_lookup")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_update_relationship",
+    annotations={
+        "title": "Update Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_relationship(
+    params: UpdateRelationshipInput, ctx: Context
+) -> str:
+    """Update an existing relationship's cascade behavior or configuration.
+
+    The Dataverse metadata API requires a full PUT — partial updates are not
+    supported on RelationshipDefinitions.
+
+    Recommended workflow:
+    1. Call dataverse_get_relationship to retrieve the current full definition
+    2. Apply your changes (e.g., update CascadeConfiguration)
+    3. Pass the modified JSON as full_definition with allow_write=True
+
+    When allow_write is False (default), returns the full_definition as a
+    preview without calling the API.
+
+    Call dataverse_publish_customizations after updating relationships.
+    """
+    if not params.allow_write:
+        return json.dumps({
+            "preview": True,
+            "message": "Set allow_write=true to execute the update operation.",
+            "full_definition": params.full_definition,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _put():
+            definition = dict(params.full_definition)
+            definition.pop("@odata.context", None)
+            with httpx.Client(timeout=60.0) as http_client:
+                response = http_client.put(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/RelationshipDefinitions({params.metadata_id})",
+                    json=definition,
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        **_METADATA_HEADERS,
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_put)
+        logger.info("Updated relationship %s", params.metadata_id)
+        return json.dumps({
+            "updated": True,
+            "metadata_id": params.metadata_id,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse update relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_update_relationship")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_delete_relationship",
+    annotations={
+        "title": "Delete Relationship",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_relationship(
+    params: DeleteRelationshipInput, ctx: Context
+) -> str:
+    """Delete a custom relationship by MetadataId.
+
+    When allow_delete is False (default), returns a preview of what would be
+    deleted without calling the API.
+
+    WARNING: Deletion is permanent. For 1:N relationships, the associated
+    lookup column on the referencing entity is also deleted.
+
+    Call dataverse_publish_customizations after deleting relationships.
+    """
+    if not params.allow_delete:
+        return json.dumps({
+            "preview": True,
+            "message": (
+                "Set allow_delete=true to permanently delete this relationship. "
+                "For 1:N relationships, the lookup column will also be deleted."
+            ),
+            "metadata_id": params.metadata_id,
+        })
+
+    app_ctx = _get_app_ctx(ctx)
+    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
+    if not base_url:
+        return json.dumps({
+            "error": True,
+            "message": (
+                "No Dataverse environment URL was provided. Supply dataverse_url "
+                "on the tool input, or set DATAVERSE_URL as a fallback."
+            ),
+        })
+
+    scope = f"{base_url}/.default"
+
+    try:
+        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+
+        def _delete():
+            with httpx.Client(timeout=300.0) as http_client:
+                response = http_client.delete(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                    f"/RelationshipDefinitions({params.metadata_id})",
+                    headers={
+                        "Authorization": f"Bearer {bearer_token}",
+                        "OData-MaxVersion": "4.0",
+                        "OData-Version": "4.0",
+                    },
+                )
+                response.raise_for_status()
+
+        await asyncio.to_thread(_delete)
+        logger.info("Deleted relationship %s", params.metadata_id)
+        return json.dumps({
+            "deleted": True,
+            "metadata_id": params.metadata_id,
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_delete_relationship — operation may have succeeded: %s", e
+        )
+        return json.dumps({
+            "error": True,
+            "deleted": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The relationship may have been deleted. "
+                "Use dataverse_get_relationship to verify."
+            ),
+            "metadata_id": params.metadata_id,
+        })
+    except httpx.HTTPStatusError as e:
+        logger.error(
+            "Dataverse delete relationship error: %s (status=%d)",
+            e.response.text,
+            e.response.status_code,
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_delete_relationship")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

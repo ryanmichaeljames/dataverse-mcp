@@ -208,7 +208,7 @@ from dataverse_mcp.models import QueryTableInput
 
 ### Authentication
 - Auth type selected via `DATAVERSE_AUTH_TYPE` environment variable
-- Supported: `interactive`, `client_secret`, `azure_cli`
+- Supported: `interactive`, `azure_cli`
 - Credentials come from environment variables, never hardcoded
 
 ## Response Format

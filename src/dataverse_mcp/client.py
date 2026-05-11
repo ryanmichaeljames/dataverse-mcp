@@ -9,49 +9,29 @@ from threading import Lock
 from typing import Any
 from urllib.parse import urlparse
 
-from azure.identity import (
-    AzureCliCredential,
-    ClientSecretCredential,
-    InteractiveBrowserCredential,
-)
+from azure.identity import AzureCliCredential, InteractiveBrowserCredential
 from PowerPlatform.Dataverse.client import DataverseClient
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_AUTH_TYPES = ("interactive", "client_secret", "azure_cli")
+SUPPORTED_AUTH_TYPES = ("interactive", "azure_cli")
 
 
 def _build_credential(auth_type: str):
     """Build an Azure TokenCredential based on the configured auth type.
 
     Args:
-        auth_type: One of 'interactive', 'client_secret', or 'azure_cli'.
+        auth_type: One of 'interactive' or 'azure_cli'.
 
     Returns:
         A TokenCredential instance for authenticating with Dataverse.
 
     Raises:
-        ValueError: If the auth type is not supported or required env vars are missing.
+        ValueError: If the auth type is not supported.
     """
     if auth_type == "interactive":
         logger.info("Using InteractiveBrowserCredential for authentication")
         return InteractiveBrowserCredential()
-
-    if auth_type == "client_secret":
-        tenant_id = os.environ.get("AZURE_TENANT_ID")
-        client_id = os.environ.get("AZURE_CLIENT_ID")
-        client_secret = os.environ.get("AZURE_CLIENT_SECRET")
-        if not all([tenant_id, client_id, client_secret]):
-            raise ValueError(
-                "client_secret auth requires AZURE_TENANT_ID, "
-                "AZURE_CLIENT_ID, and AZURE_CLIENT_SECRET environment variables"
-            )
-        logger.info("Using ClientSecretCredential for authentication")
-        return ClientSecretCredential(
-            tenant_id=tenant_id,
-            client_id=client_id,
-            client_secret=client_secret,
-        )
 
     if auth_type == "azure_cli":
         logger.info("Using AzureCliCredential for authentication")

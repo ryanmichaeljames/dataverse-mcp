@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-05-11
+
+### Security
+- Removed `client_secret` (service principal) authentication support — `DATAVERSE_AUTH_TYPE` now only accepts `interactive` and `azure_cli`; long-lived client secrets are unnecessary for local VS Code Copilot use cases and carry elevated risk
+
 ## [1.2.0] - 2026-05-11
 
 ### Added
@@ -127,7 +132,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]:https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...v1.0.0

@@ -482,17 +482,30 @@ def _parse_batch_response(response_text: str, boundary: str) -> list[dict]:
         if not part or part == "--":
             continue
 
-        # Check if this is a change set response (nested multipart)
-        if "multipart/mixed" in part:
-            inner_boundary_match = part.find("boundary=")
+        # Split part headers from body on the first blank line
+        if "\r\n\r\n" in part:
+            part_headers, part_body = part.split("\r\n\r\n", 1)
+        else:
+            part_headers = part
+            part_body = ""
+
+        # Check if this is a change set response (nested multipart) — inspect
+        # only the part's own headers to avoid false positives in the body.
+        if "multipart/mixed" in part_headers:
+            inner_boundary_match = part_headers.find("boundary=")
             if inner_boundary_match != -1:
-                inner_boundary = part[inner_boundary_match + 9:].split("\r\n")[0].split(";")[0].strip()
-                inner_results = _parse_batch_response(part, inner_boundary)
+                inner_boundary = (
+                    part_headers[inner_boundary_match + 9:]
+                    .split("\r\n")[0]
+                    .split(";")[0]
+                    .strip()
+                )
+                inner_results = _parse_batch_response(part_body, inner_boundary)
                 results.extend(inner_results)
             continue
 
-        # Find the HTTP response status line
-        lines = part.split("\r\n")
+        # Find the HTTP response status line in the part body
+        lines = part_body.split("\r\n")
         http_status_line = None
         body_start = 0
         for j, line in enumerate(lines):
@@ -509,7 +522,7 @@ def _parse_batch_response(response_text: str, boundary: str) -> list[dict]:
         except (IndexError, ValueError):
             status_code = 0
 
-        # Skip header lines after status line
+        # Skip response headers after the status line
         while body_start < len(lines) and lines[body_start].strip():
             body_start += 1
         body_start += 1  # skip blank line

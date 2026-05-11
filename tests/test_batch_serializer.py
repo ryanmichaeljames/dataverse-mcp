@@ -1,15 +1,17 @@
-"""Regression tests for OData batch serializer (_build_batch_body).
+"""Regression tests for OData batch serializer (_build_batch_body) and response
+parser (_parse_batch_response).
 
 Covers the bugs reported in issue #34:
 - 0x80048d19: stream not readable (missing Content-Length on write ops)
 - 0x80060888: missing Content-ID in change set operations
+- RecursionError in _parse_batch_response for change set responses
 """
 
 import json
 import re
 import unittest
 
-from dataverse_mcp.tools.tables import _build_batch_body, _build_inner_request
+from dataverse_mcp.tools.tables import _build_batch_body, _build_inner_request, _parse_batch_response
 from dataverse_mcp.models import ExecuteBatchInput, BatchOperationItem
 
 _BASE = "https://org.crm.dynamics.com"
@@ -220,6 +222,93 @@ class TestBatchExecuteInputValidation(unittest.TestCase):
     def test_continue_on_error_defaults_false(self):
         model = ExecuteBatchInput(operations=[{"method": "GET", "url": "/WhoAmI()"}])
         self.assertFalse(model.continue_on_error)
+
+
+class TestParseBatchResponse(unittest.TestCase):
+    """Regression tests for _parse_batch_response to prevent RecursionError."""
+
+    def _make_changeset_response(self, cs_boundary: str, outer_boundary: str) -> str:
+        """Build a synthetic batch response containing a change set."""
+        cs_part = (
+            f"Content-Type: application/http\r\n"
+            f"Content-Transfer-Encoding: binary\r\n"
+            f"\r\n"
+            f"HTTP/1.1 204 No Content\r\n"
+            f"OData-Version: 4.0\r\n"
+            f"\r\n"
+        )
+        cs_body = (
+            f"--{cs_boundary}\r\n"
+            f"{cs_part}"
+            f"--{cs_boundary}--"
+        )
+        response = (
+            f"--{outer_boundary}\r\n"
+            f"Content-Type: multipart/mixed; boundary={cs_boundary}\r\n"
+            f"\r\n"
+            f"{cs_body}\r\n"
+            f"--{outer_boundary}--"
+        )
+        return response
+
+    def test_change_set_response_no_recursion_error(self):
+        """_parse_batch_response must not raise RecursionError for change set responses."""
+        response = self._make_changeset_response("changesetresponse_cs1", "batchresponse_1")
+        # Should not raise
+        results = _parse_batch_response(response, "batchresponse_1")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["status_code"], 204)
+
+    def test_standalone_get_response_parsed(self):
+        """A single GET response is parsed correctly."""
+        body_json = json.dumps({"UserId": "abc-123"})
+        response = (
+            "--batchresponse\r\n"
+            "Content-Type: application/http\r\n"
+            "Content-Transfer-Encoding: binary\r\n"
+            "\r\n"
+            "HTTP/1.1 200 OK\r\n"
+            "Content-Type: application/json\r\n"
+            "\r\n"
+            f"{body_json}\r\n"
+            "--batchresponse--"
+        )
+        results = _parse_batch_response(response, "batchresponse")
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["status_code"], 200)
+        self.assertEqual(results[0]["body"]["UserId"], "abc-123")
+
+    def test_mixed_response_get_plus_changeset(self):
+        """Mixed response: a GET result + a change set result are both parsed."""
+        get_part = (
+            "--batchresponse\r\n"
+            "Content-Type: application/http\r\n"
+            "Content-Transfer-Encoding: binary\r\n"
+            "\r\n"
+            "HTTP/1.1 200 OK\r\n"
+            "\r\n"
+            '{"ok": true}\r\n'
+        )
+        cs_inner = (
+            "--cs_boundary\r\n"
+            "Content-Type: application/http\r\n"
+            "Content-Transfer-Encoding: binary\r\n"
+            "\r\n"
+            "HTTP/1.1 204 No Content\r\n"
+            "\r\n"
+            "--cs_boundary--"
+        )
+        cs_part = (
+            "--batchresponse\r\n"
+            "Content-Type: multipart/mixed; boundary=cs_boundary\r\n"
+            "\r\n"
+            f"{cs_inner}\r\n"
+        )
+        response = get_part + cs_part + "--batchresponse--"
+        results = _parse_batch_response(response, "batchresponse")
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0]["status_code"], 200)
+        self.assertEqual(results[1]["status_code"], 204)
 
 
 if __name__ == "__main__":

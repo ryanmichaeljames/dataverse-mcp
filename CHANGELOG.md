@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-05-11
+
 ### Added
 - `DATAVERSE_ALLOW_WRITE` and `DATAVERSE_ALLOW_DELETE` environment variables to gate write and delete tool registration at server startup — when not set, those tools are not exposed to the agent at all
 
@@ -125,7 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.1.0...v3.2.0
 [1.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]:https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...v0.1.0

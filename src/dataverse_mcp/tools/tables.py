@@ -3,12 +3,13 @@
 import asyncio
 import json
 import logging
+import os
 
 import httpx
 from mcp.server.fastmcp import Context
 from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
-from dataverse_mcp._app import mcp
+from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
     AssociateRecordsInput,
@@ -61,7 +62,6 @@ def _flatten_records(pages, limit: int) -> list[dict]:
 )
 async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
     """Query records from any Dataverse table.
-
     Returns matching records from the specified table. Supports OData-style
     filtering, column selection, sorting, and navigation property expansion.
 
@@ -123,7 +123,6 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
 )
 async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
     """Retrieve a single record by its ID from any Dataverse table.
-
     Returns the full record (or selected columns) for the given table
     and record GUID. Use dataverse_query_table first to find record IDs.
     """
@@ -163,7 +162,7 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_associate_records",
     annotations={
         "title": "Associate Records",
@@ -177,17 +176,10 @@ async def dataverse_associate_records(
     params: AssociateRecordsInput, ctx: Context
 ) -> str:
     """Create an association between two records via a collection-valued navigation property.
-
     Links the related record by POSTing an @odata.id reference to the navigation property.
 
     Use dataverse_list_relationships to discover the correct navigation_property name.
     Use dataverse_get_entity_sets to resolve entity set names.
-
-    Set allow_write=False (default) to preview the request payload and URL without
-    executing it. Set allow_write=True to perform the association.
-
-    Returns {"success": true} on success (HTTP 204), or a preview object when
-    allow_write=False.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     base_url = _resolve_base_url(app_ctx, params.dataverse_url)
@@ -210,15 +202,6 @@ async def dataverse_associate_records(
         f"/{params.related_entity_set_name}({params.related_record_id})"
     )
     body = {"@odata.id": related_uri}
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "method": "POST",
-            "url": url,
-            "body": body,
-            "message": "Set allow_write=True to execute this association.",
-        })
 
     try:
         token = await asyncio.to_thread(
@@ -256,7 +239,7 @@ async def dataverse_associate_records(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_disassociate_records",
     annotations={
         "title": "Disassociate Records",
@@ -270,14 +253,7 @@ async def dataverse_disassociate_records(
     params: DisassociateRecordsInput, ctx: Context
 ) -> str:
     """Remove an association between two records via a collection-valued navigation property.
-
     Unlinks the related record by sending a DELETE to the navigation property $ref endpoint.
-
-    Set allow_delete=False (default) to preview the URL without executing it.
-    Set allow_delete=True to perform the disassociation.
-
-    Returns {"success": true} on success (HTTP 204), or a preview object when
-    allow_delete=False.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     base_url = _resolve_base_url(app_ctx, params.dataverse_url)
@@ -295,14 +271,6 @@ async def dataverse_disassociate_records(
         f"/{params.entity_set_name}({params.record_id})"
         f"/{params.navigation_property}({params.related_record_id})/$ref"
     )
-
-    if not params.allow_delete:
-        return json.dumps({
-            "preview": True,
-            "method": "DELETE",
-            "url": url,
-            "message": "Set allow_delete=True to execute this disassociation.",
-        })
 
     try:
         token = await asyncio.to_thread(
@@ -344,7 +312,7 @@ async def dataverse_disassociate_records(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_merge_records",
     annotations={
         "title": "Merge Records",
@@ -356,18 +324,11 @@ async def dataverse_disassociate_records(
 )
 async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> str:
     """Merge a subordinate record into a target record using the Dataverse Merge action.
-
     Supported entity types: account, contact, lead, incident.
 
     The subordinate record is deactivated (not deleted) after the merge.
     Use update_content to carry specific field values from the subordinate
     to the target.
-
-    Set allow_write=False (default) to preview the request body without
-    executing. Set allow_write=True to perform the merge.
-
-    Returns {"success": true} on HTTP 204, or a preview object when
-    allow_write=False.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     base_url = _resolve_base_url(app_ctx, params.dataverse_url)
@@ -392,15 +353,6 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
         body["UpdateContent"] = {**params.update_content, "@odata.type": entity_type}
 
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/Merge"
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "method": "POST",
-            "url": url,
-            "body": body,
-            "message": "Set allow_write=True to execute this merge.",
-        })
 
     try:
         token = await asyncio.to_thread(get_bearer_token, app_ctx, f"{base_url}/.default")
@@ -548,15 +500,9 @@ def _parse_batch_response(response_text: str, boundary: str) -> list[dict]:
 )
 async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> str:
     """Execute multiple OData operations in a single HTTP request using the $batch endpoint.
-
     Supports up to 1,000 operations per request. Operations in the same
     change_set_id are executed atomically — if any fails, all in that set
     are rolled back.
-
-    When allow_write=False (default) and the batch contains mutations (POST,
-    PUT, PATCH, DELETE), returns a preview of the operations without executing.
-    Read-only batches (GET only) are always executed regardless of allow_write.
-    Set allow_write=True to execute mutation batches.
 
     Returns a list of per-operation results: [{index, status_code, body}].
     Change set results are flattened into the list in order.
@@ -573,24 +519,16 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
         })
 
     has_mutations = any(op.method != "GET" for op in params.operations)
-
-    if not params.allow_write and has_mutations:
-        preview_ops = [
-            {
-                "index": i,
-                "method": op.method,
-                "url": op.url,
-                "has_body": op.body is not None,
-                "change_set_id": op.change_set_id,
-            }
-            for i, op in enumerate(params.operations)
-        ]
-        return json.dumps({
-            "preview": True,
-            "operation_count": len(params.operations),
-            "operations": preview_ops,
-            "message": "Set allow_write=True to execute this batch.",
-        })
+    if has_mutations:
+        write_enabled = os.environ.get("DATAVERSE_ALLOW_WRITE", "").lower() == "true"
+        if not write_enabled:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "Batch operations containing non-GET methods require "
+                    "DATAVERSE_ALLOW_WRITE=true in the MCP server environment."
+                ),
+            })
 
     batch_boundary = "batch_dataverse_mcp"
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/$batch"

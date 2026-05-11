@@ -539,14 +539,6 @@ class CreateTableInput(DataverseEnvironmentInput):
         default=None,
         description="Optional description for the table.",
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the create operation. "
-            "When False (default), the tool returns a preview of the entity "
-            "definition that would be sent without calling the API."
-        ),
-    )
 
     @field_validator("ownership_type")
     @classmethod
@@ -576,14 +568,6 @@ class UpdateTableInput(DataverseEnvironmentInput):
         default=None,
         description="New description for the table.",
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the update operation. "
-            "When False (default), the tool fetches the current definition, "
-            "applies the requested changes, and returns a preview without calling PUT."
-        ),
-    )
 
 
 class DeleteTableInput(DataverseEnvironmentInput):
@@ -596,15 +580,6 @@ class DeleteTableInput(DataverseEnvironmentInput):
             "Use lowercase. Only custom tables (IsCustomEntity=true) can be deleted."
         ),
         min_length=1,
-    )
-    allow_delete: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the delete operation. "
-            "When False (default), the tool returns the current table definition "
-            "as a preview without deleting anything. "
-            "WARNING: Deletion is permanent and removes all table data."
-        ),
     )
 
 
@@ -676,14 +651,6 @@ class CreateColumnInput(DataverseEnvironmentInput):
             "Picklist → {'OptionSet': {'@odata.type': '...OptionSetMetadata', 'Options': [...]}}."
         ),
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the create operation. "
-            "When False (default), the tool returns a preview of the attribute "
-            "definition that would be posted without calling the API."
-        ),
-    )
 
     @field_validator("attribute_type")
     @classmethod
@@ -728,14 +695,6 @@ class UpdateColumnInput(DataverseEnvironmentInput):
             "metadata API requires a full PUT — partial updates are not supported."
         ),
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the PUT. "
-            "When False (default), returns the full_definition as a preview without "
-            "calling the API."
-        ),
-    )
 
 
 class DeleteColumnInput(DataverseEnvironmentInput):
@@ -753,15 +712,6 @@ class DeleteColumnInput(DataverseEnvironmentInput):
             "Only custom columns can be deleted."
         ),
         min_length=1,
-    )
-    allow_delete: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the delete. "
-            "When False (default), fetches and returns the current column definition "
-            "as a preview without deleting anything. "
-            "WARNING: Deletion is permanent and removes all column data."
-        ),
     )
 
 
@@ -810,14 +760,6 @@ class CreateOneToManyRelationshipInput(DataverseEnvironmentInput):
         description="Display label for the lookup column.",
         min_length=1,
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the create operation. "
-            "When False (default), returns a preview of the relationship "
-            "definition body without calling the API."
-        ),
-    )
 
 
 class CreateManyToManyRelationshipInput(DataverseEnvironmentInput):
@@ -848,14 +790,6 @@ class CreateManyToManyRelationshipInput(DataverseEnvironmentInput):
             "store the relationship links (e.g., 'cr123_account_contact')."
         ),
         min_length=1,
-    )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the create operation. "
-            "When False (default), returns a preview of the relationship "
-            "definition body without calling the API."
-        ),
     )
 
 
@@ -891,14 +825,6 @@ class CreateMultiTableLookupInput(DataverseEnvironmentInput):
         ),
         min_length=1,
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the create operation. "
-            "When False (default), returns a preview of the request body "
-            "without calling the API."
-        ),
-    )
 
 
 class UpdateRelationshipInput(DataverseEnvironmentInput):
@@ -920,14 +846,6 @@ class UpdateRelationshipInput(DataverseEnvironmentInput):
             "The Dataverse metadata API requires a full PUT."
         ),
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the PUT. "
-            "When False (default), returns the full_definition as a preview "
-            "without calling the API."
-        ),
-    )
 
     @field_validator("metadata_id")
     @classmethod
@@ -947,16 +865,6 @@ class DeleteRelationshipInput(DataverseEnvironmentInput):
             "Obtain via dataverse_get_relationship."
         ),
         min_length=36,
-    )
-    allow_delete: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the delete. "
-            "When False (default), returns the metadata_id as a preview "
-            "without deleting anything. "
-            "WARNING: Deletion is permanent and removes the relationship and "
-            "the associated lookup column."
-        ),
     )
 
     @field_validator("metadata_id")
@@ -1012,14 +920,6 @@ class CreateChoiceInput(DataverseEnvironmentInput):
         ),
         min_length=1,
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the create operation. "
-            "When False (default), returns a preview of the choice definition "
-            "body without calling the API."
-        ),
-    )
 
 
 class UpdateChoiceInput(DataverseEnvironmentInput):
@@ -1042,14 +942,6 @@ class UpdateChoiceInput(DataverseEnvironmentInput):
             "dataverse_update_choice_option instead."
         ),
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the PUT. "
-            "When False (default), returns the full_definition as a preview "
-            "without calling the API."
-        ),
-    )
 
     @field_validator("metadata_id")
     @classmethod
@@ -1070,14 +962,6 @@ class DeleteChoiceInput(DataverseEnvironmentInput):
             "via dataverse_get_choice."
         ),
         min_length=1,
-    )
-    allow_delete: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the delete. "
-            "When False (default), returns the name as a preview without "
-            "deleting anything."
-        ),
     )
 
 
@@ -1116,14 +1000,6 @@ class AddChoiceOptionInput(DataverseEnvironmentInput):
         description=(
             "Integer code for the new option. If omitted, Dataverse assigns one "
             "automatically. Custom option values typically start at 100000000."
-        ),
-    )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the insert. "
-            "When False (default), returns a preview of the request body "
-            "without calling the API."
         ),
     )
 
@@ -1183,13 +1059,6 @@ class UpdateChoiceOptionInput(DataverseEnvironmentInput):
             "the provided label. When False (default), replaces all language labels."
         ),
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the update. "
-            "When False (default), returns a preview of the request body."
-        ),
-    )
 
     @model_validator(mode="after")
     def validate_choice_target(self) -> "UpdateChoiceOptionInput":
@@ -1234,13 +1103,6 @@ class DeleteChoiceOptionInput(DataverseEnvironmentInput):
     value: int = Field(
         ...,
         description="Integer code of the option to remove.",
-    )
-    allow_delete: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the delete. "
-            "When False (default), returns a preview of the request body."
-        ),
     )
 
     @model_validator(mode="after")
@@ -1290,13 +1152,6 @@ class ReorderChoiceOptionsInput(DataverseEnvironmentInput):
             "Must include every existing option value."
         ),
         min_length=1,
-    )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the reorder. "
-            "When False (default), returns a preview of the request body."
-        ),
     )
 
     @model_validator(mode="after")
@@ -1356,14 +1211,6 @@ class PublishCustomizationsInput(DataverseEnvironmentInput):
             "When True, publishes ALL unpublished customizations in the environment "
             "using PublishAllXml. This may take several minutes for large environments. "
             "Ignores entities, option_sets, and relationships parameters when True."
-        ),
-    )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the publish operation. "
-            "When False (default), returns a preview of the ParameterXml "
-            "(or the action name when publish_all=True) without calling the API."
         ),
     )
 
@@ -1530,14 +1377,6 @@ class AssociateRecordsInput(DataverseEnvironmentInput):
         description="GUID of the related record to associate.",
         min_length=36,
     )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the association. "
-            "When False (default), returns a preview of the request "
-            "without calling the API."
-        ),
-    )
 
     @field_validator("record_id", "related_record_id")
     @classmethod
@@ -1575,13 +1414,6 @@ class DisassociateRecordsInput(DataverseEnvironmentInput):
         ...,
         description="GUID of the related record to disassociate.",
         min_length=36,
-    )
-    allow_delete: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the disassociation. "
-            "When False (default), returns a preview without calling the API."
-        ),
     )
 
     @field_validator("record_id", "related_record_id")
@@ -1636,14 +1468,6 @@ class MergeRecordsInput(DataverseEnvironmentInput):
         description=(
             "Whether to check and reparent records during the merge. "
             "Set to True only when parenting relationships must be maintained."
-        ),
-    )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard. Set to True to execute the merge. "
-            "When False (default), returns a preview of the request body "
-            "without calling the API."
         ),
     )
 
@@ -1724,15 +1548,6 @@ class ExecuteBatchInput(DataverseEnvironmentInput):
             "When True, adds 'Prefer: odata.continue-on-error' — the batch "
             "continues processing remaining operations even if one fails. "
             "When False (default), the batch stops on the first error."
-        ),
-    )
-    allow_write: bool = Field(
-        default=False,
-        description=(
-            "Safety guard for batches containing mutations (POST, PUT, PATCH, DELETE). "
-            "Set to True to execute the batch. "
-            "When False (default), returns a preview of the batch operations instead of executing. "
-            "Read-only batches (GET only) are always executed regardless of this flag."
         ),
     )
 

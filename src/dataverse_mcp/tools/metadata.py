@@ -10,7 +10,7 @@ import httpx
 from mcp.server.fastmcp import Context
 from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
-from dataverse_mcp._app import mcp
+from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
 from dataverse_mcp.models import (
     AddChoiceOptionInput,
@@ -93,7 +93,6 @@ def _get_app_ctx(ctx: Context) -> AppContext:
 )
 async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     """List available tables (entities) in the Dataverse environment.
-
     Returns table metadata including logical name, schema name, and display
     name. By default returns all non-private tables. Use filter to narrow
     results (e.g., "IsCustomEntity eq true" for custom tables only).
@@ -150,7 +149,6 @@ async def dataverse_get_table_metadata(
     params: GetTableMetadataInput, ctx: Context
 ) -> str:
     """Get detailed metadata for a specific Dataverse table.
-
     Returns the table's schema name, logical name, entity set name,
     primary key attribute, and primary name attribute. Use this to
     understand a table's structure before querying it with
@@ -210,7 +208,6 @@ async def dataverse_get_table_metadata(
 )
 async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     """List all column (attribute) definitions for a Dataverse table.
-
     Returns metadata for every column on the specified table. Use
     attribute_type to narrow by type (e.g., 'Lookup', 'Picklist').
     Use select to choose which metadata properties to include.
@@ -272,7 +269,6 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
 )
 async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     """Get full metadata for a single column on a Dataverse table.
-
     Returns all metadata properties for the specified column, including
     type-specific properties such as MaxLength (String), Precision
     (Decimal/Money), RequiredLevel, Format, and IsValidForCreate.
@@ -399,7 +395,6 @@ async def dataverse_list_choice_column_options(
     params: ListChoiceColumnOptionsInput, ctx: Context
 ) -> str:
     """Get all option values for a Picklist or MultiSelectPicklist column.
-
     Returns the integer value and display label for each option in the
     column's local option set. Handles both Picklist and
     MultiSelectPicklist column types automatically.
@@ -557,7 +552,6 @@ async def dataverse_list_relationships(
     params: ListRelationshipsInput, ctx: Context
 ) -> str:
     """List relationship definitions for a table or the whole environment.
-
     When table_logical_name is supplied, queries that table's OneToMany,
     ManyToOne, and/or ManyToMany relationships depending on relationship_type.
     When table_logical_name is omitted, returns all RelationshipDefinitions
@@ -639,7 +633,6 @@ async def dataverse_get_relationship(
     params: GetRelationshipInput, ctx: Context
 ) -> str:
     """Get full metadata for a single relationship by schema name.
-
     Returns cascade configuration, navigation property names, and all
     structural details for the relationship. Schema names are case-sensitive
     and must exactly match the SchemaName returned by
@@ -719,7 +712,6 @@ _DEFAULT_CHOICE_SELECT = ",".join([
 )
 async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     """List global choice (option set) definitions in the Dataverse environment.
-
     Returns metadata for all global choices. The Dataverse API does not
     support $filter or $top on this endpoint; top is applied client-side.
     Option values and labels are not included — use dataverse_get_choice
@@ -793,7 +785,6 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
 )
 async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
     """Get a specific global choice (option set) definition by name or MetadataId.
-
     Returns all option values, integer codes, and labels for the choice.
     Use this when you need the full option set for a global choice before
     filtering records or building picklist column definitions.
@@ -863,7 +854,6 @@ async def dataverse_check_relationship_eligibility(
     params: CheckRelationshipEligibilityInput, ctx: Context
 ) -> str:
     """Check whether a table can participate in a relationship.
-
     Calls Dataverse relationship eligibility endpoints for the target table:
     - 'referenced'    — can be the primary (one) side of a 1:N
     - 'referencing'   — can be the related (many) side of a 1:N
@@ -988,7 +978,7 @@ def _build_create_table_body(params: CreateTableInput) -> dict:
     }
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_table",
     annotations={
         "title": "Create Table",
@@ -1000,25 +990,13 @@ def _build_create_table_body(params: CreateTableInput) -> dict:
 )
 async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     """Create a new custom table (entity) in the Dataverse environment.
-
     Builds and POSTs an EntityMetadata definition including the table schema,
     display names, ownership type, and a required primary name string attribute.
-
-    When allow_write is False (default), returns the entity definition that
-    would be sent as a preview — no API call is made. Set allow_write to True
-    to execute the create operation.
 
     The schema_name must include a publisher prefix (e.g., 'cr123_Widget').
     The table logical name will be the lowercase form of schema_name.
     """
     body = _build_create_table_body(params)
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the create operation.",
-            "entity_definition": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -1091,7 +1069,7 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_table",
     annotations={
         "title": "Update Table",
@@ -1103,14 +1081,9 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
 )
 async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
     """Update an existing table's display name or description.
-
     Fetches the current full entity definition, applies the requested changes,
     and PUTs the merged definition back. The Dataverse metadata API requires a
     full PUT — partial updates (PATCH) are not supported on EntityDefinitions.
-
-    When allow_write is False (default), fetches the current definition, applies
-    the changes, and returns the merged definition as a preview without calling
-    PUT. Set allow_write to True to execute the update.
 
     At least one of display_name or description must be provided.
     """
@@ -1158,13 +1131,6 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
             definition["DisplayName"] = _make_label(params.display_name)
         if params.description is not None:
             definition["Description"] = _make_label(params.description)
-
-        if not params.allow_write:
-            return json.dumps({
-                "preview": True,
-                "message": "Set allow_write=true to execute the update operation.",
-                "entity_definition": definition,
-            })
 
         metadata_id = definition.get("MetadataId")
         if not metadata_id:
@@ -1217,7 +1183,7 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_table",
     annotations={
         "title": "Delete Table",
@@ -1229,13 +1195,8 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
 )
 async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
     """Permanently delete a custom table and all its data from the environment.
-
     WARNING: This operation is irreversible. All records in the table will be
     permanently deleted along with the table definition.
-
-    When allow_delete is False (default), fetches and returns the current table
-    definition as a preview without deleting anything. Set allow_delete to True
-    to execute the delete operation.
 
     Only custom tables (IsCustomEntity=true) can be deleted. Attempting to
     delete a system table will return an error from the API.
@@ -1274,16 +1235,6 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
 
         definition = await asyncio.to_thread(_get_definition)
         definition.pop("@odata.context", None)
-
-        if not params.allow_delete:
-            return json.dumps({
-                "preview": True,
-                "message": (
-                    "Set allow_delete=true to permanently delete this table and all its data. "
-                    "This operation is irreversible."
-                ),
-                "table": definition,
-            })
 
         # Safety check: only allow deletion of custom, unmanaged tables
         is_custom = definition.get("IsCustomEntity", False)
@@ -1377,7 +1328,7 @@ _METADATA_HEADERS = {
 }
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_column",
     annotations={
         "title": "Create Column",
@@ -1389,7 +1340,6 @@ _METADATA_HEADERS = {
 )
 async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> str:
     """Add a new column (attribute) to a Dataverse table.
-
     Constructs the correct attribute metadata body based on attribute_type and
     POSTs it to /EntityDefinitions(LogicalName='{table}')/Attributes.
 
@@ -1399,9 +1349,6 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     - Decimal: {"Precision": 2}
     - DateTime: {"Format": "DateOnly"}  (DateOnly | DateAndTime)
     - Picklist/MultiSelectPicklist: {"OptionSet": {...}}
-
-    When allow_write is False (default), returns a preview of the attribute
-    definition body without calling the API. Set allow_write=True to execute.
 
     Call dataverse_publish_customizations after creating columns to make the
     changes visible in the application.
@@ -1433,13 +1380,6 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
         }
     if params.type_specific_properties:
         body.update(params.type_specific_properties)
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the create operation.",
-            "attribute_definition": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -1513,7 +1453,7 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_column",
     annotations={
         "title": "Update Column",
@@ -1525,27 +1465,11 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
 )
 async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> str:
     """Update an existing column's metadata via full PUT replacement.
-
     The Dataverse metadata API does not support partial updates (PATCH) on
     attribute definitions. You must provide the complete column definition JSON.
 
-    Recommended workflow:
-    1. Call dataverse_get_column to retrieve the current full definition
-    2. Apply your changes to the returned JSON
-    3. Pass the modified JSON as full_definition to this tool with allow_write=True
-
-    When allow_write is False (default), returns the full_definition as a preview
-    without calling the API.
-
     Call dataverse_publish_customizations after updating columns.
     """
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the update operation.",
-            "full_definition": params.full_definition,
-        })
-
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
     if not base_url:
@@ -1609,7 +1533,7 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_column",
     annotations={
         "title": "Delete Column",
@@ -1621,11 +1545,6 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
 )
 async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> str:
     """Permanently delete a custom column and all its data from a table.
-
-    Fetches the current column definition before acting. When allow_delete is
-    False (default), returns the column definition as a preview without
-    deleting anything.
-
     WARNING: Deletion is permanent and irreversible. All data stored in this
     column across every record will be lost.
 
@@ -1670,13 +1589,6 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
                 return data
 
         column_def = await asyncio.to_thread(_get_definition)
-
-        if not params.allow_delete:
-            return json.dumps({
-                "preview": True,
-                "message": "Set allow_delete=true to permanently delete this column.",
-                "column": column_def,
-            })
 
         # Safety check: only allow deletion of custom, unmanaged columns
         is_custom = column_def.get("IsCustomAttribute", False)
@@ -1759,7 +1671,7 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_one_to_many_relationship",
     annotations={
         "title": "Create One-to-Many Relationship",
@@ -1773,13 +1685,9 @@ async def dataverse_create_one_to_many_relationship(
     params: CreateOneToManyRelationshipInput, ctx: Context
 ) -> str:
     """Create a 1:N relationship between two tables.
-
     This simultaneously creates the lookup column on the referencing (many) side.
     Use dataverse_check_relationship_eligibility before calling this tool to
     confirm the tables can participate in the relationship.
-
-    When allow_write is False (default), returns a preview of the relationship
-    definition body without calling the API. Set allow_write=True to execute.
 
     Call dataverse_publish_customizations after creating relationships.
     """
@@ -1802,13 +1710,6 @@ async def dataverse_create_one_to_many_relationship(
             "DisplayName": _make_label(params.lookup_display_name),
         },
     }
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the create operation.",
-            "relationship_definition": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -1879,7 +1780,7 @@ async def dataverse_create_one_to_many_relationship(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_many_to_many_relationship",
     annotations={
         "title": "Create Many-to-Many Relationship",
@@ -1893,12 +1794,8 @@ async def dataverse_create_many_to_many_relationship(
     params: CreateManyToManyRelationshipInput, ctx: Context
 ) -> str:
     """Create an N:N relationship and its intersect (junction) table between two tables.
-
     Use dataverse_check_relationship_eligibility before calling this tool to
     confirm both tables can participate in a many-to-many relationship.
-
-    When allow_write is False (default), returns a preview of the relationship
-    definition body without calling the API. Set allow_write=True to execute.
 
     Call dataverse_publish_customizations after creating relationships.
     """
@@ -1909,13 +1806,6 @@ async def dataverse_create_many_to_many_relationship(
         "Entity2LogicalName": params.entity2_logical_name,
         "IntersectEntityName": params.intersect_entity_name,
     }
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the create operation.",
-            "relationship_definition": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -1986,7 +1876,7 @@ async def dataverse_create_many_to_many_relationship(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_multi_table_lookup",
     annotations={
         "title": "Create Multi-Table (Polymorphic) Lookup",
@@ -2000,12 +1890,8 @@ async def dataverse_create_multi_table_lookup(
     params: CreateMultiTableLookupInput, ctx: Context
 ) -> str:
     """Create a polymorphic lookup column that can reference multiple tables.
-
     Uses the CreatePolymorphicLookupAttribute bound action. The lookup column
     is added to owning_entity and can point to any of the target_entities.
-
-    When allow_write is False (default), returns a preview of the request body
-    without calling the API. Set allow_write=True to execute.
 
     Call dataverse_publish_customizations after creating lookup columns.
     """
@@ -2027,13 +1913,6 @@ async def dataverse_create_multi_table_lookup(
         "OneToManyRelationships": relationships,
         "Lookup": lookup,
     }
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the create operation.",
-            "request_body": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -2105,7 +1984,7 @@ async def dataverse_create_multi_table_lookup(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_relationship",
     annotations={
         "title": "Update Relationship",
@@ -2119,27 +1998,11 @@ async def dataverse_update_relationship(
     params: UpdateRelationshipInput, ctx: Context
 ) -> str:
     """Update an existing relationship's cascade behavior or configuration.
-
     The Dataverse metadata API requires a full PUT — partial updates are not
     supported on RelationshipDefinitions.
 
-    Recommended workflow:
-    1. Call dataverse_get_relationship to retrieve the current full definition
-    2. Apply your changes (e.g., update CascadeConfiguration)
-    3. Pass the modified JSON as full_definition with allow_write=True
-
-    When allow_write is False (default), returns the full_definition as a
-    preview without calling the API.
-
     Call dataverse_publish_customizations after updating relationships.
     """
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the update operation.",
-            "full_definition": params.full_definition,
-        })
-
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
     if not base_url:
@@ -2195,7 +2058,7 @@ async def dataverse_update_relationship(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_relationship",
     annotations={
         "title": "Delete Relationship",
@@ -2209,10 +2072,6 @@ async def dataverse_delete_relationship(
     params: DeleteRelationshipInput, ctx: Context
 ) -> str:
     """Delete a custom relationship by MetadataId.
-
-    When allow_delete is False (default), returns a preview of what would be
-    deleted without calling the API.
-
     WARNING: Deletion is permanent. For 1:N relationships, the associated
     lookup column on the referencing entity is also deleted.
 
@@ -2263,16 +2122,6 @@ async def dataverse_delete_relationship(
                     ),
                 })
             raise
-
-        if not params.allow_delete:
-            return json.dumps({
-                "preview": True,
-                "message": (
-                    "Set allow_delete=true to permanently delete this relationship. "
-                    "For 1:N relationships, the lookup column will also be deleted."
-                ),
-                "relationship": relationship_def,
-            })
 
         is_custom = relationship_def.get("IsCustomRelationship", False)
         is_managed = relationship_def.get("IsManaged", False)
@@ -2362,7 +2211,7 @@ def _build_option_set_target_params(
     }
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_create_choice",
     annotations={
         "title": "Create Global Choice",
@@ -2376,12 +2225,8 @@ async def dataverse_create_choice(
     params: CreateChoiceInput, ctx: Context
 ) -> str:
     """Create a new global choice (option set) in Dataverse.
-
     Global choices can be reused across multiple columns. After creating, use
     dataverse_publish_customizations to make the choice visible in the UI.
-
-    When allow_write is False (default), returns a preview of the request body
-    without calling the API. Set allow_write=True to execute.
     """
     options_body = [
         {
@@ -2398,13 +2243,6 @@ async def dataverse_create_choice(
         "OptionSetType": "Picklist",
         "Options": options_body,
     }
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the create operation.",
-            "request_body": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -2460,7 +2298,7 @@ async def dataverse_create_choice(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_choice",
     annotations={
         "title": "Update Global Choice",
@@ -2474,25 +2312,9 @@ async def dataverse_update_choice(
     params: UpdateChoiceInput, ctx: Context
 ) -> str:
     """Update an existing global choice via full PUT replacement.
-
     The Dataverse metadata API requires a full PUT — partial updates are not
     supported on GlobalOptionSetDefinitions.
-
-    Recommended workflow:
-    1. Call dataverse_get_choice to retrieve the current full definition
-    2. Apply your changes (e.g., add or reorder options)
-    3. Pass the modified JSON as full_definition with allow_write=True
-
-    To update individual option labels, use dataverse_update_choice_option.
-    When allow_write is False (default), returns full_definition as a preview.
     """
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the update operation.",
-            "full_definition": params.full_definition,
-        })
-
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
     if not base_url:
@@ -2548,7 +2370,7 @@ async def dataverse_update_choice(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_choice",
     annotations={
         "title": "Delete Global Choice",
@@ -2562,23 +2384,8 @@ async def dataverse_delete_choice(
     params: DeleteChoiceInput, ctx: Context
 ) -> str:
     """Delete a global choice (option set) by logical name.
-
-    Confirm no columns reference the choice before deleting — columns using it
-    must be removed first. When allow_delete is False (default), returns a
-    preview without calling the API. Set allow_delete=True to execute.
-
     Call dataverse_publish_customizations after deleting global choices.
     """
-    if not params.allow_delete:
-        return json.dumps({
-            "preview": True,
-            "message": (
-                "Set allow_delete=true to permanently delete this global choice. "
-                "Ensure no columns reference it first."
-            ),
-            "name": params.name,
-        })
-
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
     if not base_url:
@@ -2632,7 +2439,7 @@ async def dataverse_delete_choice(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_add_choice_option",
     annotations={
         "title": "Add Choice Option",
@@ -2646,12 +2453,8 @@ async def dataverse_add_choice_option(
     params: AddChoiceOptionInput, ctx: Context
 ) -> str:
     """Add a new option to a global or local choice column.
-
     Provide option_set_name for a global choice, or entity_logical_name +
     attribute_logical_name for a local (column-specific) choice — not both.
-
-    When allow_write is False (default), returns a preview of the request body.
-    Set allow_write=True to execute. Call dataverse_publish_customizations after.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -2663,13 +2466,6 @@ async def dataverse_add_choice_option(
     }
     if params.value is not None:
         body["Value"] = params.value
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the insert operation.",
-            "request_body": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -2725,7 +2521,7 @@ async def dataverse_add_choice_option(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_update_choice_option",
     annotations={
         "title": "Update Choice Option",
@@ -2739,12 +2535,8 @@ async def dataverse_update_choice_option(
     params: UpdateChoiceOptionInput, ctx: Context
 ) -> str:
     """Update the display label of an existing option in a global or local choice.
-
     Provide option_set_name for a global choice, or entity_logical_name +
     attribute_logical_name for a local choice — not both.
-
-    When allow_write is False (default), returns a preview of the request body.
-    Set allow_write=True to execute. Call dataverse_publish_customizations after.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -2755,13 +2547,6 @@ async def dataverse_update_choice_option(
         "Label": _make_label(params.label),
         "MergeLabels": params.merge_labels,
     }
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the update operation.",
-            "request_body": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -2816,7 +2601,7 @@ async def dataverse_update_choice_option(
         })
 
 
-@mcp.tool(
+@delete_tool(
     name="dataverse_delete_choice_option",
     annotations={
         "title": "Delete Choice Option",
@@ -2830,13 +2615,8 @@ async def dataverse_delete_choice_option(
     params: DeleteChoiceOptionInput, ctx: Context
 ) -> str:
     """Remove a specific option value from a global or local choice.
-
     Provide option_set_name for a global choice, or entity_logical_name +
     attribute_logical_name for a local choice — not both.
-
-    WARNING: Existing records with this option value will retain the integer code
-    but lose the associated label. When allow_delete is False (default), returns
-    a preview. Set allow_delete=True to execute. Call dataverse_publish_customizations after.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -2845,16 +2625,6 @@ async def dataverse_delete_choice_option(
         **target_params,
         "Value": params.value,
     }
-
-    if not params.allow_delete:
-        return json.dumps({
-            "preview": True,
-            "message": (
-                "Set allow_delete=true to permanently remove this option. "
-                "Records with this value will retain the integer code but lose the label."
-            ),
-            "request_body": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -2908,7 +2678,7 @@ async def dataverse_delete_choice_option(
         })
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_reorder_choice_options",
     annotations={
         "title": "Reorder Choice Options",
@@ -2922,13 +2692,8 @@ async def dataverse_reorder_choice_options(
     params: ReorderChoiceOptionsInput, ctx: Context
 ) -> str:
     """Reorder the options of a global or local choice.
-
     Provide option_set_name for a global choice, or entity_logical_name +
     attribute_logical_name for a local choice — not both.
-
-    The values list must include every existing option value in the desired
-    display order. When allow_write is False (default), returns a preview.
-    Set allow_write=True to execute. Call dataverse_publish_customizations after.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -2937,13 +2702,6 @@ async def dataverse_reorder_choice_options(
         **target_params,
         "Values": params.values,
     }
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute the reorder operation.",
-            "request_body": body,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
@@ -3002,7 +2760,7 @@ async def dataverse_reorder_choice_options(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@write_tool(
     name="dataverse_publish_customizations",
     annotations={
         "title": "Publish Customizations",
@@ -3016,7 +2774,6 @@ async def dataverse_publish_customizations(
     params: PublishCustomizationsInput, ctx: Context
 ) -> str:
     """Publish Dataverse customizations to make schema changes visible in the UI.
-
     After creating or modifying tables, columns, relationships, or choices,
     customizations must be published before they appear in model-driven apps.
 
@@ -3025,18 +2782,8 @@ async def dataverse_publish_customizations(
       publish only those components. Calls PublishXml with ParameterXml.
     - All: set publish_all=True to publish every unpublished customization in
       the environment via PublishAllXml. May take several minutes.
-
-    When allow_write is False (default), returns a preview of the ParameterXml
-    that would be sent without calling the API.
     """
     if params.publish_all:
-        if not params.allow_write:
-            return json.dumps({
-                "preview": True,
-                "message": "Set allow_write=true to execute PublishAllXml.",
-                "action": "PublishAllXml",
-            })
-
         app_ctx = _get_app_ctx(ctx)
         base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
         if not base_url:
@@ -3118,14 +2865,6 @@ async def dataverse_publish_customizations(
         relationship_node.text = relationship_name
 
     parameter_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
-
-    if not params.allow_write:
-        return json.dumps({
-            "preview": True,
-            "message": "Set allow_write=true to execute PublishXml with this ParameterXml.",
-            "action": "PublishXml",
-            "parameter_xml": parameter_xml,
-        })
 
     app_ctx = _get_app_ctx(ctx)
     base_url = params.dataverse_url or app_ctx.fallback_dataverse_url

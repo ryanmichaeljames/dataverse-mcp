@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-05-11
+
+### Added
+- `DATAVERSE_ALLOW_WRITE` and `DATAVERSE_ALLOW_DELETE` environment variables to gate write and delete tool registration at server startup — when not set, those tools are not exposed to the agent at all
+
+### Changed
+- Write tools (`dataverse_associate_records`, `dataverse_merge_records`, all create/update schema tools) now require `DATAVERSE_ALLOW_WRITE=true` in the MCP server `env` to be registered
+- `dataverse_execute_batch` is always registered for GET-only batch usage; non-GET operations in a batch now require `DATAVERSE_ALLOW_WRITE=true`
+- Delete tools (`dataverse_disassociate_records`, `dataverse_delete_table`, `dataverse_delete_column`, `dataverse_delete_relationship`, `dataverse_delete_choice`, `dataverse_delete_choice_option`) now require `DATAVERSE_ALLOW_DELETE=true` in the MCP server `env` to be registered
+
+### Removed
+- **BREAKING:** Per-call `allow_write` and `allow_delete` parameters removed from all write and delete tool inputs — access is now controlled entirely by the MCP server `env` flags
+- **BREAKING:** Preview mode removed from all write and delete tools
+
 ## [1.1.0] - 2026-05-11
 
 ### Added
@@ -113,7 +127,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.1.0...v3.2.0
 [1.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.0.0...v1.1.0
 [1.0.0]:https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0...v1.0.0
 [0.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v0.1.0b2...v0.1.0

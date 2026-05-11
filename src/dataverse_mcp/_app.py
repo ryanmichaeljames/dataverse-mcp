@@ -5,6 +5,8 @@ modules.  Tool modules import ``mcp`` from here; server.py imports ``mcp``
 from here and registers tool modules.
 """
 
+import os
+
 from mcp.server.fastmcp import FastMCP
 
 from dataverse_mcp.client import dataverse_lifespan
@@ -20,3 +22,28 @@ mcp = FastMCP(
     ),
     lifespan=dataverse_lifespan,
 )
+
+_ALLOW_WRITE = os.environ.get("DATAVERSE_ALLOW_WRITE", "").lower() == "true"
+_ALLOW_DELETE = os.environ.get("DATAVERSE_ALLOW_DELETE", "").lower() == "true"
+
+
+def write_tool(**kwargs):
+    """Register a tool only when DATAVERSE_ALLOW_WRITE=true.
+
+    If the env var is not set, returns a no-op decorator so the function is
+    defined but not exposed as an MCP tool.
+    """
+    if _ALLOW_WRITE:
+        return mcp.tool(**kwargs)
+    return lambda f: f
+
+
+def delete_tool(**kwargs):
+    """Register a tool only when DATAVERSE_ALLOW_DELETE=true.
+
+    If the env var is not set, returns a no-op decorator so the function is
+    defined but not exposed as an MCP tool.
+    """
+    if _ALLOW_DELETE:
+        return mcp.tool(**kwargs)
+    return lambda f: f

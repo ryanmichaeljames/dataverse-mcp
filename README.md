@@ -20,7 +20,7 @@ An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft
 
 - [uv](https://docs.astral.sh/uv/) — install from [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Access to a Microsoft Dataverse environment
-- Azure CLI (`az login`) or a registered app for authentication
+- Azure CLI (`az login`) for authentication, or use `interactive` for browser-based sign-in
 
 ## Installation
 
@@ -53,10 +53,7 @@ This project does not use a `.env` file for normal setup.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `DATAVERSE_URL` | No | — | Optional fallback org URL, set only if you want requests without `dataverse_url` to still work |
-| `DATAVERSE_AUTH_TYPE` | No | `azure_cli` | Auth method: `interactive`, `client_secret`, or `azure_cli` |
-| `AZURE_TENANT_ID` | For `client_secret` | — | Azure AD tenant ID |
-| `AZURE_CLIENT_ID` | For `client_secret` | — | App registration client ID |
-| `AZURE_CLIENT_SECRET` | For `client_secret` | — | App registration client secret |
+| `DATAVERSE_AUTH_TYPE` | No | `azure_cli` | Auth method: `interactive` or `azure_cli` |
 | `DATAVERSE_ALLOW_WRITE` | No | `false` | Set to `true` to enable create, update, and mutation tools |
 | `DATAVERSE_ALLOW_DELETE` | No | `false` | Set to `true` to enable delete and disassociate tools |
 
@@ -64,7 +61,6 @@ This project does not use a `.env` file for normal setup.
 
 - **`azure_cli`** (default) — Uses your existing `az login` session. Best for local development.
 - **`interactive`** — Opens a browser window for interactive sign-in.
-- **`client_secret`** — Uses a service principal. Requires `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET`.
 
 ## Usage
 

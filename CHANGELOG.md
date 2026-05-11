@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Removed `client_secret` (service principal) authentication support — `DATAVERSE_AUTH_TYPE` now only accepts `interactive` and `azure_cli`; long-lived client secrets are unnecessary for local VS Code Copilot use cases and carry elevated risk
+
 ## [1.2.0] - 2026-05-11
 
 ### Added

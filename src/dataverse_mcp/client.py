@@ -2,6 +2,7 @@
 
 import logging
 import os
+import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -15,6 +16,45 @@ from PowerPlatform.Dataverse.client import DataverseClient
 logger = logging.getLogger(__name__)
 
 SUPPORTED_AUTH_TYPES = ("interactive", "azure_cli")
+
+# Common Azure CLI installation paths that may not be on the system PATH when
+# the MCP server process is launched (e.g., from VS Code without a login shell).
+_AZ_CLI_CANDIDATE_PATHS = [
+    r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin",
+    r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin",
+]
+
+
+def _ensure_az_cli_on_path() -> None:
+    """Add known Azure CLI install directories to PATH if az is not already found."""
+    if shutil.which("az"):
+        return
+
+    if os.name != "nt":
+        logger.warning(
+            "Azure CLI not found. "
+            "Ensure Azure CLI is installed and available on PATH."
+        )
+        return
+
+    current_path = os.environ.get("PATH", "")
+    existing_dirs = {
+        os.path.normcase(os.path.normpath(p))
+        for p in current_path.split(os.pathsep)
+        if p
+    }
+    additions = [
+        p for p in _AZ_CLI_CANDIDATE_PATHS
+        if os.path.isdir(p) and os.path.normcase(os.path.normpath(p)) not in existing_dirs
+    ]
+    if additions:
+        os.environ["PATH"] = os.pathsep.join(additions) + os.pathsep + current_path
+        logger.info("Added Azure CLI path(s) to PATH: %s", additions)
+    else:
+        logger.warning(
+            "Azure CLI not found on PATH and no known Windows install directories exist. "
+            "Ensure Azure CLI is installed and on PATH."
+        )
 
 
 def _build_credential(auth_type: str):
@@ -34,6 +74,7 @@ def _build_credential(auth_type: str):
         return InteractiveBrowserCredential()
 
     if auth_type == "azure_cli":
+        _ensure_az_cli_on_path()
         logger.info("Using AzureCliCredential for authentication")
         return AzureCliCredential()
 

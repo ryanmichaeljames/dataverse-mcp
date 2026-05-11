@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.2] - 2026-05-11
+
 ### Fixed
 - `dataverse_execute_batch` POST/PATCH/PUT operations now include `Content-Length` on the inner HTTP request, resolving Dataverse error **0x80048d19** ("stream not readable") for all write operations (#34)
 - `dataverse_execute_batch` change set operations now include the required `Content-ID` header on each part, resolving Dataverse error **0x80060888** ("Content-ID header not present") (#34)

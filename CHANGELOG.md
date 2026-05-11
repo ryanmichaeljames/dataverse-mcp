@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `dataverse_execute_batch` POST/PATCH/PUT operations now include `Content-Length` on the inner HTTP request, resolving Dataverse error **0x80048d19** ("stream not readable") for all write operations (#34)
+- `dataverse_execute_batch` change set operations now include the required `Content-ID` header on each part, resolving Dataverse error **0x80060888** ("Content-ID header not present") (#34)
+- `dataverse_execute_batch` GET operations no longer incorrectly include `Content-Type: application/json` when there is no body (#34)
+
+### Added
+- `tests/test_batch_serializer.py` — 28 regression tests for the OData batch serializer covering: standalone GET, standalone POST, change set POST (Content-ID present), mixed batches, CRLF compliance, and Pydantic model validation (#34)
+- Debug logging in `dataverse_execute_batch` for batch boundary, per-operation method/URL, response status, and per-result status codes (#34)
+
 ## [1.3.1] - 2026-05-11
 
 ### Fixed

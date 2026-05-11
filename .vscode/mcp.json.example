@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "dataverse-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "azure_cli"
+      }
+    }
+  }
+}

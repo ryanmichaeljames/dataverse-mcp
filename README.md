@@ -88,7 +88,7 @@ Set these in the `env` block of your MCP server entry. This project does not use
 
 ### Safety Guards
 
-Write and delete tools are **not registered by default**. They do not appear to the agent at all until explicitly enabled. This prevents accidental mutations when you only need to read or inspect data.
+Most write and delete tools are **not registered by default**, so they do not appear to the agent until explicitly enabled. One exception is `dataverse_execute_batch`, which is always visible but only allows GET requests unless `DATAVERSE_ALLOW_WRITE=true`. This prevents accidental mutations when you only need to read or inspect data while still allowing safe batch reads by default.
 
 ```json
 {

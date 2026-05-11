@@ -14,7 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_execute_batch` change set response parser no longer raises `RecursionError`; the parser now correctly splits part headers from body before checking for nested multipart content (#34)
 
 ### Added
-- `tests/test_batch_serializer.py` — 31 regression tests for the OData batch serializer and response parser, covering: standalone GET, standalone POST, change set POST (Content-ID present), mixed batches, CRLF compliance, Pydantic model validation, and change set response parsing without recursion (#34)
 - Debug logging in `dataverse_execute_batch` for batch boundary, per-operation method/URL, response status, and per-result status codes (#34)
 
 ## [1.3.1] - 2026-05-11

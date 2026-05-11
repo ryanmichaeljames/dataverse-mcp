@@ -52,6 +52,5 @@ where = ["src"]
 [dependency-groups]
 dev = [
     "build>=1.0",
-    "pytest>=9.0.3",
     "twine>=5.0",
 ]

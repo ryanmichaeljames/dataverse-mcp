@@ -1,76 +1,25 @@
 # Dataverse MCP Server
 
-An [MCP](https://modelcontextprotocol.io/) server for interacting with Microsoft Dataverse environments. Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk) and the official [PowerPlatform-Dataverse-Client](https://pypi.org/project/PowerPlatform-Dataverse-Client/) Python SDK.
+[![PyPI](https://img.shields.io/pypi/v/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)
+[![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/dataverse-mcp)](LICENSE)
 
-## Features
+An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, and explore Power Platform environments.
 
-- **Solution inspection** — list solutions, get solution details, browse solution components
-- **Table querying** — flexible OData-style queries against any Dataverse table
-- **Record management** — create, update, and delete records with safety guards
-- **Record associations** — associate and disassociate records via navigation properties
-- **Schema exploration** — list tables, inspect table and column metadata, browse relationships, choice columns, and global choices
-- **Table schema management** — create, update, and delete custom tables, columns, relationships, and choices; gated by `DATAVERSE_ALLOW_WRITE` / `DATAVERSE_ALLOW_DELETE` env vars
-- **Security inspection** — retrieve user privileges and check principal access rights on records
-- **Environment discovery** — list Power Platform environments available to the authenticated user
-- **Multi-environment targeting** — one MCP server config can query any Dataverse org the caller specifies
-- **Agent-friendly** — rich tool descriptions designed for AI agent discoverability
-- **Secure** — Pydantic v2 input validation, GUID format enforcement, OData injection prevention
+Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk) and the official [PowerPlatform-Dataverse-Client](https://pypi.org/project/PowerPlatform-Dataverse-Client/) Python SDK. Communicates over **stdio** for seamless VS Code Copilot integration.
 
-## Prerequisites
+---
 
-- [uv](https://docs.astral.sh/uv/) — install from [docs.astral.sh/uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Access to a Microsoft Dataverse environment
-- Azure CLI (`az login`) for authentication, or use `interactive` for browser-based sign-in
+## Quick Start
 
-## Installation
-
-You can run this server either from PyPI with `uvx` or directly from a local checkout.
-
-### Option 1: Run from PyPI
+**1. Install**
 
 ```bash
+# Run directly from PyPI — no install needed
 uvx dataverse-mcp
 ```
 
-`uvx` downloads and runs the package in an isolated environment.
-
-### Option 2: Run from a local checkout
-
-```bash
-git clone https://github.com/ryanmichaeljames/dataverse-mcp.git
-cd dataverse-mcp
-uv sync
-```
-
-This creates `.venv`, which is the local Python environment used by the source-based MCP configuration shown below.
-
-## Configuration
-
-Configure the server through your MCP client. In VS Code, that means the `env`
-block on the server entry in `.vscode/mcp.json` or your user `mcp.json`.
-This project does not use a `.env` file for normal setup.
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATAVERSE_URL` | No | — | Optional fallback org URL, set only if you want requests without `dataverse_url` to still work |
-| `DATAVERSE_AUTH_TYPE` | No | `azure_cli` | Auth method: `interactive` or `azure_cli` |
-| `DATAVERSE_ALLOW_WRITE` | No | `false` | Set to `true` to enable create, update, and mutation tools |
-| `DATAVERSE_ALLOW_DELETE` | No | `false` | Set to `true` to enable delete and disassociate tools |
-
-### Authentication Methods
-
-- **`azure_cli`** (default) — Uses your existing `az login` session. Best for local development.
-- **`interactive`** — Opens a browser window for interactive sign-in.
-
-## Usage
-
-This server communicates over stdio and works with any MCP-compatible client.
-
-### VS Code
-
-Add the server to your VS Code MCP configuration. Choose either the packaged `uvx` form or the local source form.
-
-Run from PyPI:
+**2. Configure** — add to `.vscode/mcp.json`:
 
 ```json
 {
@@ -87,59 +36,59 @@ Run from PyPI:
 }
 ```
 
-Run from a local checkout on the same machine:
+**3. Sign in**
 
-```json
-{
-  "servers": {
-    "dataverse-mcp-local": {
-      "type": "stdio",
-      "command": "C:\\path\\to\\dataverse-mcp\\.venv\\Scripts\\python.exe",
-      "args": ["-m", "dataverse_mcp.server"],
-      "env": {
-        "PYTHONPATH": "C:\\path\\to\\dataverse-mcp\\src",
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
-      }
-    }
-  }
-}
+```bash
+az login
 ```
 
-The local source form does not require a build step. Code changes are picked up on the next server start.
+That's it. Copilot can now query your Dataverse environments.
 
-If you want a fallback environment for requests that omit `dataverse_url`, add
-`DATAVERSE_URL` to that same `env` block. Keep it in MCP config, not a `.env`
-file.
+---
 
-### Environment Targeting
+## Installation
 
-Use a single server entry and provide `dataverse_url` on each tool call to target the Dataverse environment explicitly. Example tool input:
+### Run from PyPI (recommended)
 
-```json
-{
-  "dataverse_url": "https://yourorg.crm.dynamics.com",
-  "table_name": "account",
-  "select": ["name", "accountid"],
-  "top": 10
-}
+```bash
+uvx dataverse-mcp
 ```
 
-If you omit `dataverse_url`, the server falls back to `DATAVERSE_URL` when that value is configured in your MCP server `env`. That fallback is kept for backward compatibility only; the preferred setup is explicit environment targeting on every request.
+[`uvx`](https://docs.astral.sh/uv/) downloads and runs the package in an isolated environment — no virtual environment management required.
 
-Use `dataverse_list_environments` first if you need to discover which Power Platform environments are available before choosing a `dataverse_url`.
+### Run from a local checkout
 
-`dataverse_list_environments` does not require `dataverse_url` and always returns the full normalized environment payload. Optional flags let you include capacity and add-on details.
+```bash
+git clone https://github.com/ryanmichaeljames/dataverse-mcp.git
+cd dataverse-mcp
+uv sync
+```
+
+This creates `.venv`. Use the local source MCP config shown in [VS Code Setup](#vs-code-setup) to point VS Code at it. No build step required — code changes are picked up on the next server start.
+
+---
+
+## Configuration
+
+Set these in the `env` block of your MCP server entry. This project does not use a `.env` file.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATAVERSE_AUTH_TYPE` | `azure_cli` | Authentication method: `azure_cli` or `interactive` |
+| `DATAVERSE_URL` | — | Fallback org URL used when a tool call omits `dataverse_url` |
+| `DATAVERSE_ALLOW_WRITE` | `false` | Set to `true` to register create, update, associate, merge, and schema mutation tools |
+| `DATAVERSE_ALLOW_DELETE` | `false` | Set to `true` to register delete and disassociate tools |
+
+### Authentication
+
+| Method | Description |
+|--------|-------------|
+| `azure_cli` (default) | Uses your active `az login` session. Best for local development. |
+| `interactive` | Opens a browser window for interactive sign-in. |
 
 ### Safety Guards
 
-Write and delete tools are disabled by default and must be explicitly enabled via environment variables in your MCP config. When disabled, those tools are not registered and will not appear to the agent at all.
-
-| Environment Variable | Default | Controls |
-|---------------------|---------|----------|
-| `DATAVERSE_ALLOW_WRITE` | `false` | Create, update, associate, merge, and batch mutation tools |
-| `DATAVERSE_ALLOW_DELETE` | `false` | Delete and disassociate tools |
-
-Set them in the `env` block of your MCP server entry:
+Write and delete tools are **not registered by default**. They do not appear to the agent at all until explicitly enabled. This prevents accidental mutations when you only need to read or inspect data.
 
 ```json
 {
@@ -158,109 +107,153 @@ Set them in the `env` block of your MCP server entry:
 }
 ```
 
-You can enable each flag independently — for example, set only `DATAVERSE_ALLOW_WRITE=true` to allow creates and updates while keeping deletes disabled.
+Each flag is independent — set only `DATAVERSE_ALLOW_WRITE=true` to allow creates and updates while keeping deletes disabled.
+
+---
+
+## VS Code Setup
+
+### Run from PyPI
+
+```json
+{
+  "servers": {
+    "dataverse-mcp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "azure_cli"
+      }
+    }
+  }
+}
+```
+
+### Run from a local checkout
+
+```json
+{
+  "servers": {
+    "dataverse-mcp-local": {
+      "type": "stdio",
+      "command": "C:\\path\\to\\dataverse-mcp\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "dataverse_mcp.server"],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\dataverse-mcp\\src",
+        "DATAVERSE_AUTH_TYPE": "azure_cli"
+      }
+    }
+  }
+}
+```
+
+### Multi-environment targeting
+
+A single server instance can target any Dataverse org — pass `dataverse_url` on each tool call:
+
+```json
+{
+  "dataverse_url": "https://yourorg.crm.dynamics.com",
+  "table_name": "account",
+  "select": ["name", "accountid"],
+  "top": 10
+}
+```
+
+When `dataverse_url` is omitted, the server falls back to `DATAVERSE_URL` if configured. Use `dataverse_list_environments` to discover available environments first.
+
+---
 
 ## Tools
 
-Tools are grouped by the env var required to enable them. Read-only tools are always available.
+### Always available
 
-### Always available (read-only)
+These 21 tools are registered regardless of safety guard settings.
 
 | Tool | Description |
 |------|-------------|
-| `dataverse_list_environments` | List Power Platform environments available to the authenticated user via the admin API, returning the full normalized payload |
-| `dataverse_whoami` | Return the authenticated user's `UserId`, `BusinessUnitId`, and `OrganizationId` from the WhoAmI endpoint |
-| `dataverse_get_entity_sets` | List all OData EntitySet names from the service document — discover the correct collection URL for any table |
-| `dataverse_retrieve_user_privileges` | List all security privileges assigned to a system user via their role memberships |
-| `dataverse_retrieve_principal_access` | Check the access rights a user has to a specific record (ReadAccess, WriteAccess, DeleteAccess, etc.) |
-| `dataverse_list_solutions` | List solutions with optional OData filter, select, and top |
+| `dataverse_list_environments` | List Power Platform environments accessible to the authenticated user |
+| `dataverse_whoami` | Return the authenticated user's `UserId`, `BusinessUnitId`, and `OrganizationId` |
+| `dataverse_get_entity_sets` | List OData EntitySet names from the service document |
+| `dataverse_retrieve_user_privileges` | List all security privileges assigned to a system user |
+| `dataverse_retrieve_principal_access` | Check access rights a user has to a specific record |
+| `dataverse_list_solutions` | List solutions with optional OData filter and pagination |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |
-| `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, top |
+| `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, and top |
 | `dataverse_get_record` | Get a single record by table name and GUID |
-| `dataverse_execute_batch` | Execute GET-only `$batch` queries (up to 1,000 operations); batch requests with mutations require `DATAVERSE_ALLOW_WRITE=true` |
-| `dataverse_list_tables` | List available tables/entities with optional filter |
-| `dataverse_get_table_metadata` | Get schema details for a specific table |
-| `dataverse_list_columns` | List all column definitions for a table with optional type filter and field selection |
-| `dataverse_get_column` | Get full metadata for a single column including type-specific properties (MaxLength, Precision, RequiredLevel, Format) |
-| `dataverse_list_choice_column_options` | Get all option values (integer code + label) for a Picklist or MultiSelectPicklist column |
-| `dataverse_list_relationships` | List relationship definitions for a table (1:N, N:1, N:N) or all relationships in the environment |
-| `dataverse_get_relationship` | Get full metadata for a single relationship by schema name, including cascade config and navigation property names |
-| `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship (referenced, referencing, or many-to-many) via Dataverse eligibility endpoints (`CanBeReferenced`, `CanBeReferencing`, `CanManyToMany`) |
+| `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; GET-only unless `DATAVERSE_ALLOW_WRITE=true` |
+| `dataverse_list_tables` | List available tables with optional metadata filter |
+| `dataverse_get_table_metadata` | Get full schema details for a specific table |
+| `dataverse_list_columns` | List column definitions for a table with optional type filter |
+| `dataverse_get_column` | Get full metadata for a single column including type-specific properties |
+| `dataverse_list_choice_column_options` | Get all option values for a Picklist or MultiSelectPicklist column |
+| `dataverse_list_relationships` | List relationship definitions for a table or the entire environment |
+| `dataverse_get_relationship` | Get full metadata for a single relationship by schema name |
+| `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship before creating one |
 | `dataverse_list_choices` | List all global choice (option set) definitions in the environment |
-| `dataverse_get_choice` | Get a specific global choice by name or MetadataId, including all option values and labels |
+| `dataverse_get_choice` | Get a specific global choice by name or MetadataId, including all option values |
 
 ### Requires `DATAVERSE_ALLOW_WRITE=true`
 
-These tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set in the MCP server `env`.
+These 16 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 
 | Tool | Description |
 |------|-------------|
-| `dataverse_associate_records` | Associate two records via a collection-valued navigation property (`$ref`) |
-| `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident); subordinate is deactivated after merge |
+| `dataverse_associate_records` | Associate two records via a collection-valued navigation property |
+| `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident) |
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute |
 | `dataverse_update_table` | Update an existing table's display name or description |
-| `dataverse_create_column` | Add a new column to a table with typed attribute metadata and display name |
-| `dataverse_update_column` | Update an existing column via full PUT replacement; fetch current definition with `dataverse_get_column` first |
-| `dataverse_create_one_to_many_relationship` | Create a 1:N relationship and its lookup column on the referencing table |
-| `dataverse_create_many_to_many_relationship` | Create an N:N relationship and its intersect (junction) table |
-| `dataverse_create_multi_table_lookup` | Create a polymorphic lookup column that references multiple tables |
-| `dataverse_update_relationship` | Update an existing relationship via full PUT; fetch current definition with `dataverse_get_relationship` first |
+| `dataverse_create_column` | Add a new typed column to a table |
+| `dataverse_update_column` | Update an existing column via full PUT — fetch current definition with `dataverse_get_column` first |
+| `dataverse_create_one_to_many_relationship` | Create a 1:N relationship and its lookup column |
+| `dataverse_create_many_to_many_relationship` | Create an N:N relationship and its intersect table |
+| `dataverse_create_multi_table_lookup` | Create a polymorphic lookup column referencing multiple tables |
+| `dataverse_update_relationship` | Update an existing relationship via full PUT — fetch current definition with `dataverse_get_relationship` first |
 | `dataverse_create_choice` | Create a new global choice with initial options |
-| `dataverse_update_choice` | Update an existing global choice via full PUT; fetch current definition with `dataverse_get_choice` first |
+| `dataverse_update_choice` | Update an existing global choice via full PUT — fetch current definition with `dataverse_get_choice` first |
 | `dataverse_add_choice_option` | Add a new option to a global or local choice |
-| `dataverse_update_choice_option` | Update the display label of an existing option in a global or local choice |
-| `dataverse_reorder_choice_options` | Reorder all options of a global or local choice |
-| `dataverse_publish_customizations` | Publish schema changes (tables, choices, relationships) via `PublishXml` or all unpublished changes via `PublishAllXml` |
+| `dataverse_update_choice_option` | Update the display label of an existing choice option |
+| `dataverse_reorder_choice_options` | Reorder all options in a global or local choice |
+| `dataverse_publish_customizations` | Publish schema changes via `PublishXml` (targeted) or `PublishAllXml` (environment-wide) |
 
 ### Requires `DATAVERSE_ALLOW_DELETE=true`
 
-These tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set in the MCP server `env`.
+These 6 tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set.
 
 | Tool | Description |
 |------|-------------|
-| `dataverse_disassociate_records` | Remove an association between two records via a navigation property |
+| `dataverse_disassociate_records` | Remove an association between two records |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data |
-| `dataverse_delete_column` | Permanently delete a custom column and all its data from a table |
+| `dataverse_delete_column` | Permanently delete a custom column and all its data |
 | `dataverse_delete_relationship` | Delete a custom relationship by MetadataId |
-| `dataverse_delete_choice` | Delete a global choice by logical name; ensure no columns reference it first |
+| `dataverse_delete_choice` | Delete a global choice by logical name |
 | `dataverse_delete_choice_option` | Remove a specific option value from a global or local choice |
 
-## Project Structure
-
-```
-src/dataverse_mcp/
-├── __init__.py          # Package init
-├── _app.py              # FastMCP instance (avoids circular imports)
-├── server.py            # Entry point, logging setup, tool registration
-├── client.py            # DataverseClient wrapper (auth, lifecycle)
-├── models.py            # Pydantic v2 input models for all tools
-└── tools/
-    ├── __init__.py      # Tools package init
-    ├── environments.py   # Power Platform environment discovery tool
-    ├── solutions.py     # Solution query tools
-    ├── tables.py        # Table record query tools
-    └── metadata.py      # Table/column metadata tools
-```
+---
 
 ## Development
 
 ```bash
-# Install dependencies into .venv
+# Install dependencies
 uv sync
 
-# Run the MCP inspector for testing
+# Run the MCP inspector (interactive testing)
 uv run mcp dev src/dataverse_mcp/server.py
 
-# Run the server directly from source
+# Run the server directly
 uv run python -m dataverse_mcp.server
 
-# Compile check touched modules
+# Compile check
 uv run python -m py_compile src/dataverse_mcp/server.py
 ```
 
-If you run the server from a local checkout in VS Code, restart the MCP server after code changes so the new Python source is loaded.
+Restart the MCP server in VS Code after code changes to pick up the new source.
+
+---
 
 ## License
 
 MIT
+

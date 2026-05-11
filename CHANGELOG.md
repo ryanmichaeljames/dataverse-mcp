@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.3.0] - 2026-05-11
+## [1.3.1] - 2026-05-11
+
+### Fixed
+- `azure_cli` auth now automatically adds known Azure CLI install directories (`C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin`) to `PATH` when `az` is not found, resolving `CredentialUnavailableError` when the MCP server is launched from VS Code without a login shell
+
+## [1.3.0]- 2026-05-11
 
 ### Security
 - Removed `client_secret` (service principal) authentication support — `DATAVERSE_AUTH_TYPE` now only accepts `interactive` and `azure_cli`; long-lived client secrets are unnecessary for local VS Code Copilot use cases and carry elevated risk

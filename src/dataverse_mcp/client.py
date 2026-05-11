@@ -16,6 +16,32 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_AUTH_TYPES = ("interactive", "azure_cli")
 
+# Common Azure CLI installation paths that may not be on the system PATH when
+# the MCP server process is launched (e.g., from VS Code without a login shell).
+_AZ_CLI_CANDIDATE_PATHS = [
+    r"C:\Program Files\Microsoft SDKs\Azure\CLI2\wbin",
+    r"C:\Program Files (x86)\Microsoft SDKs\Azure\CLI2\wbin",
+]
+
+
+def _ensure_az_cli_on_path() -> None:
+    """Add known Azure CLI install directories to PATH if az is not already found."""
+    import shutil
+
+    if shutil.which("az"):
+        return
+
+    current_path = os.environ.get("PATH", "")
+    additions = [p for p in _AZ_CLI_CANDIDATE_PATHS if os.path.isdir(p) and p not in current_path]
+    if additions:
+        os.environ["PATH"] = os.pathsep.join(additions) + os.pathsep + current_path
+        logger.info("Added Azure CLI path(s) to PATH: %s", additions)
+    else:
+        logger.warning(
+            "Azure CLI not found on PATH and no known install directories exist. "
+            "Ensure Azure CLI is installed and on PATH."
+        )
+
 
 def _build_credential(auth_type: str):
     """Build an Azure TokenCredential based on the configured auth type.
@@ -34,6 +60,7 @@ def _build_credential(auth_type: str):
         return InteractiveBrowserCredential()
 
     if auth_type == "azure_cli":
+        _ensure_az_cli_on_path()
         logger.info("Using AzureCliCredential for authentication")
         return AzureCliCredential()
 

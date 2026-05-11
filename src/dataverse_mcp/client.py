@@ -32,7 +32,7 @@ def _ensure_az_cli_on_path() -> None:
 
     if os.name != "nt":
         logger.warning(
-            "Azure CLI not found on PATH. "
+            "Azure CLI not found. "
             "Ensure Azure CLI is installed and available on PATH."
         )
         return

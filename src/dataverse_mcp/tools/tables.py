@@ -389,11 +389,13 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
 def _build_inner_request(method: str, url: str, body: dict | None) -> str:
     """Build the inner HTTP/1.1 request string for a single batch operation.
 
-    Includes Content-Type and Content-Length only when a body is present,
-    which is required for Dataverse to correctly parse write operations.
+    Includes Content-Type and Content-Length only for write operations
+    (POST, PUT, PATCH) that carry a body. GET and DELETE requests are always
+    serialized without a body to remain OData-compliant regardless of the
+    ``body`` argument.
     """
     inner = f"{method} {url} HTTP/1.1\r\nAccept: application/json\r\n"
-    if body is not None:
+    if method.upper() in ("POST", "PUT", "PATCH") and body is not None:
         body_bytes = json.dumps(body).encode("utf-8")
         inner += f"Content-Type: application/json\r\nContent-Length: {len(body_bytes)}\r\n\r\n"
         inner += body_bytes.decode("utf-8")
@@ -587,9 +589,10 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
 
     try:
         batch_body = _build_batch_body(params.operations, base_url, batch_boundary)
+        batch_body_bytes = batch_body.encode("utf-8")
         logger.debug(
             "Executing batch: url=%s boundary=%s operations=%d bytes=%d",
-            url, batch_boundary, len(params.operations), len(batch_body.encode("utf-8")),
+            url, batch_boundary, len(params.operations), len(batch_body_bytes),
         )
         token = await asyncio.to_thread(get_bearer_token, app_ctx, f"{base_url}/.default")
         req_headers = {
@@ -604,7 +607,7 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
 
         def _post():
             with httpx.Client(timeout=120) as client:
-                return client.post(url, headers=req_headers, content=batch_body.encode("utf-8"))
+                return client.post(url, headers=req_headers, content=batch_body_bytes)
 
         response = await asyncio.to_thread(_post)
         logger.debug(

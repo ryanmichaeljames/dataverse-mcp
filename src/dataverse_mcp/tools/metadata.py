@@ -881,12 +881,12 @@ async def dataverse_check_relationship_eligibility(
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
 
-    check_endpoint_map = {
-        "referenced": "CanBeReferenced",
-        "referencing": "CanBeReferencing",
-        "many_to_many": "CanManyToMany",
+    check_action_map = {
+        "referenced": ("CanBeReferenced", "CanBeReferenced"),
+        "referencing": ("CanBeReferencing", "CanBeReferencing"),
+        "many_to_many": ("CanManyToMany", "CanManyToMany"),
     }
-    endpoint = check_endpoint_map[params.check_type]
+    action_name, result_key = check_action_map[params.check_type]
 
     def _to_bool(value: object) -> bool:
         if isinstance(value, bool):
@@ -902,12 +902,13 @@ async def dataverse_check_relationship_eligibility(
 
         def _request():
             with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')/{endpoint}",
+                response = http_client.post(
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{action_name}",
+                    json={"EntityName": params.table_logical_name},
                     headers={
                         "Authorization": f"Bearer {bearer_token}",
                         "Accept": "application/json",
+                        "Content-Type": "application/json",
                         "OData-MaxVersion": "4.0",
                         "OData-Version": "4.0",
                     },
@@ -916,12 +917,11 @@ async def dataverse_check_relationship_eligibility(
                 return response.json()
 
         result = await asyncio.to_thread(_request)
-        raw = result.get(endpoint, result.get("value", result))
-        eligible = raw.get("Value", raw) if isinstance(raw, dict) else raw
+        eligible = _to_bool(result.get(result_key, result.get("value")))
         return json.dumps({
             "table_logical_name": params.table_logical_name,
             "check_type": params.check_type,
-            "eligible": _to_bool(eligible),
+            "eligible": eligible,
         })
     except httpx.HTTPStatusError as e:
         logger.error(

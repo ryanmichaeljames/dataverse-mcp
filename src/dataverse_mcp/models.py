@@ -146,11 +146,11 @@ class ListSolutionComponentsInput(DataverseEnvironmentInput):
 class QueryTableInput(DataverseEnvironmentInput):
     """Input for querying records from any Dataverse table."""
 
-    table_name: str = Field(
+    entity_set_name: str = Field(
         ...,
         description=(
-            "Logical name of the table to query (e.g., 'account', 'contact', "
-            "'new_customtable'). Use lowercase logical names."
+            "OData collection name of the table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
     )
@@ -196,9 +196,12 @@ class QueryTableInput(DataverseEnvironmentInput):
 class GetRecordInput(DataverseEnvironmentInput):
     """Input for retrieving a single record by its ID."""
 
-    table_name: str = Field(
+    entity_set_name: str = Field(
         ...,
-        description="Logical name of the table (e.g., 'account', 'contact')",
+        description=(
+            "OData collection name of the table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
         min_length=1,
     )
     record_id: str = Field(

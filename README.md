@@ -6,7 +6,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, and explore Power Platform environments.
 
-Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk) and the official [PowerPlatform-Dataverse-Client](https://pypi.org/project/PowerPlatform-Dataverse-Client/) Python SDK. Communicates over **stdio** for seamless VS Code Copilot integration.
+Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** for seamless VS Code Copilot integration.
 
 ---
 
@@ -155,7 +155,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 ```json
 {
   "dataverse_url": "https://yourorg.crm.dynamics.com",
-  "table_name": "account",
+  "entity_set_name": "accounts",
   "select": ["name", "accountid"],
   "top": 10
 }

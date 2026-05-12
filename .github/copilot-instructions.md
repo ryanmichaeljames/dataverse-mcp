@@ -4,14 +4,14 @@
 
 When generating code for this repository:
 
-1. **Version Compatibility**: Python 3.10+, Pydantic v2, MCP SDK (mcp[cli]), PowerPlatform-Dataverse-Client 0.1.0b7
+1. **Version Compatibility**: Python 3.10+, Pydantic v2, MCP SDK (mcp[cli]), httpx, Dataverse Web API v9.2
 2. **Codebase Patterns**: Follow the patterns established in existing files — never introduce conventions not used here
 3. **Architectural Consistency**: This is a FastMCP server with a modular tool layout under `src/dataverse_mcp/tools/`
 4. **Code Quality**: Prioritize maintainability, security, and testability in all generated code
 
 ## Project Overview
 
-This is an MCP (Model Context Protocol) server that enables VS Code Copilot agents to interact with a Microsoft Dataverse environment during development. It uses the official `PowerPlatform-Dataverse-Client` Python SDK and exposes tools for querying, mutating, and inspecting Dataverse data and metadata.
+This is an MCP (Model Context Protocol) server that enables VS Code Copilot agents to interact with a Microsoft Dataverse environment during development. It uses direct Dataverse OData v4.0 Web API calls via `httpx` and exposes tools for querying, mutating, and inspecting Dataverse data and metadata.
 
 **Transport**: stdio (local VS Code Copilot integration)
 
@@ -21,7 +21,7 @@ This is an MCP (Model Context Protocol) server that enables VS Code Copilot agen
 |-----------|---------|---------|
 | Python | >=3.10 | Runtime |
 | mcp[cli] | latest | MCP server framework (FastMCP) |
-| PowerPlatform-Dataverse-Client | 0.1.0b7 | Dataverse SDK |
+| httpx | >=0.20.0,<1.0 | Dataverse Web API client |
 | azure-identity | latest | Authentication (TokenCredential) |
 | Pydantic | v2 | Input validation and schemas |
 
@@ -120,24 +120,23 @@ Write tools MUST include an `allow_write` or `allow_delete` safety guard (bool, 
 ```python
 import json
 import logging
-from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
+
+import httpx
+
+from dataverse_mcp.client import extract_error_message
 
 logger = logging.getLogger(__name__)
 
 try:
-    result = client.records.get(...)
-except HttpError as e:
-    logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    response = http_client.get(...)
+    response.raise_for_status()
+    result = response.json()
+except httpx.HTTPStatusError as e:
+    message = extract_error_message(e.response)
+    logger.error("Dataverse HTTP %d: %s", e.response.status_code, message)
     return json.dumps({
         "error": True,
-        "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-        "is_transient": e.is_transient,
-    })
-except DataverseError as e:
-    logger.error("Dataverse error: %s", e.message)
-    return json.dumps({
-        "error": True,
-        "message": str(e),
+        "message": f"Dataverse returned HTTP {e.response.status_code}: {message}",
     })
 except Exception as e:
     logger.exception("Unexpected error")
@@ -152,7 +151,7 @@ except Exception as e:
 - **Always** log errors with `logger.error()` or `logger.exception()`
 - **Always** include `"error": True` in error responses
 - **Always** include actionable `"message"` text the agent can use to self-correct
-- Catch `HttpError` before `DataverseError` (more specific first)
+- Catch `httpx.HTTPStatusError` for Dataverse Web API failures before a generic `Exception`
 
 ## Logging
 
@@ -174,12 +173,12 @@ from dataclasses import dataclass
 from typing import Any
 
 # 2. Third-party
-from azure.identity import AzureCliCredential, ClientSecretCredential
-from PowerPlatform.Dataverse.client import DataverseClient
+import httpx
+from azure.identity import AzureCliCredential, InteractiveBrowserCredential
 from pydantic import BaseModel, ConfigDict, Field
 
 # 3. Local
-from dataverse_mcp.client import get_dataverse_client
+from dataverse_mcp.client import build_headers, resolve_base_url
 from dataverse_mcp.models import QueryTableInput
 ```
 
@@ -192,19 +191,19 @@ from dataverse_mcp.models import QueryTableInput
 - Type hints required on all validator methods
 - Use `str | None` — never `Optional[str]` (Python 3.10+ union syntax)
 
-## Dataverse SDK Patterns
+## Dataverse Web API Patterns
 
 ### Query Patterns
 - Always include `select` to limit columns — never fetch all columns
-- Always include `include_annotations="OData.Community.Display.V1.FormattedValue"` for formatted lookup/option set values
-- Use lowercase logical names in `filter` expressions (case-sensitive!)
+- Use `urllib.parse.urlencode` when constructing URLs for shared pagination helpers
+- Use lowercase logical names in `filter` expressions when the API expects logical names
 - Navigation properties in `expand` are case-sensitive
 - Default `top=50` to prevent overwhelming agent context
 
 ### Client Lifecycle
-- Use FastMCP `lifespan` to manage DataverseClient — init on startup, cleanup on shutdown
-- Never create a new client per tool call
-- Access client via `ctx.request_context.lifespan_context`
+- Use FastMCP `lifespan` to manage shared auth state and fallback URL configuration
+- Build request headers from the shared credential for each call
+- Access app context via `ctx.request_context.lifespan_context`
 
 ### Authentication
 - Auth type selected via `DATAVERSE_AUTH_TYPE` environment variable

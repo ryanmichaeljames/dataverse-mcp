@@ -1,21 +1,21 @@
-"""DataverseClient wrapper with authentication factory and lifecycle management."""
+"""Shared Dataverse auth helpers and lifespan management."""
 
 import logging
 import os
 import shutil
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
-from threading import Lock
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
+import httpx
 from azure.identity import AzureCliCredential, InteractiveBrowserCredential
-from PowerPlatform.Dataverse.client import DataverseClient
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_AUTH_TYPES = ("interactive", "azure_cli")
+_DATAVERSE_API_VERSION = "v9.2"
 
 # Common Azure CLI installation paths that may not be on the system PATH when
 # the MCP server process is launched (e.g., from VS Code without a login shell).
@@ -44,7 +44,8 @@ def _ensure_az_cli_on_path() -> None:
         if p
     }
     additions = [
-        p for p in _AZ_CLI_CANDIDATE_PATHS
+        p
+        for p in _AZ_CLI_CANDIDATE_PATHS
         if os.path.isdir(p) and os.path.normcase(os.path.normpath(p)) not in existing_dirs
     ]
     if additions:
@@ -86,13 +87,11 @@ def _build_credential(auth_type: str):
 
 @dataclass
 class AppContext:
-    """Application context holding shared auth state and Dataverse clients."""
+    """Application context holding shared auth state."""
 
     credential: Any
     auth_type: str
     fallback_dataverse_url: str | None
-    clients: dict[str, DataverseClient] = field(default_factory=dict)
-    clients_lock: Lock = field(default_factory=Lock)
 
 
 def normalize_dataverse_url(url: str) -> str:
@@ -127,31 +126,15 @@ def normalize_dataverse_url(url: str) -> str:
     return f"https://{netloc}"
 
 
-def get_dataverse_client(
-    app_ctx: AppContext, dataverse_url: str | None = None
-) -> DataverseClient:
-    """Resolve the effective Dataverse URL and return a cached client."""
-    effective_url = dataverse_url or app_ctx.fallback_dataverse_url
-    if not effective_url:
+def resolve_base_url(app_ctx: AppContext, dataverse_url: str | None) -> str:
+    """Resolve the effective base URL, raising ValueError if none configured."""
+    url = dataverse_url or app_ctx.fallback_dataverse_url
+    if not url:
         raise ValueError(
-            "No Dataverse environment was provided. Supply dataverse_url on the tool "
-            "input, or set DATAVERSE_URL as a legacy fallback."
+            "No Dataverse environment URL was provided. Supply dataverse_url on the "
+            "tool input, or set DATAVERSE_URL as a legacy fallback."
         )
-
-    normalized_url = normalize_dataverse_url(effective_url)
-
-    with app_ctx.clients_lock:
-        client = app_ctx.clients.get(normalized_url)
-        if client is None:
-            logger.info(
-                "Initializing DataverseClient for %s (auth: %s)",
-                normalized_url,
-                app_ctx.auth_type,
-            )
-            client = DataverseClient(normalized_url, app_ctx.credential)
-            app_ctx.clients[normalized_url] = client
-
-    return client
+    return normalize_dataverse_url(url)
 
 
 def get_bearer_token(app_ctx: AppContext, scope: str) -> str:
@@ -159,17 +142,67 @@ def get_bearer_token(app_ctx: AppContext, scope: str) -> str:
     return app_ctx.credential.get_token(scope).token
 
 
+def build_headers(
+    app_ctx: AppContext,
+    base_url: str,
+    *,
+    include_content_type: bool = False,
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Build standard Dataverse Web API headers with a fresh Bearer token."""
+    token = get_bearer_token(app_ctx, f"{base_url}/.default")
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "OData-MaxVersion": "4.0",
+        "OData-Version": "4.0",
+        "If-None-Match": "null",
+    }
+    if include_content_type:
+        headers["Content-Type"] = "application/json"
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def paginate_records(url: str, headers: dict[str, str], top: int) -> list[dict]:
+    """Synchronously fetch pages from a Dataverse collection, stopping at top records.
+
+    Follows @odata.nextLink until top records are collected or no more pages remain.
+    Call this inside asyncio.to_thread().
+    """
+    records: list[dict] = []
+    next_url: str | None = url
+    with httpx.Client(timeout=30.0) as client:
+        while next_url and len(records) < top:
+            response = client.get(next_url, headers=headers)
+            response.raise_for_status()
+            body = response.json()
+            for item in body.get("value", []):
+                records.append(item)
+                if len(records) >= top:
+                    break
+            next_url = body.get("@odata.nextLink") if len(records) < top else None
+    return records
+
+
+def extract_error_message(response: httpx.Response) -> str:
+    """Extract a human-readable error message from an OData error response."""
+    try:
+        body = response.json()
+        err = body.get("error", {})
+        code = err.get("code", "")
+        message = err.get("message", "") or response.text
+        if code:
+            return f"[{code}] {message}"
+        return message or f"HTTP {response.status_code}"
+    except Exception:
+        return response.text or f"HTTP {response.status_code}"
+
+
 @asynccontextmanager
 async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
-    """FastMCP lifespan that initializes shared auth state and client cache.
-
-    Reads configuration from environment variables:
-    - DATAVERSE_AUTH_TYPE: Authentication method (default: 'azure_cli')
-    - DATAVERSE_URL: Optional legacy fallback when a tool omits dataverse_url
-
-    Yields:
-        AppContext containing shared auth state and cached Dataverse clients.
-    """
+    """FastMCP lifespan that initializes shared auth state."""
     fallback_dataverse_url = os.environ.get("DATAVERSE_URL")
     if fallback_dataverse_url:
         fallback_dataverse_url = normalize_dataverse_url(fallback_dataverse_url)
@@ -188,22 +221,11 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
         auth_type=auth_type,
         fallback_dataverse_url=fallback_dataverse_url,
     )
-
     try:
         logger.info("Dataverse credential initialized successfully")
         yield app_ctx
     finally:
-        logger.info("Shutting down Dataverse clients")
-        with app_ctx.clients_lock:
-            clients = list(app_ctx.clients.items())
-            app_ctx.clients.clear()
-
-        for dataverse_url, client in clients:
-            try:
-                client.close()
-            except Exception:
-                logger.exception("Failed to close DataverseClient for %s", dataverse_url)
-
+        logger.info("Shutting down Dataverse MCP server")
         close_credential = getattr(credential, "close", None)
         if callable(close_credential):
             close_credential()

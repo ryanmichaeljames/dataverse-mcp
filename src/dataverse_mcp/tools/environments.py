@@ -9,7 +9,7 @@ import httpx
 from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import mcp
-from dataverse_mcp.client import AppContext, get_bearer_token
+from dataverse_mcp.client import AppContext, get_bearer_token, resolve_base_url
 from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, RetrievePrincipalAccessInput, RetrieveUserPrivilegesInput, WhoAmIInput
 
 logger = logging.getLogger(__name__)
@@ -154,15 +154,10 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
     or filtering records owned by the current user).
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     try:
         bearer_token = await asyncio.to_thread(
@@ -231,15 +226,10 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
     Check 'has_more' in the response to determine if additional entries exist.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     try:
         bearer_token = await asyncio.to_thread(
@@ -326,15 +316,10 @@ async def dataverse_retrieve_user_privileges(
     fail due to missing permissions.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     try:
         bearer_token = await asyncio.to_thread(
@@ -406,15 +391,10 @@ async def dataverse_retrieve_principal_access(
     Use dataverse_get_entity_sets to discover the correct name.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     target_ref = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{params.entity_set_name}({params.record_id})"
 

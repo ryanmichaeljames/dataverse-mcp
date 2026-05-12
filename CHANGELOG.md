@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0b1] - 2026-05-12
+
+### Changed
+- **BREAKING:** `dataverse_query_table` and `dataverse_get_record` now accept `entity_set_name` (OData collection name, e.g. `accounts`) instead of `table_name` (logical name) — use `dataverse_get_entity_sets` or `dataverse_get_table_metadata` to discover the entity set name (#38)
+- Replaced `PowerPlatform-Dataverse-Client` SDK with direct Dataverse Web API v9.2 calls via `httpx` for all read tools (`dataverse_list_solutions`, `dataverse_get_solution`, `dataverse_list_solution_components`, `dataverse_query_table`, `dataverse_get_record`, `dataverse_list_tables`, `dataverse_get_table_metadata`, `dataverse_list_columns`, `dataverse_get_column`) — eliminates the beta-only SDK dependency (#38)
+- Fixed URL resolution bugs in several metadata and environment tools where missing normalization or `str(None)` could produce an invalid base URL when `dataverse_url` was not provided
+
+### Removed
+- **BREAKING:** `powerplatform-dataverse-client` removed from dependencies; no longer required (#38)
+
 ## [1.3.2] - 2026-05-11
 
 ### Fixed

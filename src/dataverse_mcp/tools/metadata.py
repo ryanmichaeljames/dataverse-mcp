@@ -3,15 +3,22 @@
 import asyncio
 import json
 import logging
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlencode
 from xml.etree import ElementTree as ET
 
 import httpx
 from mcp.server.fastmcp import Context
-from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
 from dataverse_mcp._app import delete_tool, mcp, write_tool
-from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
+from dataverse_mcp.client import (
+    AppContext,
+    _DATAVERSE_API_VERSION,
+    build_headers,
+    extract_error_message,
+    get_bearer_token,
+    paginate_records,
+    resolve_base_url,
+)
 from dataverse_mcp.models import (
     AddChoiceOptionInput,
     CheckRelationshipEligibilityInput,
@@ -66,14 +73,7 @@ _DEFAULT_COLUMN_SELECT = [
     "IsValidForUpdate",
 ]
 
-_DATAVERSE_API_VERSION = "v9.2"
 _CREATE_COLUMN_RESERVED_KEYS = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
-
-
-def _get_client(ctx: Context, dataverse_url: str | None):
-    """Resolve the DataverseClient for the requested environment."""
-    app_ctx: AppContext = ctx.request_context.lifespan_context
-    return get_dataverse_client(app_ctx, dataverse_url)
 
 
 def _get_app_ctx(ctx: Context) -> AppContext:
@@ -101,32 +101,33 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     dataverse_query_table or inspecting their schema with
     dataverse_get_table_metadata.
     """
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
     select = params.select or _DEFAULT_TABLE_SELECT
+    query_params: dict[str, str] = {"$select": ",".join(select)}
+    if params.filter:
+        query_params["$filter"] = params.filter
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions?{urlencode(query_params)}"
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            return client.tables.list(
-                filter=params.filter,
-                select=select,
-            )
-
-        tables = await asyncio.to_thread(_query)
+        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
+        tables = await asyncio.to_thread(paginate_records, url, headers, 5000)
         return json.dumps({
             "tables": tables,
             "count": len(tables),
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_tables")
         return json.dumps({
@@ -154,40 +155,46 @@ async def dataverse_get_table_metadata(
     understand a table's structure before querying it with
     dataverse_query_table.
     """
+    app_ctx = _get_app_ctx(ctx)
     try:
-        client = _get_client(ctx, params.dataverse_url)
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
-        def _query():
-            return client.tables.get(params.table_name)
+    table_enc = _url_quote(params.table_name, safe="")
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+        f"EntityDefinitions(LogicalName='{table_enc}')"
+        f"?$select=LogicalName,SchemaName,EntitySetName,MetadataId,"
+        f"PrimaryIdAttribute,PrimaryNameAttribute"
+    )
 
-        info = await asyncio.to_thread(_query)
+    try:
+        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
 
-        if info is None:
-            return json.dumps({
-                "error": True,
-                "message": f"Table not found: '{params.table_name}'",
-            })
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                resp = http_client.get(url, headers=headers)
+                resp.raise_for_status()
+                return resp.json()
 
-        return json.dumps({
-            "table": {
-                "logical_name": info.logical_name,
-                "schema_name": info.schema_name,
-                "entity_set_name": info.entity_set_name,
-                "metadata_id": info.metadata_id,
-                "primary_id_attribute": info.primary_id_attribute,
-                "primary_name_attribute": info.primary_name_attribute,
-            },
-        })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+        raw = await asyncio.to_thread(_request)
+        table_info = {
+            "logical_name": raw.get("LogicalName"),
+            "schema_name": raw.get("SchemaName"),
+            "entity_set_name": raw.get("EntitySetName"),
+            "metadata_id": raw.get("MetadataId"),
+            "primary_id_attribute": raw.get("PrimaryIdAttribute"),
+            "primary_name_attribute": raw.get("PrimaryNameAttribute"),
+        }
+        return json.dumps({"table": table_info})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_table_metadata")
         return json.dumps({
@@ -217,38 +224,38 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     dataverse_get_column. For choice options, use
     dataverse_list_choice_column_options.
     """
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    table_enc = _url_quote(params.table_logical_name, safe="")
     select = params.select or _DEFAULT_COLUMN_SELECT
-    attr_filter = (
-        f"AttributeType eq '{params.attribute_type}'"
-        if params.attribute_type
-        else None
+    query_params: dict[str, str] = {"$select": ",".join(select)}
+    if params.attribute_type:
+        query_params["$filter"] = f"AttributeType eq '{params.attribute_type}'"
+
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
+        f"?{urlencode(query_params)}"
     )
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            return client.tables.list_columns(
-                params.table_logical_name,
-                select=select,
-                filter=attr_filter,
-            )
-
-        columns = await asyncio.to_thread(_query)
+        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
+        columns = await asyncio.to_thread(paginate_records, url, headers, 5000)
         return json.dumps({
             "columns": columns,
             "count": len(columns),
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_columns")
         return json.dumps({
@@ -277,37 +284,42 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     For Picklist/MultiSelectPicklist option values, use
     dataverse_list_choice_column_options.
     """
-    col_filter = f"LogicalName eq '{params.column_logical_name}'"
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    col_enc = _url_quote(params.column_logical_name, safe="")
+    col_filter = f"LogicalName eq '{col_enc}'"
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
+        f"?{urlencode({'$filter': col_filter})}"
+    )
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            return client.tables.list_columns(
-                params.table_logical_name,
-                filter=col_filter,
-            )
-
-        columns = await asyncio.to_thread(_query)
+        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
+        columns = await asyncio.to_thread(paginate_records, url, headers, 1)
         if not columns:
             return json.dumps({
                 "error": True,
                 "message": (
-                    f"Column '{params.column_logical_name}' not found on "
-                    f"table '{params.table_logical_name}'"
+                    f"Column '{params.column_logical_name}' not found on table "
+                    f"'{params.table_logical_name}'."
                 ),
             })
-        return json.dumps({"column": columns[0]})
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+        column = columns[0]
+        column.pop("@odata.context", None)
+        return json.dumps({"column": column})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_column")
         return json.dumps({
@@ -407,7 +419,10 @@ async def dataverse_list_choice_column_options(
     option sets shared across tables are not currently supported.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     scope = f"{base_url}/.default"
 
     try:
@@ -445,27 +460,12 @@ async def dataverse_list_choice_column_options(
             "count": len(options),
         })
     except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse metadata API error: %s (status=%d)",
-            e.response.text,
-            e.response.status_code,
-        )
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": (
-                f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}"
-            ),
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
-        })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_choice_column_options")
         return json.dumps({
@@ -563,7 +563,10 @@ async def dataverse_list_relationships(
     ReferencedEntityNavigationPropertyName in OData $expand queries.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     scope = f"{base_url}/.default"
 
     try:
@@ -643,7 +646,10 @@ async def dataverse_get_relationship(
     $expand queries.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     scope = f"{base_url}/.default"
     schema_enc = _url_quote(params.schema_name, safe="")
 
@@ -718,7 +724,10 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     to retrieve full option details for a specific choice by name or MetadataId.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     scope = f"{base_url}/.default"
     # Strip 'Options' — not selectable on the polymorphic collection type
     raw_select = [f for f in (params.select or [])] if params.select else None
@@ -793,7 +802,10 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
     metadata_id (GUID). If both are provided, name takes precedence.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
     scope = f"{base_url}/.default"
 
     if params.name:
@@ -862,7 +874,10 @@ async def dataverse_check_relationship_eligibility(
     Returns eligible (bool) for the requested check_type.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
 
@@ -999,15 +1014,10 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     body = _build_create_table_body(params)
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     scope = f"{base_url}/.default"
 
     try:
@@ -1094,15 +1104,10 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
         })
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
 
@@ -1202,15 +1207,10 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
     delete a system table will return an error from the API.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
 
@@ -1382,15 +1382,10 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
         body.update(params.type_specific_properties)
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
@@ -1471,15 +1466,10 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
     Call dataverse_publish_customizations after updating columns.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
@@ -1551,15 +1541,10 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
     Call dataverse_publish_customizations after deleting columns.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
@@ -1712,15 +1697,10 @@ async def dataverse_create_one_to_many_relationship(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -1808,15 +1788,10 @@ async def dataverse_create_many_to_many_relationship(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -1915,15 +1890,10 @@ async def dataverse_create_multi_table_lookup(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2004,15 +1974,10 @@ async def dataverse_update_relationship(
     Call dataverse_publish_customizations after updating relationships.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2078,15 +2043,10 @@ async def dataverse_delete_relationship(
     Call dataverse_publish_customizations after deleting relationships.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2245,15 +2205,10 @@ async def dataverse_create_choice(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2316,15 +2271,10 @@ async def dataverse_update_choice(
     supported on GlobalOptionSetDefinitions.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2387,15 +2337,10 @@ async def dataverse_delete_choice(
     Call dataverse_publish_customizations after deleting global choices.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2468,15 +2413,10 @@ async def dataverse_add_choice_option(
         body["Value"] = params.value
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2549,15 +2489,10 @@ async def dataverse_update_choice_option(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2627,15 +2562,10 @@ async def dataverse_delete_choice_option(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2704,15 +2634,10 @@ async def dataverse_reorder_choice_options(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 
@@ -2785,15 +2710,10 @@ async def dataverse_publish_customizations(
     """
     if params.publish_all:
         app_ctx = _get_app_ctx(ctx)
-        base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-        if not base_url:
-            return json.dumps({
-                "error": True,
-                "message": (
-                    "No Dataverse environment URL was provided. Supply dataverse_url "
-                    "on the tool input, or set DATAVERSE_URL as a fallback."
-                ),
-            })
+        try:
+            base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        except ValueError as e:
+            return json.dumps({'error': True, 'message': str(e)})
 
         scope = f"{base_url}/.default"
 
@@ -2867,15 +2787,10 @@ async def dataverse_publish_customizations(
     parameter_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     scope = f"{base_url}/.default"
 

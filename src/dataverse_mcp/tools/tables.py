@@ -4,13 +4,21 @@ import asyncio
 import json
 import logging
 import os
+from urllib.parse import urlencode
 
 import httpx
 from mcp.server.fastmcp import Context
-from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
 from dataverse_mcp._app import delete_tool, mcp, write_tool
-from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
+from dataverse_mcp.client import (
+    AppContext,
+    _DATAVERSE_API_VERSION,
+    build_headers,
+    extract_error_message,
+    get_bearer_token,
+    paginate_records,
+    resolve_base_url,
+)
 from dataverse_mcp.models import (
     AssociateRecordsInput,
     DisassociateRecordsInput,
@@ -21,33 +29,6 @@ from dataverse_mcp.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-_DATAVERSE_API_VERSION = "v9.2"
-
-
-def _get_client(ctx: Context, dataverse_url: str | None):
-    """Resolve the DataverseClient for the requested environment."""
-    app_ctx: AppContext = ctx.request_context.lifespan_context
-    return get_dataverse_client(app_ctx, dataverse_url)
-
-
-def _resolve_base_url(app_ctx: AppContext, dataverse_url: str | None) -> str | None:
-    """Resolve the Dataverse base URL from input or configured fallback."""
-    base_url = dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return None
-    return base_url.rstrip("/")
-
-
-def _flatten_records(pages, limit: int) -> list[dict]:
-    """Flatten paginated Record results into a list of dicts, up to limit."""
-    records = []
-    for page in pages:
-        for record in page:
-            records.append(dict(record))
-            if len(records) >= limit:
-                return records
-    return records
 
 
 @mcp.tool(
@@ -71,38 +52,44 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
     Use dataverse_list_tables or dataverse_get_table_metadata first to
     discover available tables and their column names.
     """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
     top = params.top
+    entity_set = params.entity_set_name
+    query_params: dict[str, str] = {"$top": str(top)}
+    if params.select:
+        query_params["$select"] = ",".join(params.select)
+    if params.filter:
+        query_params["$filter"] = params.filter
+    if params.orderby:
+        query_params["$orderby"] = ",".join(params.orderby)
+    if params.expand:
+        query_params["$expand"] = ",".join(params.expand)
+
+    full_url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
+        f"{urlencode(query_params)}"
+    )
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            pages = client.records.get(
-                params.table_name,
-                select=params.select,
-                filter=params.filter,
-                orderby=params.orderby,
-                top=top,
-                expand=params.expand,
-            )
-            return _flatten_records(pages, top)
-
-        records = await asyncio.to_thread(_query)
+        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
+        records = await asyncio.to_thread(paginate_records, full_url, headers, top)
         return json.dumps({
             "records": records,
             "count": len(records),
             "has_more": len(records) >= top,
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_query_table")
         return json.dumps({
@@ -126,29 +113,36 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
     Returns the full record (or selected columns) for the given table
     and record GUID. Use dataverse_query_table first to find record IDs.
     """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
     try:
-        client = _get_client(ctx, params.dataverse_url)
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
-        def _query():
-            record = client.records.get(
-                params.table_name,
-                record_id=params.record_id,
-                select=params.select,
-            )
-            return dict(record)
+    entity_set = params.entity_set_name
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}({params.record_id})"
+    if params.select:
+        url += f"?$select={','.join(params.select)}"
 
-        record = await asyncio.to_thread(_query)
+    try:
+        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
+
+        def _request():
+            with httpx.Client(timeout=30.0) as http_client:
+                resp = http_client.get(url, headers=headers)
+                resp.raise_for_status()
+                return resp.json()
+
+        record = await asyncio.to_thread(_request)
+        record.pop("@odata.context", None)
         return json.dumps({"record": record})
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_record")
         return json.dumps({
@@ -182,15 +176,10 @@ async def dataverse_associate_records(
     Use dataverse_get_entity_sets to resolve entity set names.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = _resolve_base_url(app_ctx, params.dataverse_url)
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
@@ -256,15 +245,10 @@ async def dataverse_disassociate_records(
     Unlinks the related record by sending a DELETE to the navigation property $ref endpoint.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = _resolve_base_url(app_ctx, params.dataverse_url)
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
@@ -331,15 +315,10 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
     to the target.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = _resolve_base_url(app_ctx, params.dataverse_url)
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     entity_type = f"Microsoft.Dynamics.CRM.{params.entity_logical_name}"
     id_field = f"{params.entity_logical_name}id"
@@ -562,15 +541,10 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
     Change set results are flattened into the list in order.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = _resolve_base_url(app_ctx, params.dataverse_url)
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     has_mutations = any(op.method != "GET" for op in params.operations)
     if has_mutations:

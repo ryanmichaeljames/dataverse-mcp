@@ -112,7 +112,7 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     if params.filter:
         query_params["$filter"] = params.filter
 
-    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions?{urlencode(query_params)}"
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions?{urlencode(query_params, safe='$,')}"
 
     try:
         headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
@@ -239,7 +239,7 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
-        f"?{urlencode(query_params)}"
+        f"?{urlencode(query_params, safe='$,')}"
     )
 
     try:
@@ -296,7 +296,7 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
-        f"?{urlencode({'$filter': col_filter})}"
+        f"?{urlencode({'$filter': col_filter}, safe='$,')}"
     )
 
     try:

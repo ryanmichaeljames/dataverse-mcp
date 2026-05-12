@@ -124,7 +124,7 @@ async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> 
         query_params["$filter"] = params.filter
 
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions"
-    full_url = f"{url}?{urlencode(query_params)}"
+    full_url = f"{url}?{urlencode(query_params, safe='$,')}"
 
     try:
         headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
@@ -200,7 +200,7 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
                 "$top": "1",
             }
             url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions"
-            full_url = f"{url}?{urlencode(query_params)}"
+            full_url = f"{url}?{urlencode(query_params, safe='$,')}"
             records = await asyncio.to_thread(paginate_records, full_url, headers, 1)
             record = records[0] if records else None
 
@@ -268,7 +268,7 @@ async def dataverse_list_solution_components(
         "$top": str(top),
     }
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutioncomponents"
-    full_url = f"{url}?{urlencode(query_params)}"
+    full_url = f"{url}?{urlencode(query_params, safe='$,')}"
 
     try:
         headers = await asyncio.to_thread(build_headers, app_ctx, base_url)

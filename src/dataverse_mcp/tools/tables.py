@@ -72,7 +72,7 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
 
     full_url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
-        f"{urlencode(query_params)}"
+        f"{urlencode(query_params, safe='$,')}"
     )
 
     try:

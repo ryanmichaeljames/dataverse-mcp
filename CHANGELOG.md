@@ -8,8 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- `dataverse_count_records` tool — count records in any table with optional `$filter`, returns `total_count` and `capped` flag (counts are capped at 5,000 by Dataverse)
-- `dataverse_aggregate_table` tool — aggregate data using OData `$apply` expressions (groupby, sum, avg, min, max, count, distinct values); works on up to 50,000 records
+- `dataverse_count_records` tool — count records in any table with optional `$filter`, returns `total_count` and `capped` flag (counts are capped at 5,000 by Dataverse); filtered counts use `?$filter=...&$count=true` to work around Dataverse not supporting `$filter` on the `/$count` path
+- `dataverse_aggregate_table` tool — aggregate data using OData `$apply` expressions (groupby, sum, avg, min, max, countdistinct, distinct values); use `$count as total` or `countdistinct` — Dataverse does not support `count` keyword in `$apply`; lookup fields cannot be used in `groupby`
 - `count` parameter on `dataverse_query_table` — when `True`, fetches total matching record count alongside the page of results
 - `include_formatted_values` parameter on `dataverse_query_table` and `dataverse_get_record` — when `True`, adds `Prefer: odata.include-annotations` header to return human-readable formatted values (option labels, dates, lookup display names) alongside raw field values
 

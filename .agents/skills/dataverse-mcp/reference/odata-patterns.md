@@ -63,6 +63,8 @@ and lookup display names. Formatted values appear as:
 - `dataverse_count_records` — returns integer count (capped at 5,000)
 - `dataverse_query_table` with `count=True` — fetches records AND total count
 - If `total_count == 5000` the actual count may be higher
+- **Gotcha:** Dataverse does not support `$filter` on the `/$count` path.
+  Filtered counts use `?$filter=...&$count=true` and read `@odata.count`.
 
 ---
 
@@ -71,16 +73,28 @@ and lookup display names. Formatted values appear as:
 Use `dataverse_aggregate_table` for `$apply` expressions. Works on up to 50,000
 records. `$orderby` on aggregate alias values is NOT supported by Dataverse.
 
+**Important Dataverse-specific restrictions:**
+- Use `$count as total` or `countdistinct` — the keyword `count` alone is NOT
+  supported in Dataverse `$apply` aggregations
+- Lookup/navigation fields (e.g. `ownerid`) **cannot** be used in `groupby` — use
+  regular integer/choice columns like `statecode`, `statuscode`
+
 Common patterns:
 ```
-# Count by status
-groupby((statecode),aggregate(accountid with count as total))
+# Count rows by status
+groupby((statecode),aggregate($count as total))
 
-# Sum
+# Count distinct IDs per group
+groupby((statecode),aggregate(accountid with countdistinct as total))
+
+# Sum a column
 aggregate(revenue with sum as total_revenue)
 
-# Distinct values
-groupby((ownerid))
+# Distinct values (no aggregation)
+groupby((statuscode))
+
+# Total row count
+aggregate($count as total)
 ```
 
 ---

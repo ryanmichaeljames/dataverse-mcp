@@ -318,10 +318,14 @@ distinct). Works on up to 50,000 records.
 | `filter` | `str \| None` | Pre-aggregation filter |
 
 **Examples:**
-- Count by status: `groupby((statecode),aggregate(accountid with count as total))`
+- Count by status: `groupby((statecode),aggregate($count as total))`
+- Count distinct IDs: `groupby((statecode),aggregate(accountid with countdistinct as total))`
 - Sum a column: `aggregate(revenue with sum as total_revenue)`
 - Avg/min/max: `aggregate(numberofemployees with avg as avg_emp)`
-- Distinct values: `groupby((ownerid))`
+- Distinct values: `groupby((statuscode))`
+- Total count: `aggregate($count as total)`
+
+**Constraints:** Use `$count` or `countdistinct` — `count` keyword is NOT supported by Dataverse. Lookup fields cannot be used in `groupby`.
 
 **Returns:** `{ records: [...], count }`
 

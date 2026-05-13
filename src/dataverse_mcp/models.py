@@ -264,9 +264,11 @@ class AggregateTableInput(DataverseEnvironmentInput):
         ...,
         description=(
             "OData $apply expression. Examples: "
-            "\"groupby((statecode),aggregate(accountid with count as total))\" — count by status; "
+            "\"groupby((statecode),aggregate($count as total))\" — count rows by status; "
+            "\"groupby((statecode),aggregate(accountid with countdistinct as total))\" — distinct count; "
             "\"aggregate(revenue with sum as total_revenue)\" — sum a column; "
-            "\"groupby((ownerid))\" — distinct owner IDs. "
+            "\"groupby((statuscode))\" — distinct values. "
+            "Use 'countdistinct' not 'count'. Lookup fields cannot be used in groupby. "
             "Works on up to 50,000 records."
         ),
         min_length=1,

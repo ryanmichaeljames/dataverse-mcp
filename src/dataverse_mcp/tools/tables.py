@@ -101,7 +101,7 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
             count_headers = await build_headers(app_ctx, base_url)
             count_resp = await app_ctx.http_client.get(count_url, headers=count_headers)
             count_resp.raise_for_status()
-            result["total_count"] = int(count_resp.text)
+            result["total_count"] = int(count_resp.text.strip().lstrip("\ufeff"))
         return json.dumps(result)
     except httpx.HTTPStatusError as e:
         msg = extract_error_message(e.response)
@@ -198,17 +198,29 @@ async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> st
         return json.dumps({"error": True, "message": str(e)})
 
     entity_set = params.entity_set_name
-    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}/$count"
-    if params.filter:
-        url += f"?{urlencode({'$filter': params.filter}, safe='$,')}"
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.get(url, headers=headers)
-        resp.raise_for_status()
+        if params.filter:
+            # Dataverse does not support $filter on the /$count path; use
+            # ?$filter=...&$count=true to get @odata.count from the collection
+            query_params: dict[str, str] = {"$filter": params.filter, "$count": "true", "$top": "1"}
+            url = (
+                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
+                f"{urlencode(query_params, safe='$,')}"
+            )
+            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp.raise_for_status()
+            body = resp.json()
+            total = body.get("@odata.count", 0)
+        else:
+            url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}/$count"
+            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp.raise_for_status()
+            total = int(resp.text.strip().lstrip("\ufeff"))
         return json.dumps({
-            "total_count": int(resp.text),
-            "capped": int(resp.text) >= 5000,
+            "total_count": total,
+            "capped": total >= 5000,
         })
     except httpx.HTTPStatusError as e:
         msg = extract_error_message(e.response)
@@ -238,17 +250,22 @@ async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> st
 async def dataverse_aggregate_table(params: AggregateTableInput, ctx: Context) -> str:
     """Aggregate data from a Dataverse table using OData $apply expressions.
 
-    Supports groupby, sum, avg, min, max, count, and distinct value queries.
+    Supports groupby, sum, avg, min, max, countdistinct, and distinct value queries.
     Works on up to 50,000 records.
 
     Common patterns:
-    - Count by status: groupby((statecode),aggregate(accountid with count as total))
-    - Sum a column: aggregate(revenue with sum as total_revenue)
-    - Avg/min/max: aggregate(numberofemployees with avg as avg_employees)
-    - Distinct values: groupby((ownerid))
-    - Filtered aggregation: combine with filter param
+    - Count by status:     groupby((statecode),aggregate($count as total))
+    - Count distinct IDs:  groupby((statecode),aggregate(accountid with countdistinct as total))
+    - Sum a column:        aggregate(revenue with sum as total_revenue)
+    - Avg/min/max:         aggregate(numberofemployees with avg as avg_employees)
+    - Distinct values:     groupby((statuscode))
+    - Total row count:     aggregate($count as total)
+    - Filtered agg:        use the filter param to narrow before aggregation
 
+    Note: use 'countdistinct' not 'count' for column aggregation.
     Note: $orderby on aggregate alias values is not supported by Dataverse.
+    Note: Lookup fields (e.g. ownerid) cannot be used in groupby — use
+    regular columns like statecode, statuscode, or other integer fields.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
     try:

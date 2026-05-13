@@ -1,11 +1,14 @@
 """Shared Dataverse auth helpers and lifespan management."""
 
+import asyncio
+import functools
 import logging
 import os
 import shutil
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
@@ -16,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 SUPPORTED_AUTH_TYPES = ("interactive", "azure_cli")
 _DATAVERSE_API_VERSION = "v9.2"
+_TOKEN_REFRESH_BUFFER_SECONDS = 300
 
 # Common Azure CLI installation paths that may not be on the system PATH when
 # the MCP server process is launched (e.g., from VS Code without a login shell).
@@ -87,13 +91,16 @@ def _build_credential(auth_type: str):
 
 @dataclass
 class AppContext:
-    """Application context holding shared auth state."""
+    """Application context holding shared auth state and HTTP client."""
 
     credential: Any
     auth_type: str
     fallback_dataverse_url: str | None
+    http_client: httpx.AsyncClient
+    _token_cache: dict[str, tuple[str, float]] = field(default_factory=dict)
 
 
+@functools.lru_cache(maxsize=64)
 def normalize_dataverse_url(url: str) -> str:
     """Validate and normalize a Dataverse organization URL."""
     normalized_input = url.strip()
@@ -138,19 +145,29 @@ def resolve_base_url(app_ctx: AppContext, dataverse_url: str | None) -> str:
 
 
 def get_bearer_token(app_ctx: AppContext, scope: str) -> str:
-    """Acquire a bearer token from the shared credential for the given scope."""
-    return app_ctx.credential.get_token(scope).token
+    """Acquire a bearer token with per-scope caching to avoid redundant credential round-trips."""
+    cached = app_ctx._token_cache.get(scope)
+    if cached:
+        token_str, expires_on = cached
+        if time.time() < expires_on - _TOKEN_REFRESH_BUFFER_SECONDS:
+            return token_str
+    access_token = app_ctx.credential.get_token(scope)
+    app_ctx._token_cache[scope] = (access_token.token, float(access_token.expires_on))
+    return access_token.token
 
 
-def build_headers(
+async def build_headers(
     app_ctx: AppContext,
     base_url: str,
     *,
     include_content_type: bool = False,
     extra: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    """Build standard Dataverse Web API headers with a fresh Bearer token."""
-    token = get_bearer_token(app_ctx, f"{base_url}/.default")
+    """Build standard Dataverse Web API headers with a cached Bearer token.
+
+    Token acquisition runs in a thread on cache miss to avoid blocking the event loop.
+    """
+    token = await asyncio.to_thread(get_bearer_token, app_ctx, f"{base_url}/.default")
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -165,24 +182,28 @@ def build_headers(
     return headers
 
 
-def paginate_records(url: str, headers: dict[str, str], top: int) -> list[dict]:
-    """Synchronously fetch pages from a Dataverse collection, stopping at top records.
+async def paginate_records(
+    url: str,
+    headers: dict[str, str],
+    top: int,
+    http_client: httpx.AsyncClient,
+) -> list[dict]:
+    """Asynchronously fetch pages from a Dataverse collection, stopping at top records.
 
     Follows @odata.nextLink until top records are collected or no more pages remain.
-    Call this inside asyncio.to_thread().
+    Uses the shared AsyncClient for connection reuse.
     """
     records: list[dict] = []
     next_url: str | None = url
-    with httpx.Client(timeout=30.0) as client:
-        while next_url and len(records) < top:
-            response = client.get(next_url, headers=headers)
-            response.raise_for_status()
-            body = response.json()
-            for item in body.get("value", []):
-                records.append(item)
-                if len(records) >= top:
-                    break
-            next_url = body.get("@odata.nextLink") if len(records) < top else None
+    while next_url and len(records) < top:
+        response = await http_client.get(next_url, headers=headers)
+        response.raise_for_status()
+        body = response.json()
+        for item in body.get("value", []):
+            records.append(item)
+            if len(records) >= top:
+                break
+        next_url = body.get("@odata.nextLink") if len(records) < top else None
     return records
 
 
@@ -216,16 +237,21 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
     logger.info("Initializing Dataverse credential (auth: %s)", auth_type)
 
     credential = _build_credential(auth_type)
-    app_ctx = AppContext(
-        credential=credential,
-        auth_type=auth_type,
-        fallback_dataverse_url=fallback_dataverse_url,
-    )
-    try:
-        logger.info("Dataverse credential initialized successfully")
-        yield app_ctx
-    finally:
-        logger.info("Shutting down Dataverse MCP server")
-        close_credential = getattr(credential, "close", None)
-        if callable(close_credential):
-            close_credential()
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(connect=10.0, read=30.0, write=60.0, pool=5.0),
+        limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
+    ) as http_client:
+        app_ctx = AppContext(
+            credential=credential,
+            auth_type=auth_type,
+            fallback_dataverse_url=fallback_dataverse_url,
+            http_client=http_client,
+        )
+        try:
+            logger.info("Dataverse credential and HTTP client initialized")
+            yield app_ctx
+        finally:
+            logger.info("Shutting down Dataverse MCP server")
+            close_credential = getattr(credential, "close", None)
+            if callable(close_credential):
+                close_credential()

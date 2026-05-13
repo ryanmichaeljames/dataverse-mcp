@@ -1,6 +1,5 @@
 """Table query tools for the Dataverse MCP server."""
 
-import asyncio
 import json
 import logging
 import os
@@ -15,7 +14,6 @@ from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
     extract_error_message,
-    get_bearer_token,
     paginate_records,
     resolve_base_url,
 )
@@ -76,8 +74,8 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
     )
 
     try:
-        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
-        records = await asyncio.to_thread(paginate_records, full_url, headers, top)
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
         return json.dumps({
             "records": records,
             "count": len(records),
@@ -125,15 +123,10 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
         url += f"?$select={','.join(params.select)}"
 
     try:
-        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                resp = http_client.get(url, headers=headers)
-                resp.raise_for_status()
-                return resp.json()
-
-        record = await asyncio.to_thread(_request)
+        headers = await build_headers(app_ctx, base_url)
+        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp.raise_for_status()
+        record = resp.json()
         record.pop("@odata.context", None)
         return json.dumps({"record": record})
     except httpx.HTTPStatusError as e:
@@ -193,23 +186,8 @@ async def dataverse_associate_records(
     body = {"@odata.id": related_uri}
 
     try:
-        token = await asyncio.to_thread(
-            get_bearer_token,
-            app_ctx,
-            f"{base_url}/.default",
-        )
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0",
-        }
-
-        def _post():
-            with httpx.Client(timeout=30) as client:
-                return client.post(url, headers=headers, json=body)
-
-        response = await asyncio.to_thread(_post)
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(url, headers=headers, json=body)
         if response.status_code == 204:
             return json.dumps({"success": True})
         try:
@@ -257,22 +235,8 @@ async def dataverse_disassociate_records(
     )
 
     try:
-        token = await asyncio.to_thread(
-            get_bearer_token,
-            app_ctx,
-            f"{base_url}/.default",
-        )
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0",
-        }
-
-        def _delete():
-            with httpx.Client(timeout=30) as client:
-                return client.delete(url, headers=headers)
-
-        response = await asyncio.to_thread(_delete)
+        headers = await build_headers(app_ctx, base_url)
+        response = await app_ctx.http_client.delete(url, headers=headers)
         if response.status_code == 204:
             return json.dumps({"success": True})
         try:
@@ -334,19 +298,8 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/Merge"
 
     try:
-        token = await asyncio.to_thread(get_bearer_token, app_ctx, f"{base_url}/.default")
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0",
-        }
-
-        def _post():
-            with httpx.Client(timeout=60) as client:
-                return client.post(url, headers=headers, json=body)
-
-        response = await asyncio.to_thread(_post)
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(url, headers=headers, json=body)
         if response.status_code == 204:
             return json.dumps({"success": True})
         try:
@@ -568,22 +521,19 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
             "Executing batch: url=%s boundary=%s operations=%d bytes=%d",
             url, batch_boundary, len(params.operations), len(batch_body_bytes),
         )
-        token = await asyncio.to_thread(get_bearer_token, app_ctx, f"{base_url}/.default")
+        headers = await build_headers(app_ctx, base_url)
         req_headers = {
-            "Authorization": f"Bearer {token}",
+            **headers,
             "Content-Type": f"multipart/mixed; boundary={batch_boundary}",
-            "OData-MaxVersion": "4.0",
-            "OData-Version": "4.0",
             "Accept": "multipart/mixed",
         }
+        del req_headers["If-None-Match"]
         if params.continue_on_error:
             req_headers["Prefer"] = "odata.continue-on-error"
 
-        def _post():
-            with httpx.Client(timeout=120) as client:
-                return client.post(url, headers=req_headers, content=batch_body_bytes)
-
-        response = await asyncio.to_thread(_post)
+        response = await app_ctx.http_client.post(
+            url, headers=req_headers, content=batch_body_bytes, timeout=120
+        )
         logger.debug(
             "Batch response: status=%d content_type=%s",
             response.status_code, response.headers.get("Content-Type", ""),

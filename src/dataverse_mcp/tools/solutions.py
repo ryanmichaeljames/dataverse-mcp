@@ -1,6 +1,5 @@
 """Solution-related tools for the Dataverse MCP server."""
 
-import asyncio
 import json
 import logging
 from urllib.parse import urlencode
@@ -127,8 +126,8 @@ async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> 
     full_url = f"{url}?{urlencode(query_params, safe='$,')}"
 
     try:
-        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
-        records = await asyncio.to_thread(paginate_records, full_url, headers, top)
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
         return json.dumps({
             "records": records,
             "count": len(records),
@@ -176,7 +175,7 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
         return json.dumps({"error": True, "message": str(e)})
 
     select = params.select or _DEFAULT_SOLUTION_SELECT
-    headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
+    headers = await build_headers(app_ctx, base_url)
 
     try:
         if params.solution_id:
@@ -184,14 +183,9 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions({params.solution_id})"
                 f"?$select={','.join(select)}"
             )
-
-            def _request() -> dict:
-                with httpx.Client(timeout=30.0) as http_client:
-                    resp = http_client.get(url, headers=headers)
-                    resp.raise_for_status()
-                    return resp.json()
-
-            record = await asyncio.to_thread(_request)
+            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp.raise_for_status()
+            record = resp.json()
         else:
             escaped_name = params.solution_unique_name.replace("'", "''")
             query_params = {
@@ -201,7 +195,7 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
             }
             url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions"
             full_url = f"{url}?{urlencode(query_params, safe='$,')}"
-            records = await asyncio.to_thread(paginate_records, full_url, headers, 1)
+            records = await paginate_records(full_url, headers, 1, app_ctx.http_client)
             record = records[0] if records else None
 
         if record is None:
@@ -271,8 +265,8 @@ async def dataverse_list_solution_components(
     full_url = f"{url}?{urlencode(query_params, safe='$,')}"
 
     try:
-        headers = await asyncio.to_thread(build_headers, app_ctx, base_url)
-        records = await asyncio.to_thread(paginate_records, full_url, headers, top)
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
         records = [_enrich_component_type(r) for r in records]
         return json.dumps({
             "records": records,

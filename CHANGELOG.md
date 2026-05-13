@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Migrated all HTTP I/O to a shared `httpx.AsyncClient` with connection pooling (max 20 connections, 10 keep-alive) created once per server lifetime — eliminates per-request TCP handshake overhead
+- Made `build_headers` and `paginate_records` natively `async` — removes unnecessary `asyncio.to_thread` thread-pool overhead on every request
+- Added in-process bearer token cache (`_token_cache`) to `AppContext` with 5-minute early-refresh buffer — eliminates redundant Azure CLI subprocess or OAuth round-trips within token lifetime
+- Added `@functools.lru_cache` to `normalize_dataverse_url` — memoizes repeated URL normalization calls
+- Parallelized `dataverse_list_relationships` fetch over relationship types (OneToMany, ManyToOne, ManyToMany) using `asyncio.gather`
+- Parallelized `dataverse_list_choice_column_options` resolution over Picklist and MultiSelectPicklist types using `asyncio.gather`
+- Removed duplicate `_DATAVERSE_API_VERSION` constant from `environments.py`
+
 ## [2.0.0b1] - 2026-05-12
 
 ### Fixed

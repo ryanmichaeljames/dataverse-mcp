@@ -157,7 +157,8 @@ class QueryTableInput(DataverseEnvironmentInput):
     select: list[str] | None = Field(
         default=None,
         description=(
-            "Columns to return. Omit to return default columns. "
+            "Columns to return. Omit to return a conservative default "
+            "projection ('createdon','modifiedon'). "
             "Always specify this to reduce payload size "
             "(e.g., ['name', 'accountid', 'telephone1'])"
         ),
@@ -235,7 +236,8 @@ class GetRecordInput(DataverseEnvironmentInput):
     select: list[str] | None = Field(
         default=None,
         description=(
-            "Columns to return. Omit to return default columns. "
+            "Columns to return. Omit to return a conservative default "
+            "projection ('createdon','modifiedon'). "
             "Specify to reduce payload (e.g., ['name', 'telephone1'])"
         ),
     )

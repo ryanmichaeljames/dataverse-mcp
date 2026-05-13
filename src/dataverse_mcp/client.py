@@ -156,6 +156,17 @@ def get_bearer_token(app_ctx: AppContext, scope: str) -> str:
     return access_token.token
 
 
+def _get_cached_bearer_token(app_ctx: AppContext, scope: str) -> str | None:
+    """Return a cached bearer token when present and not near expiry."""
+    cached = app_ctx._token_cache.get(scope)
+    if not cached:
+        return None
+    token_str, expires_on = cached
+    if time.time() < expires_on - _TOKEN_REFRESH_BUFFER_SECONDS:
+        return token_str
+    return None
+
+
 async def build_headers(
     app_ctx: AppContext,
     base_url: str,
@@ -167,7 +178,10 @@ async def build_headers(
 
     Token acquisition runs in a thread on cache miss to avoid blocking the event loop.
     """
-    token = await asyncio.to_thread(get_bearer_token, app_ctx, f"{base_url}/.default")
+    scope = f"{base_url}/.default"
+    token = _get_cached_bearer_token(app_ctx, scope)
+    if token is None:
+        token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `dataverse_query_table` now uses Dataverse-compatible filtered count behavior (`?$filter=...&$count=true&$top=1`) when `count=true` and `filter` is provided, instead of calling `/$count` with `$filter`
+- `build_headers` now checks the in-process token cache on the event loop first and only uses `asyncio.to_thread` for token acquisition on cache miss
+
+### Changed
+- `dataverse_query_table` and `dataverse_get_record` now apply a conservative default `$select` projection (`createdon,modifiedon`) when `select` is omitted, preventing full-row payload expansion by default
+- Clarified docs to consistently describe `dataverse_get_record` and `dataverse_query_table` as taking `entity_set_name`
+
 ## [2.0.0b1] - 2026-05-12
 
 ### Added

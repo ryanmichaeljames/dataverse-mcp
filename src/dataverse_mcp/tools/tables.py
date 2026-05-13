@@ -30,6 +30,8 @@ from dataverse_mcp.models import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_RECORD_SELECT = ["createdon", "modifiedon"]
+
 
 @mcp.tool(
     name="dataverse_query_table",
@@ -61,8 +63,8 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
     top = params.top
     entity_set = params.entity_set_name
     query_params: dict[str, str] = {"$top": str(top)}
-    if params.select:
-        query_params["$select"] = ",".join(params.select)
+    select = params.select or _DEFAULT_RECORD_SELECT
+    query_params["$select"] = ",".join(select)
     if params.filter:
         query_params["$filter"] = params.filter
     if params.orderby:
@@ -90,18 +92,22 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
             "has_more": len(records) >= top,
         }
         if params.count:
-            count_params: dict[str, str] = {}
-            if params.filter:
-                count_params["$filter"] = params.filter
-            count_url = (
-                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}/$count"
-            )
-            if count_params:
-                count_url += f"?{urlencode(count_params, safe='$,')}"
+            count_url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}/$count"
             count_headers = await build_headers(app_ctx, base_url)
-            count_resp = await app_ctx.http_client.get(count_url, headers=count_headers)
-            count_resp.raise_for_status()
-            result["total_count"] = int(count_resp.text.strip().lstrip("\ufeff"))
+            if params.filter:
+                count_params = {"$filter": params.filter, "$count": "true", "$top": "1"}
+                count_url = (
+                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
+                    f"{urlencode(count_params, safe='$,')}"
+                )
+                count_resp = await app_ctx.http_client.get(count_url, headers=count_headers)
+                count_resp.raise_for_status()
+                count_body = count_resp.json()
+                result["total_count"] = int(count_body.get("@odata.count", 0))
+            else:
+                count_resp = await app_ctx.http_client.get(count_url, headers=count_headers)
+                count_resp.raise_for_status()
+                result["total_count"] = int(count_resp.text.strip().lstrip("\ufeff"))
         return json.dumps(result)
     except httpx.HTTPStatusError as e:
         msg = extract_error_message(e.response)
@@ -130,7 +136,7 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
 )
 async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
     """Retrieve a single record by its ID from any Dataverse table.
-    Returns the full record (or selected columns) for the given table
+    Returns selected columns for the given table
     and record GUID. Use dataverse_query_table first to find record IDs.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
@@ -141,8 +147,8 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
 
     entity_set = params.entity_set_name
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}({params.record_id})"
-    if params.select:
-        url += f"?$select={','.join(params.select)}"
+    select = params.select or _DEFAULT_RECORD_SELECT
+    url += f"?$select={','.join(select)}"
 
     extra_headers: dict[str, str] = {}
     if params.include_formatted_values:

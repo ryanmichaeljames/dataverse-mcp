@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- `dataverse_check_relationship_eligibility` was incorrectly POSTing to a non-existent top-level action endpoint; `CanBeReferenced`, `CanBeReferencing`, and `CanManyToMany` are properties on `EntityDefinitions` — fixed to GET `EntityDefinitions(LogicalName='{entity}')?$select={property}`
+- `dataverse_check_relationship_eligibility` was calling `POST /api/data/v9.2/{ActionName}` (no parentheses), which returns 404; the correct Dataverse Web API format for unbound actions is `POST /api/data/v9.2/{ActionName}()` — added `()` suffix to all three action URLs (`CanBeReferenced()`, `CanBeReferencing()`, `CanManyToMany()`)
 
 ### Changed
 - Migrated all HTTP I/O to a shared `httpx.AsyncClient` with connection pooling (max 20 connections, 10 keep-alive) created once per server lifetime — eliminates per-request TCP handshake overhead

@@ -819,24 +819,23 @@ async def dataverse_check_relationship_eligibility(
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
-    check_type_to_property = {
-        "referenced": "CanBeReferenced",
-        "referencing": "CanBeReferencing",
-        "many_to_many": "CanManyToMany",
+    check_type_to_action = {
+        "referenced": ("CanBeReferenced", "CanBeReferenced"),
+        "referencing": ("CanBeReferencing", "CanBeReferencing"),
+        "many_to_many": ("CanManyToMany", "CanManyToMany"),
     }
-    property_name = check_type_to_property[params.check_type]
+    action_name, result_key = check_type_to_action[params.check_type]
 
     try:
-        headers = await build_headers(app_ctx, base_url)
-        url = (
-            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-            f"/EntityDefinitions(LogicalName='{params.table_logical_name}')"
-            f"?$select={property_name}"
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{action_name}()",
+            json={"EntityName": params.table_logical_name},
+            headers=headers,
         )
-        response = await app_ctx.http_client.get(url, headers=headers)
         response.raise_for_status()
         result = response.json()
-        eligible = bool(result.get(property_name, False))
+        eligible = bool(result.get(result_key, False))
         return json.dumps({
             "table_logical_name": params.table_logical_name,
             "check_type": params.check_type,

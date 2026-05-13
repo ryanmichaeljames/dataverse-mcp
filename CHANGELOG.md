@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `dataverse_check_relationship_eligibility` was incorrectly POSTing to a non-existent top-level action endpoint; `CanBeReferenced`, `CanBeReferencing`, and `CanManyToMany` are properties on `EntityDefinitions` — fixed to GET `EntityDefinitions(LogicalName='{entity}')?$select={property}`
+
 ### Changed
 - Migrated all HTTP I/O to a shared `httpx.AsyncClient` with connection pooling (max 20 connections, 10 keep-alive) created once per server lifetime — eliminates per-request TCP handshake overhead
 - Made `build_headers` and `paginate_records` natively `async` — removes unnecessary `asyncio.to_thread` thread-pool overhead on every request

@@ -7,44 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- `consistency_strong` parameter on all metadata read tools (`dataverse_list_tables`, `dataverse_get_table_metadata`, `dataverse_list_columns`, `dataverse_get_column`, `dataverse_list_choice_column_options`, `dataverse_list_relationships`, `dataverse_get_relationship`, `dataverse_list_choices`, `dataverse_get_choice`) — when `True`, adds `Consistency: Strong` header to bypass Dataverse's 30-second metadata cache; use immediately after creating or updating metadata
-- `solution_unique_name` parameter on all metadata write tools (`dataverse_create_table`, `dataverse_update_table`, `dataverse_create_column`, `dataverse_update_column`, `dataverse_create_one_to_many_relationship`, `dataverse_create_many_to_many_relationship`, `dataverse_create_multi_table_lookup`, `dataverse_update_relationship`, `dataverse_create_choice`, `dataverse_update_choice`, `dataverse_add_choice_option`, `dataverse_update_choice_option`, `dataverse_delete_choice_option`, `dataverse_reorder_choice_options`) — when provided, associates the metadata change with the specified unmanaged solution via `MSCRM.SolutionUniqueName` header (or `SolutionUniqueName` body parameter for action-based endpoints)
-- `dataverse_count_records` tool — count records in any table with optional `$filter`, returns `total_count` and `capped` flag (counts are capped at 5,000 by Dataverse); filtered counts use `?$filter=...&$count=true` to work around Dataverse not supporting `$filter` on the `/$count` path
-- `dataverse_aggregate_table` tool — aggregate data using OData `$apply` expressions (groupby, sum, avg, min, max, countdistinct, distinct values); use `$count as total` or `countdistinct` — Dataverse does not support `count` keyword in `$apply`; lookup fields cannot be used in `groupby`
-- `count` parameter on `dataverse_query_table` — when `True`, fetches total matching record count alongside the page of results
-- `include_formatted_values` parameter on `dataverse_query_table` and `dataverse_get_record` — when `True`, adds `Prefer: odata.include-annotations` header to return human-readable formatted values (option labels, dates, lookup display names) alongside raw field values
-
-### Fixed
-- `dataverse_execute_batch` raised `KeyError` at runtime — orphaned `del req_headers["If-None-Match"]` was left behind after the `If-None-Match` header was removed from `build_headers` in a prior refactor; removed the stale `del`
-- `dataverse_check_relationship_eligibility` was calling `POST /api/data/v9.2/{ActionName}` (no parentheses), which returns 404; the correct Dataverse Web API format for unbound actions is `POST /api/data/v9.2/{ActionName}()` — added `()` suffix to all three action URLs (`CanBeReferenced()`, `CanBeReferencing()`, `CanManyToMany()`)
-- `dataverse_get_column` no longer URL-encodes `column_logical_name` inside the OData `$filter` string literal; it now escapes single quotes per OData rules to avoid double-encoding and incorrect matching
-- `dataverse_check_relationship_eligibility` now correctly unwraps structured action results like `{"Value": true}` before bool conversion
-- Removed default `If-None-Match: null` request header from Dataverse API calls
-- `dataverse_list_tables` now fetches all metadata pages instead of silently truncating at 5000 records
-
-### Changed
-- Migrated all HTTP I/O to a shared `httpx.AsyncClient` with connection pooling (max 20 connections, 10 keep-alive) created once per server lifetime — eliminates per-request TCP handshake overhead
-- Made `build_headers` and `paginate_records` natively `async` — removes unnecessary `asyncio.to_thread` thread-pool overhead on every request
-- Added in-process bearer token cache (`_token_cache`) to `AppContext` with 5-minute early-refresh buffer — eliminates redundant Azure CLI subprocess or OAuth round-trips within token lifetime
-- Added `@functools.lru_cache` to `normalize_dataverse_url` — memoizes repeated URL normalization calls
-- Parallelized `dataverse_list_relationships` fetch over relationship types (OneToMany, ManyToOne, ManyToMany) using `asyncio.gather`
-- Parallelized `dataverse_list_choice_column_options` resolution over Picklist and MultiSelectPicklist types using `asyncio.gather`
-- Removed duplicate `_DATAVERSE_API_VERSION` constant from `environments.py`
-
 ## [2.0.0b1] - 2026-05-12
 
+### Added
+- Added `consistency_strong` option to metadata read tools
+- Added `solution_unique_name` option to metadata write tools
+- Added `dataverse_count_records` tool
+- Added `dataverse_aggregate_table` tool
+- Added `count` option to `dataverse_query_table`
+- Added `include_formatted_values` option to `dataverse_query_table` and `dataverse_get_record`
+
 ### Fixed
-- OData system query option parameters (`$select`, `$filter`, `$top`, etc.) were being percent-encoded as `%24select` etc. when building initial request URLs via `urlencode`; fixed by preserving `$` and `,` as safe characters so Dataverse receives correct OData parameters on all refactored read tools
-- `dataverse_check_relationship_eligibility` was calling the Dataverse eligibility endpoints as GET requests; these are POST actions (`CanBeReferenced`, `CanBeReferencing`, `CanManyToMany`) that accept `{"EntityName": "..."}` in the request body
+- Fixed `dataverse_execute_batch` `KeyError` from stale `If-None-Match` deletion
+- Fixed `dataverse_check_relationship_eligibility` action URL format (`ActionName()`)
+- Fixed `dataverse_check_relationship_eligibility` to use POST (not GET)
+- Fixed `dataverse_check_relationship_eligibility` result parsing for `{"Value": true}` payloads
+- Fixed `dataverse_get_column` filter escaping for `column_logical_name`
+- Fixed OData query option encoding (`$select`, `$filter`, `$top`)
+- Fixed `dataverse_list_tables` metadata pagination truncation
+- Fixed default `If-None-Match: null` header usage
 
 ### Changed
-- **BREAKING:** `dataverse_query_table` and `dataverse_get_record` now accept `entity_set_name` (OData collection name, e.g. `accounts`) instead of `table_name` (logical name) — use `dataverse_get_entity_sets` or `dataverse_get_table_metadata` to discover the entity set name (#38)
-- Replaced `PowerPlatform-Dataverse-Client` SDK with direct Dataverse Web API v9.2 calls via `httpx` for all read tools (`dataverse_list_solutions`, `dataverse_get_solution`, `dataverse_list_solution_components`, `dataverse_query_table`, `dataverse_get_record`, `dataverse_list_tables`, `dataverse_get_table_metadata`, `dataverse_list_columns`, `dataverse_get_column`) — eliminates the beta-only SDK dependency (#38)
-- Fixed URL resolution bugs in several metadata and environment tools where missing normalization or `str(None)` could produce an invalid base URL when `dataverse_url` was not provided
+- Changed `.github/copilot-instructions.md` to a concise repo-specific ruleset
+- Changed HTTP layer to shared async `httpx.AsyncClient`
+- Changed `build_headers` and `paginate_records` to native async
+- Changed auth flow to use in-process bearer token cache
+- Changed `normalize_dataverse_url` to use `@functools.lru_cache`
+- Changed relationship and choice-option metadata fetches to run in parallel
+- Changed and removed duplicate `_DATAVERSE_API_VERSION` in `environments.py`
+- Changed **BREAKING** `dataverse_query_table` and `dataverse_get_record` to use `entity_set_name` instead of `table_name`
+- Changed read tools to direct Dataverse Web API via `httpx` (removed SDK dependency)
+- Changed base URL resolution behavior to avoid invalid fallback values
 
 ### Removed
-- **BREAKING:** `powerplatform-dataverse-client` removed from dependencies; no longer required (#38)
+- Removed **BREAKING** `powerplatform-dataverse-client` dependency
 
 ## [1.3.2] - 2026-05-11
 

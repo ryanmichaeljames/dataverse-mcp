@@ -18,7 +18,9 @@ from dataverse_mcp.client import (
     resolve_base_url,
 )
 from dataverse_mcp.models import (
+    AggregateTableInput,
     AssociateRecordsInput,
+    CountRecordsInput,
     DisassociateRecordsInput,
     ExecuteBatchInput,
     GetRecordInput,
@@ -73,14 +75,34 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
         f"{urlencode(query_params, safe='$,')}"
     )
 
+    extra_headers: dict[str, str] = {}
+    if params.include_formatted_values:
+        extra_headers["Prefer"] = (
+            'odata.include-annotations="OData.Community.Display.V1.FormattedValue"'
+        )
+
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(app_ctx, base_url, extra=extra_headers or None)
         records = await paginate_records(full_url, headers, top, app_ctx.http_client)
-        return json.dumps({
+        result: dict = {
             "records": records,
             "count": len(records),
             "has_more": len(records) >= top,
-        })
+        }
+        if params.count:
+            count_params: dict[str, str] = {}
+            if params.filter:
+                count_params["$filter"] = params.filter
+            count_url = (
+                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}/$count"
+            )
+            if count_params:
+                count_url += f"?{urlencode(count_params, safe='$,')}"
+            count_headers = await build_headers(app_ctx, base_url)
+            count_resp = await app_ctx.http_client.get(count_url, headers=count_headers)
+            count_resp.raise_for_status()
+            result["total_count"] = int(count_resp.text)
+        return json.dumps(result)
     except httpx.HTTPStatusError as e:
         msg = extract_error_message(e.response)
         logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
@@ -122,8 +144,14 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
     if params.select:
         url += f"?$select={','.join(params.select)}"
 
+    extra_headers: dict[str, str] = {}
+    if params.include_formatted_values:
+        extra_headers["Prefer"] = (
+            'odata.include-annotations="OData.Community.Display.V1.FormattedValue"'
+        )
+
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(app_ctx, base_url, extra=extra_headers or None)
         resp = await app_ctx.http_client.get(url, headers=headers)
         resp.raise_for_status()
         record = resp.json()
@@ -138,6 +166,125 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_record")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_count_records",
+    annotations={
+        "title": "Count Records",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> str:
+    """Count records in a Dataverse table, optionally filtered.
+
+    Returns an integer count. Counts are capped at 5,000 by Dataverse —
+    if total_count equals 5000 the actual count may be higher.
+
+    Use filter to narrow the count to matching records, e.g.,
+    "statecode eq 0" to count only active records.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    entity_set = params.entity_set_name
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}/$count"
+    if params.filter:
+        url += f"?{urlencode({'$filter': params.filter}, safe='$,')}"
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp.raise_for_status()
+        return json.dumps({
+            "total_count": int(resp.text),
+            "capped": int(resp.text) >= 5000,
+        })
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_count_records")
+        return json.dumps({
+            "error": True,
+            "message": f"Unexpected error: {type(e).__name__}: {e}",
+        })
+
+
+@mcp.tool(
+    name="dataverse_aggregate_table",
+    annotations={
+        "title": "Aggregate Table",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_aggregate_table(params: AggregateTableInput, ctx: Context) -> str:
+    """Aggregate data from a Dataverse table using OData $apply expressions.
+
+    Supports groupby, sum, avg, min, max, count, and distinct value queries.
+    Works on up to 50,000 records.
+
+    Common patterns:
+    - Count by status: groupby((statecode),aggregate(accountid with count as total))
+    - Sum a column: aggregate(revenue with sum as total_revenue)
+    - Avg/min/max: aggregate(numberofemployees with avg as avg_employees)
+    - Distinct values: groupby((ownerid))
+    - Filtered aggregation: combine with filter param
+
+    Note: $orderby on aggregate alias values is not supported by Dataverse.
+    """
+    app_ctx: AppContext = ctx.request_context.lifespan_context
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    entity_set = params.entity_set_name
+    query_params: dict[str, str] = {"$apply": params.apply}
+    if params.filter:
+        query_params["$filter"] = params.filter
+
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
+        f"{urlencode(query_params, safe='$,')}"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
+        records = body.get("value", [])
+        return json.dumps({
+            "records": records,
+            "count": len(records),
+        })
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
+        })
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_aggregate_table")
         return json.dumps({
             "error": True,
             "message": f"Unexpected error: {type(e).__name__}: {e}",

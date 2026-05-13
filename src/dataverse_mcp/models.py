@@ -191,6 +191,21 @@ class QueryTableInput(DataverseEnvironmentInput):
             "Example: ['primarycontactid']"
         ),
     )
+    count: bool = Field(
+        default=False,
+        description=(
+            "When True, includes total_count in the response with the number of "
+            "matching records. Counts are capped at 5,000 by Dataverse."
+        ),
+    )
+    include_formatted_values: bool = Field(
+        default=False,
+        description=(
+            "When True, returns human-readable formatted values alongside raw values "
+            "(e.g., option set labels, formatted dates). Formatted values appear as "
+            "'fieldname@OData.Community.Display.V1.FormattedValue' in each record."
+        ),
+    )
 
 
 class GetRecordInput(DataverseEnvironmentInput):
@@ -222,6 +237,62 @@ class GetRecordInput(DataverseEnvironmentInput):
         description=(
             "Columns to return. Omit to return default columns. "
             "Specify to reduce payload (e.g., ['name', 'telephone1'])"
+        ),
+    )
+    include_formatted_values: bool = Field(
+        default=False,
+        description=(
+            "When True, returns human-readable formatted values alongside raw values "
+            "(e.g., option set labels, formatted dates). Formatted values appear as "
+            "'fieldname@OData.Community.Display.V1.FormattedValue' in the record."
+        ),
+    )
+
+
+class AggregateTableInput(DataverseEnvironmentInput):
+    """Input for aggregating data from a Dataverse table using $apply."""
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    apply: str = Field(
+        ...,
+        description=(
+            "OData $apply expression. Examples: "
+            "\"groupby((statecode),aggregate(accountid with count as total))\" — count by status; "
+            "\"aggregate(revenue with sum as total_revenue)\" — sum a column; "
+            "\"groupby((ownerid))\" — distinct owner IDs. "
+            "Works on up to 50,000 records."
+        ),
+        min_length=1,
+    )
+    filter: str | None = Field(
+        default=None,
+        description="OData $filter expression to narrow records before aggregation.",
+    )
+
+
+class CountRecordsInput(DataverseEnvironmentInput):
+    """Input for counting records in a Dataverse table."""
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "OData $filter expression to count only matching records. "
+            "Note: the count is always capped at 5,000 by Dataverse."
         ),
     )
 

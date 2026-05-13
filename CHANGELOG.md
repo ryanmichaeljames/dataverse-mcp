@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dataverse_count_records` tool — count records in any table with optional `$filter`, returns `total_count` and `capped` flag (counts are capped at 5,000 by Dataverse)
+- `dataverse_aggregate_table` tool — aggregate data using OData `$apply` expressions (groupby, sum, avg, min, max, count, distinct values); works on up to 50,000 records
+- `count` parameter on `dataverse_query_table` — when `True`, fetches total matching record count alongside the page of results
+- `include_formatted_values` parameter on `dataverse_query_table` and `dataverse_get_record` — when `True`, adds `Prefer: odata.include-annotations` header to return human-readable formatted values (option labels, dates, lookup display names) alongside raw field values
+
 ### Fixed
 - `dataverse_check_relationship_eligibility` was calling `POST /api/data/v9.2/{ActionName}` (no parentheses), which returns 404; the correct Dataverse Web API format for unbound actions is `POST /api/data/v9.2/{ActionName}()` — added `()` suffix to all three action URLs (`CanBeReferenced()`, `CanBeReferencing()`, `CanManyToMany()`)
 - `dataverse_get_column` no longer URL-encodes `column_logical_name` inside the OData `$filter` string literal; it now escapes single quotes per OData rules to avoid double-encoding and incorrect matching

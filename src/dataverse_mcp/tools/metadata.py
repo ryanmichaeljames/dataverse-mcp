@@ -86,7 +86,13 @@ def _escape_odata_string_literal(value: str) -> str:
 
 
 def _to_bool(value: object) -> bool:
-    """Coerce Dataverse action payload values to bool."""
+    """Coerce bool-ish Dataverse values.
+
+    - bool values are returned as-is
+    - numeric values are true when non-zero
+    - strings are true for 'true', '1', or 'yes' (case-insensitive)
+    - all other values are false
+    """
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)):
@@ -94,6 +100,14 @@ def _to_bool(value: object) -> bool:
     if isinstance(value, str):
         return value.strip().lower() in {"true", "1", "yes"}
     return False
+
+
+def _extract_action_bool(result: dict, result_key: str) -> bool:
+    """Extract and coerce Dataverse action results that may be wrapped."""
+    raw = result.get(result_key, result.get("value", result))
+    if isinstance(raw, dict):
+        raw = raw.get("Value", raw.get("value", raw))
+    return _to_bool(raw)
 
 
 @mcp.tool(
@@ -853,10 +867,7 @@ async def dataverse_check_relationship_eligibility(
         )
         response.raise_for_status()
         result = response.json()
-        raw = result.get(result_key, result.get("value", result))
-        if isinstance(raw, dict):
-            raw = raw.get("Value", raw.get("value", raw))
-        eligible = _to_bool(raw)
+        eligible = _extract_action_bool(result, result_key)
         return json.dumps({
             "table_logical_name": params.table_logical_name,
             "check_type": params.check_type,

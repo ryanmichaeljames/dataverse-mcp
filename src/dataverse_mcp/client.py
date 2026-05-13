@@ -194,7 +194,9 @@ async def paginate_records(
     """
     records: list[dict] = []
     next_url: str | None = url
-    while next_url and (top is None or len(records) < top):
+    while next_url:
+        if top is not None and len(records) >= top:
+            break
         response = await http_client.get(next_url, headers=headers)
         response.raise_for_status()
         body = response.json()
@@ -202,7 +204,7 @@ async def paginate_records(
             records.append(item)
             if top is not None and len(records) >= top:
                 break
-        next_url = body.get("@odata.nextLink") if (top is None or len(records) < top) else None
+        next_url = body.get("@odata.nextLink")
     return records
 
 

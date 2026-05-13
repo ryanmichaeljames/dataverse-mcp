@@ -304,7 +304,35 @@ class CountRecordsInput(DataverseEnvironmentInput):
 # ---------------------------------------------------------------------------
 
 
-class ListTablesInput(DataverseEnvironmentInput):
+class MetadataReadInput(DataverseEnvironmentInput):
+    """Base for metadata read tools — adds cache-bypass support."""
+
+    consistency_strong: bool = Field(
+        default=False,
+        description=(
+            "When True, adds the 'Consistency: Strong' request header, bypassing "
+            "Dataverse's 30-second metadata cache. Use immediately after creating or "
+            "updating metadata to ensure the latest schema is returned. Incurs a "
+            "performance penalty; omit in normal read scenarios."
+        ),
+    )
+
+
+class MetadataWriteInput(DataverseEnvironmentInput):
+    """Base for metadata write tools — adds solution association support."""
+
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Unique name of an unmanaged solution to associate this metadata change with "
+            "(e.g., 'MySolution'). When provided, Dataverse automatically adds the "
+            "created or updated component to that solution. Leave unset to create "
+            "components outside of any solution."
+        ),
+    )
+
+
+class ListTablesInput(MetadataReadInput):
     """Input for listing available tables/entities in the environment."""
 
     filter: str | None = Field(
@@ -325,7 +353,7 @@ class ListTablesInput(DataverseEnvironmentInput):
     )
 
 
-class GetTableMetadataInput(DataverseEnvironmentInput):
+class GetTableMetadataInput(MetadataReadInput):
     """Input for retrieving detailed metadata for a specific table."""
 
     table_name: str = Field(
@@ -338,7 +366,7 @@ class GetTableMetadataInput(DataverseEnvironmentInput):
     )
 
 
-class ListColumnsInput(DataverseEnvironmentInput):
+class ListColumnsInput(MetadataReadInput):
     """Input for listing column (attribute) definitions for a table."""
 
     table_logical_name: str = Field(
@@ -370,7 +398,7 @@ class ListColumnsInput(DataverseEnvironmentInput):
     )
 
 
-class GetColumnInput(DataverseEnvironmentInput):
+class GetColumnInput(MetadataReadInput):
     """Input for retrieving full metadata for a single table column."""
 
     table_logical_name: str = Field(
@@ -391,7 +419,7 @@ class GetColumnInput(DataverseEnvironmentInput):
     )
 
 
-class ListChoiceColumnOptionsInput(DataverseEnvironmentInput):
+class ListChoiceColumnOptionsInput(MetadataReadInput):
     """Input for listing option values for a Picklist or MultiSelectPicklist column."""
 
     table_logical_name: str = Field(
@@ -419,7 +447,7 @@ class ListChoiceColumnOptionsInput(DataverseEnvironmentInput):
 _RELATIONSHIP_TYPES = ("OneToMany", "ManyToOne", "ManyToMany")
 
 
-class ListRelationshipsInput(DataverseEnvironmentInput):
+class ListRelationshipsInput(MetadataReadInput):
     """Input for listing relationship definitions for a table or the whole environment."""
 
     table_logical_name: str | None = Field(
@@ -456,7 +484,7 @@ class ListRelationshipsInput(DataverseEnvironmentInput):
         return v
 
 
-class GetRelationshipInput(DataverseEnvironmentInput):
+class GetRelationshipInput(MetadataReadInput):
     """Input for retrieving full metadata for a single relationship by schema name."""
 
     schema_name: str = Field(
@@ -506,7 +534,7 @@ class CheckRelationshipEligibilityInput(DataverseEnvironmentInput):
 # ---------------------------------------------------------------------------
 
 
-class ListChoicesInput(DataverseEnvironmentInput):
+class ListChoicesInput(MetadataReadInput):
     """Input for listing global choice (option set) definitions in the environment."""
 
     select: list[str] | None = Field(
@@ -528,7 +556,7 @@ class ListChoicesInput(DataverseEnvironmentInput):
     )
 
 
-class GetChoiceInput(DataverseEnvironmentInput):
+class GetChoiceInput(MetadataReadInput):
     """Input for retrieving a single global choice by name or MetadataId."""
 
     name: str | None = Field(
@@ -566,7 +594,7 @@ class GetChoiceInput(DataverseEnvironmentInput):
 # ---------------------------------------------------------------------------
 
 
-class CreateTableInput(DataverseEnvironmentInput):
+class CreateTableInput(MetadataWriteInput):
     """Input for creating a new custom table in the Dataverse environment."""
 
     display_name: str = Field(
@@ -625,7 +653,7 @@ class CreateTableInput(DataverseEnvironmentInput):
         return v
 
 
-class UpdateTableInput(DataverseEnvironmentInput):
+class UpdateTableInput(MetadataWriteInput):
     """Input for updating an existing table's display metadata."""
 
     table_logical_name: str = Field(
@@ -677,7 +705,7 @@ _COLUMN_ATTRIBUTE_TYPES = (
 _COLUMN_REQUIRED_LEVELS = ("None", "Recommended", "ApplicationRequired")
 
 
-class CreateColumnInput(DataverseEnvironmentInput):
+class CreateColumnInput(MetadataWriteInput):
     """Input for adding a new column (attribute) to a Dataverse table."""
 
     table_logical_name: str = Field(
@@ -747,7 +775,7 @@ class CreateColumnInput(DataverseEnvironmentInput):
         return v
 
 
-class UpdateColumnInput(DataverseEnvironmentInput):
+class UpdateColumnInput(MetadataWriteInput):
     """Input for updating an existing column via full PUT replacement."""
 
     table_logical_name: str = Field(
@@ -796,7 +824,7 @@ class DeleteColumnInput(DataverseEnvironmentInput):
 # ---------------------------------------------------------------------------
 
 
-class CreateOneToManyRelationshipInput(DataverseEnvironmentInput):
+class CreateOneToManyRelationshipInput(MetadataWriteInput):
     """Input for creating a 1:N relationship between two tables."""
 
     schema_name: str = Field(
@@ -838,7 +866,7 @@ class CreateOneToManyRelationshipInput(DataverseEnvironmentInput):
     )
 
 
-class CreateManyToManyRelationshipInput(DataverseEnvironmentInput):
+class CreateManyToManyRelationshipInput(MetadataWriteInput):
     """Input for creating an N:N relationship and its intersect (junction) table."""
 
     schema_name: str = Field(
@@ -869,7 +897,7 @@ class CreateManyToManyRelationshipInput(DataverseEnvironmentInput):
     )
 
 
-class CreateMultiTableLookupInput(DataverseEnvironmentInput):
+class CreateMultiTableLookupInput(MetadataWriteInput):
     """Input for creating a polymorphic (multi-table) lookup column."""
 
     lookup_schema_name: str = Field(
@@ -903,7 +931,7 @@ class CreateMultiTableLookupInput(DataverseEnvironmentInput):
     )
 
 
-class UpdateRelationshipInput(DataverseEnvironmentInput):
+class UpdateRelationshipInput(MetadataWriteInput):
     """Input for updating an existing relationship via full PUT replacement."""
 
     metadata_id: str = Field(
@@ -972,7 +1000,7 @@ class ChoiceOptionItem(BaseModel):
     )
 
 
-class CreateChoiceInput(DataverseEnvironmentInput):
+class CreateChoiceInput(MetadataWriteInput):
     """Input for creating a new global choice (option set)."""
 
     name: str = Field(
@@ -998,7 +1026,7 @@ class CreateChoiceInput(DataverseEnvironmentInput):
     )
 
 
-class UpdateChoiceInput(DataverseEnvironmentInput):
+class UpdateChoiceInput(MetadataWriteInput):
     """Input for updating an existing global choice via full PUT replacement."""
 
     metadata_id: str = Field(
@@ -1041,7 +1069,7 @@ class DeleteChoiceInput(DataverseEnvironmentInput):
     )
 
 
-class AddChoiceOptionInput(DataverseEnvironmentInput):
+class AddChoiceOptionInput(MetadataWriteInput):
     """Input for adding a new option to a local or global choice."""
 
     option_set_name: str | None = Field(
@@ -1101,7 +1129,7 @@ class AddChoiceOptionInput(DataverseEnvironmentInput):
         return self
 
 
-class UpdateChoiceOptionInput(DataverseEnvironmentInput):
+class UpdateChoiceOptionInput(MetadataWriteInput):
     """Input for updating the label of an existing option in a local or global choice."""
 
     option_set_name: str | None = Field(
@@ -1158,7 +1186,7 @@ class UpdateChoiceOptionInput(DataverseEnvironmentInput):
         return self
 
 
-class DeleteChoiceOptionInput(DataverseEnvironmentInput):
+class DeleteChoiceOptionInput(MetadataWriteInput):
     """Input for removing a specific option value from a local or global choice."""
 
     option_set_name: str | None = Field(
@@ -1203,7 +1231,7 @@ class DeleteChoiceOptionInput(DataverseEnvironmentInput):
         return self
 
 
-class ReorderChoiceOptionsInput(DataverseEnvironmentInput):
+class ReorderChoiceOptionsInput(MetadataWriteInput):
     """Input for reordering all options in a local or global choice."""
 
     option_set_name: str | None = Field(

@@ -6,16 +6,6 @@
       "sourceType": "github",
       "computedHash": "67c6e536f306655d682651e68b9966c7c9a0a3f31ba8d8a3ce7e596d3b504e36"
     },
-    "dataverse-python-advanced-patterns": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "computedHash": "dd4f65b62c3b702c7dfc14a4e19caaa9ab3515e87a1d7e110482d9ba19469bd0"
-    },
-    "dataverse-python-production-code": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "computedHash": "7299422fdb42dcede45a761921656a6450c476388731288a6e5afb0303f1d25d"
-    },
     "git-commit": {
       "source": "github/awesome-copilot",
       "sourceType": "github",

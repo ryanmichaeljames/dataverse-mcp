@@ -75,6 +75,20 @@ _DEFAULT_COLUMN_SELECT = [
 _CREATE_COLUMN_RESERVED_KEYS = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
 
 
+def _build_extra_headers(
+    *,
+    solution_unique_name: str | None = None,
+    consistency_strong: bool = False,
+) -> dict[str, str] | None:
+    """Build optional extra headers for metadata API requests."""
+    extra: dict[str, str] = {}
+    if solution_unique_name:
+        extra["MSCRM.SolutionUniqueName"] = solution_unique_name
+    if consistency_strong:
+        extra["Consistency"] = "Strong"
+    return extra or None
+
+
 def _get_app_ctx(ctx: Context) -> AppContext:
     """Return the application context from the request context."""
     return ctx.request_context.lifespan_context
@@ -144,7 +158,10 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions?{urlencode(query_params, safe='$,')}"
 
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         tables = await paginate_records(url, headers, None, app_ctx.http_client)
         return json.dumps({
             "tables": tables,
@@ -199,7 +216,10 @@ async def dataverse_get_table_metadata(
     )
 
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         resp = await app_ctx.http_client.get(url, headers=headers)
         resp.raise_for_status()
         raw = resp.json()
@@ -267,7 +287,10 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     )
 
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         columns = await paginate_records(url, headers, 5000, app_ctx.http_client)
         return json.dumps({
             "columns": columns,
@@ -326,7 +349,10 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     )
 
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         columns = await paginate_records(url, headers, 1, app_ctx.http_client)
         if not columns:
             return json.dumps({
@@ -438,7 +464,10 @@ async def dataverse_list_choice_column_options(
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
 
         picklist_opts, multi_opts = await asyncio.gather(
             _fetch_picklist_options(
@@ -575,7 +604,10 @@ async def dataverse_list_relationships(
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
 
         if params.table_logical_name:
             table_enc = _url_quote(params.table_logical_name, safe="")
@@ -661,7 +693,10 @@ async def dataverse_get_relationship(
     schema_enc = _url_quote(params.schema_name, safe="")
 
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         response = await app_ctx.http_client.get(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"RelationshipDefinitions(SchemaName='{schema_enc}')",
@@ -730,7 +765,10 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     select = ",".join(raw_select) if raw_select else _DEFAULT_CHOICE_SELECT
 
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         query_params: dict[str, str] = {"$select": select}
         response = await app_ctx.http_client.get(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
@@ -798,7 +836,10 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
         path = f"GlobalOptionSetDefinitions({params.metadata_id})"
 
     try:
-        headers = await build_headers(app_ctx, base_url)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         response = await app_ctx.http_client.get(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{path}",
             headers=headers,
@@ -969,7 +1010,10 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     try:
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.post(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions",
             json=body,
@@ -1074,7 +1118,10 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
                 ),
             })
 
-        headers_ct = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers_ct = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.put(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions({metadata_id})",
@@ -1281,7 +1328,10 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     table_enc = _url_quote(params.table_logical_name, safe="")
 
     try:
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.post(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')/Attributes",
@@ -1360,7 +1410,10 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
     try:
         definition = dict(params.full_definition)
         definition.pop("@odata.context", None)
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.put(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')"
@@ -1558,7 +1611,10 @@ async def dataverse_create_one_to_many_relationship(
         return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.post(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
             json=body,
@@ -1640,7 +1696,10 @@ async def dataverse_create_many_to_many_relationship(
         return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.post(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
             json=body,
@@ -1733,7 +1792,10 @@ async def dataverse_create_multi_table_lookup(
         return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.post(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/CreatePolymorphicLookupAttribute",
@@ -1810,7 +1872,10 @@ async def dataverse_update_relationship(
     try:
         definition = dict(params.full_definition)
         definition.pop("@odata.context", None)
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.put(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/RelationshipDefinitions({params.metadata_id})",
@@ -2010,7 +2075,10 @@ async def dataverse_create_choice(
         return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.post(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
             json=body,
@@ -2068,7 +2136,10 @@ async def dataverse_update_choice(
     try:
         definition = dict(params.full_definition)
         definition.pop("@odata.context", None)
-        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
         response = await app_ctx.http_client.put(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/GlobalOptionSetDefinitions({params.metadata_id})",
@@ -2175,7 +2246,7 @@ async def dataverse_add_choice_option(
     body: dict = {
         **target_params,
         "Label": _make_label(params.label),
-        "SolutionUniqueName": None,
+        "SolutionUniqueName": params.solution_unique_name,
     }
     if params.value is not None:
         body["Value"] = params.value
@@ -2244,6 +2315,7 @@ async def dataverse_update_choice_option(
         "Value": params.value,
         "Label": _make_label(params.label),
         "MergeLabels": params.merge_labels,
+        "SolutionUniqueName": params.solution_unique_name,
     }
 
     app_ctx = _get_app_ctx(ctx)
@@ -2307,6 +2379,7 @@ async def dataverse_delete_choice_option(
     body = {
         **target_params,
         "Value": params.value,
+        "SolutionUniqueName": params.solution_unique_name,
     }
 
     app_ctx = _get_app_ctx(ctx)
@@ -2369,6 +2442,7 @@ async def dataverse_reorder_choice_options(
     body = {
         **target_params,
         "Values": params.values,
+        "SolutionUniqueName": params.solution_unique_name,
     }
 
     app_ctx = _get_app_ctx(ctx)

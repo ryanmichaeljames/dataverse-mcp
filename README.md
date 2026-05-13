@@ -6,7 +6,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, and explore Power Platform environments.
 
-Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk) and the official [PowerPlatform-Dataverse-Client](https://pypi.org/project/PowerPlatform-Dataverse-Client/) Python SDK. Communicates over **stdio** for seamless VS Code Copilot integration.
+Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** for seamless VS Code Copilot integration.
 
 ---
 
@@ -155,7 +155,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 ```json
 {
   "dataverse_url": "https://yourorg.crm.dynamics.com",
-  "table_name": "account",
+  "entity_set_name": "accounts",
   "select": ["name", "accountid"],
   "top": 10
 }
@@ -182,7 +182,7 @@ These 21 tools are registered regardless of safety guard settings.
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |
 | `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, and top |
-| `dataverse_get_record` | Get a single record by table name and GUID |
+| `dataverse_get_record` | Get a single record by entity set name and GUID |
 | `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; GET-only unless `DATAVERSE_ALLOW_WRITE=true` |
 | `dataverse_list_tables` | List available tables with optional metadata filter |
 | `dataverse_get_table_metadata` | Get full schema details for a specific table |
@@ -256,4 +256,3 @@ Restart the MCP server in VS Code after code changes to pick up the new source.
 ## License
 
 MIT
-

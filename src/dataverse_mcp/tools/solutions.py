@@ -1,19 +1,26 @@
 """Solution-related tools for the Dataverse MCP server."""
 
-import asyncio
 import json
 import logging
+from urllib.parse import urlencode
 
+import httpx
 from mcp.server.fastmcp import Context
-from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
-from dataverse_mcp.client import AppContext, get_dataverse_client
+from dataverse_mcp._app import mcp
+from dataverse_mcp.client import (
+    AppContext,
+    _DATAVERSE_API_VERSION,
+    build_headers,
+    extract_error_message,
+    paginate_records,
+    resolve_base_url,
+)
 from dataverse_mcp.models import (
     GetSolutionInput,
     ListSolutionComponentsInput,
     ListSolutionsInput,
 )
-from dataverse_mcp._app import mcp
 
 logger = logging.getLogger(__name__)
 
@@ -66,21 +73,8 @@ _DEFAULT_COMPONENT_SELECT = [
 ]
 
 
-def _get_client(ctx: Context, dataverse_url: str | None):
-    """Resolve the DataverseClient for the requested environment."""
-    app_ctx: AppContext = ctx.request_context.lifespan_context
-    return get_dataverse_client(app_ctx, dataverse_url)
-
-
-def _flatten_records(pages, limit: int) -> list[dict]:
-    """Flatten paginated Record results into a list of dicts, up to limit."""
-    records = []
-    for page in pages:
-        for record in page:
-            records.append(dict(record))
-            if len(records) >= limit:
-                return records
-    return records
+def _get_app_ctx(ctx: Context) -> AppContext:
+    return ctx.request_context.lifespan_context
 
 
 def _enrich_component_type(record: dict) -> dict:
@@ -113,37 +107,39 @@ async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> 
     Use this tool to discover which solutions exist before drilling into
     specific solution details or components.
     """
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
     select = params.select or _DEFAULT_SOLUTION_SELECT
     top = params.top
+    query_params: dict[str, str] = {
+        "$select": ",".join(select),
+        "$top": str(top),
+    }
+    if params.filter:
+        query_params["$filter"] = params.filter
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions"
+    full_url = f"{url}?{urlencode(query_params, safe='$,')}"
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            pages = client.records.get(
-                "solution",
-                select=select,
-                filter=params.filter,
-                top=top,
-            )
-            return _flatten_records(pages, top)
-
-        records = await asyncio.to_thread(_query)
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
         return json.dumps({
             "records": records,
             "count": len(records),
             "has_more": len(records) >= top,
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_solutions")
         return json.dumps({
@@ -172,33 +168,35 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
     Use this after dataverse_list_solutions to get full details for
     a specific solution.
     """
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
     select = params.select or _DEFAULT_SOLUTION_SELECT
+    headers = await build_headers(app_ctx, base_url)
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            if params.solution_id:
-                return dict(
-                    client.records.get(
-                        "solution",
-                        record_id=params.solution_id,
-                        select=select,
-                    )
-                )
-            # Query by unique name — escape single quotes for OData safety
-            escaped_name = params.solution_unique_name.replace("'", "''")
-            odata_filter = f"uniquename eq '{escaped_name}'"
-            pages = client.records.get(
-                "solution",
-                select=select,
-                filter=odata_filter,
-                top=1,
+        if params.solution_id:
+            url = (
+                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions({params.solution_id})"
+                f"?$select={','.join(select)}"
             )
-            results = _flatten_records(pages, 1)
-            return results[0] if results else None
-
-        record = await asyncio.to_thread(_query)
+            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp.raise_for_status()
+            record = resp.json()
+        else:
+            escaped_name = params.solution_unique_name.replace("'", "''")
+            query_params = {
+                "$select": ",".join(select),
+                "$filter": f"uniquename eq '{escaped_name}'",
+                "$top": "1",
+            }
+            url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions"
+            full_url = f"{url}?{urlencode(query_params, safe='$,')}"
+            records = await paginate_records(full_url, headers, 1, app_ctx.http_client)
+            record = records[0] if records else None
 
         if record is None:
             identifier = params.solution_unique_name or params.solution_id
@@ -207,17 +205,15 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
                 "message": f"Solution not found: '{identifier}'",
             })
 
+        record.pop("@odata.context", None)
         return json.dumps({"record": record})
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_solution")
         return json.dumps({
@@ -249,42 +245,41 @@ async def dataverse_list_solution_components(
     61=Web Resource, 300=Canvas App). Use dataverse_get_solution first to
     find the solution_id.
     """
-    top = params.top
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
-    # solution_id is already GUID-validated by Pydantic
+    top = params.top
     odata_filter = f"_solutionid_value eq '{params.solution_id}'"
     if params.component_type is not None:
         odata_filter += f" and componenttype eq {params.component_type}"
 
+    query_params = {
+        "$select": ",".join(_DEFAULT_COMPONENT_SELECT),
+        "$filter": odata_filter,
+        "$top": str(top),
+    }
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutioncomponents"
+    full_url = f"{url}?{urlencode(query_params, safe='$,')}"
+
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            pages = client.records.get(
-                "solutioncomponent",
-                select=_DEFAULT_COMPONENT_SELECT,
-                filter=odata_filter,
-                top=top,
-            )
-            records = _flatten_records(pages, top)
-            return [_enrich_component_type(r) for r in records]
-
-        records = await asyncio.to_thread(_query)
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
+        records = [_enrich_component_type(r) for r in records]
         return json.dumps({
             "records": records,
             "count": len(records),
             "has_more": len(records) >= top,
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_solution_components")
         return json.dumps({

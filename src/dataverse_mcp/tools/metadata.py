@@ -3,15 +3,21 @@
 import asyncio
 import json
 import logging
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlencode
 from xml.etree import ElementTree as ET
 
 import httpx
 from mcp.server.fastmcp import Context
-from PowerPlatform.Dataverse.core.errors import DataverseError, HttpError
 
 from dataverse_mcp._app import delete_tool, mcp, write_tool
-from dataverse_mcp.client import AppContext, get_bearer_token, get_dataverse_client
+from dataverse_mcp.client import (
+    AppContext,
+    _DATAVERSE_API_VERSION,
+    build_headers,
+    extract_error_message,
+    paginate_records,
+    resolve_base_url,
+)
 from dataverse_mcp.models import (
     AddChoiceOptionInput,
     CheckRelationshipEligibilityInput,
@@ -66,19 +72,56 @@ _DEFAULT_COLUMN_SELECT = [
     "IsValidForUpdate",
 ]
 
-_DATAVERSE_API_VERSION = "v9.2"
 _CREATE_COLUMN_RESERVED_KEYS = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
 
 
-def _get_client(ctx: Context, dataverse_url: str | None):
-    """Resolve the DataverseClient for the requested environment."""
-    app_ctx: AppContext = ctx.request_context.lifespan_context
-    return get_dataverse_client(app_ctx, dataverse_url)
+def _build_extra_headers(
+    *,
+    solution_unique_name: str | None = None,
+    consistency_strong: bool = False,
+) -> dict[str, str] | None:
+    """Build optional extra headers for metadata API requests."""
+    extra: dict[str, str] = {}
+    if solution_unique_name:
+        extra["MSCRM.SolutionUniqueName"] = solution_unique_name
+    if consistency_strong:
+        extra["Consistency"] = "Strong"
+    return extra or None
 
 
 def _get_app_ctx(ctx: Context) -> AppContext:
     """Return the application context from the request context."""
     return ctx.request_context.lifespan_context
+
+
+def _escape_odata_string_literal(value: str) -> str:
+    """Escape an OData single-quoted string literal value."""
+    return value.replace("'", "''")
+
+
+def _to_bool(value: object) -> bool:
+    """Coerce bool-ish Dataverse values.
+
+    - bool values are returned as-is
+    - numeric values are true when non-zero
+    - strings are true for 'true', '1', or 'yes' (case-insensitive)
+    - all other values are false
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return False
+
+
+def _extract_action_bool(result: dict, result_key: str) -> bool:
+    """Extract and coerce Dataverse action results that may be wrapped."""
+    raw = result.get(result_key, result.get("value", result))
+    if isinstance(raw, dict):
+        raw = raw.get("Value", raw.get("value", raw))
+    return _to_bool(raw)
 
 
 @mcp.tool(
@@ -101,32 +144,36 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     dataverse_query_table or inspecting their schema with
     dataverse_get_table_metadata.
     """
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
     select = params.select or _DEFAULT_TABLE_SELECT
+    query_params: dict[str, str] = {"$select": ",".join(select)}
+    if params.filter:
+        query_params["$filter"] = params.filter
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions?{urlencode(query_params, safe='$,')}"
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            return client.tables.list(
-                filter=params.filter,
-                select=select,
-            )
-
-        tables = await asyncio.to_thread(_query)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
+        tables = await paginate_records(url, headers, None, app_ctx.http_client)
         return json.dumps({
             "tables": tables,
             "count": len(tables),
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_tables")
         return json.dumps({
@@ -154,40 +201,44 @@ async def dataverse_get_table_metadata(
     understand a table's structure before querying it with
     dataverse_query_table.
     """
+    app_ctx = _get_app_ctx(ctx)
     try:
-        client = _get_client(ctx, params.dataverse_url)
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
-        def _query():
-            return client.tables.get(params.table_name)
+    table_enc = _url_quote(params.table_name, safe="")
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+        f"EntityDefinitions(LogicalName='{table_enc}')"
+        f"?$select=LogicalName,SchemaName,EntitySetName,MetadataId,"
+        f"PrimaryIdAttribute,PrimaryNameAttribute"
+    )
 
-        info = await asyncio.to_thread(_query)
-
-        if info is None:
-            return json.dumps({
-                "error": True,
-                "message": f"Table not found: '{params.table_name}'",
-            })
-
-        return json.dumps({
-            "table": {
-                "logical_name": info.logical_name,
-                "schema_name": info.schema_name,
-                "entity_set_name": info.entity_set_name,
-                "metadata_id": info.metadata_id,
-                "primary_id_attribute": info.primary_id_attribute,
-                "primary_name_attribute": info.primary_name_attribute,
-            },
-        })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    try:
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
+        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp.raise_for_status()
+        raw = resp.json()
+        table_info = {
+            "logical_name": raw.get("LogicalName"),
+            "schema_name": raw.get("SchemaName"),
+            "entity_set_name": raw.get("EntitySetName"),
+            "metadata_id": raw.get("MetadataId"),
+            "primary_id_attribute": raw.get("PrimaryIdAttribute"),
+            "primary_name_attribute": raw.get("PrimaryNameAttribute"),
+        }
+        return json.dumps({"table": table_info})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_table_metadata")
         return json.dumps({
@@ -217,38 +268,41 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     dataverse_get_column. For choice options, use
     dataverse_list_choice_column_options.
     """
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    table_enc = _url_quote(params.table_logical_name, safe="")
     select = params.select or _DEFAULT_COLUMN_SELECT
-    attr_filter = (
-        f"AttributeType eq '{params.attribute_type}'"
-        if params.attribute_type
-        else None
+    query_params: dict[str, str] = {"$select": ",".join(select)}
+    if params.attribute_type:
+        query_params["$filter"] = f"AttributeType eq '{params.attribute_type}'"
+
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
+        f"?{urlencode(query_params, safe='$,')}"
     )
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            return client.tables.list_columns(
-                params.table_logical_name,
-                select=select,
-                filter=attr_filter,
-            )
-
-        columns = await asyncio.to_thread(_query)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
+        columns = await paginate_records(url, headers, 5000, app_ctx.http_client)
         return json.dumps({
             "columns": columns,
             "count": len(columns),
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_columns")
         return json.dumps({
@@ -277,37 +331,47 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     For Picklist/MultiSelectPicklist option values, use
     dataverse_list_choice_column_options.
     """
-    col_filter = f"LogicalName eq '{params.column_logical_name}'"
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    col_filter = (
+        "LogicalName eq "
+        f"'{_escape_odata_string_literal(params.column_logical_name)}'"
+    )
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
+        f"?{urlencode({'$filter': col_filter}, safe='$,')}"
+    )
 
     try:
-        client = _get_client(ctx, params.dataverse_url)
-
-        def _query():
-            return client.tables.list_columns(
-                params.table_logical_name,
-                filter=col_filter,
-            )
-
-        columns = await asyncio.to_thread(_query)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
+        columns = await paginate_records(url, headers, 1, app_ctx.http_client)
         if not columns:
             return json.dumps({
                 "error": True,
                 "message": (
-                    f"Column '{params.column_logical_name}' not found on "
-                    f"table '{params.table_logical_name}'"
+                    f"Column '{params.column_logical_name}' not found on table "
+                    f"'{params.table_logical_name}'."
                 ),
             })
-        return json.dumps({"column": columns[0]})
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
+        column = columns[0]
+        column.pop("@odata.context", None)
+        return json.dumps({"column": column})
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_column")
         return json.dumps({
@@ -343,10 +407,11 @@ def _extract_options(items: list) -> list[dict]:
 
 async def _fetch_picklist_options(
     base_url: str,
-    bearer_token: str,
+    headers: dict,
     table: str,
     column: str,
     cast: str,
+    http_client: httpx.AsyncClient,
 ) -> list[dict]:
     """Fetch option values for a Picklist or MultiSelectPicklist column."""
     table_enc = _url_quote(table, safe="")
@@ -362,22 +427,9 @@ async def _fetch_picklist_options(
         "$filter": f"LogicalName eq '{col_enc}'",
     }
 
-    def _request():
-        with httpx.Client(timeout=30.0) as http_client:
-            response = http_client.get(
-                url,
-                params=params,
-                headers={
-                    "Authorization": f"Bearer {bearer_token}",
-                    "Accept": "application/json",
-                    "OData-MaxVersion": "4.0",
-                    "OData-Version": "4.0",
-                },
-            )
-            response.raise_for_status()
-            return response.json()
-
-    payload = await asyncio.to_thread(_request)
+    response = await http_client.get(url, params=params, headers=headers)
+    response.raise_for_status()
+    payload = response.json()
     return _extract_options(payload.get("value", []))
 
 
@@ -407,28 +459,35 @@ async def dataverse_list_choice_column_options(
     option sets shared across tables are not currently supported.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
-    scope = f"{base_url}/.default"
-
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        options = await _fetch_picklist_options(
-            base_url,
-            bearer_token,
-            params.table_logical_name,
-            params.column_logical_name,
-            "Microsoft.Dynamics.CRM.PicklistAttributeMetadata",
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
+    try:
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
 
-        if not options:
-            options = await _fetch_picklist_options(
+        picklist_opts, multi_opts = await asyncio.gather(
+            _fetch_picklist_options(
                 base_url,
-                bearer_token,
+                headers,
+                params.table_logical_name,
+                params.column_logical_name,
+                "Microsoft.Dynamics.CRM.PicklistAttributeMetadata",
+                app_ctx.http_client,
+            ),
+            _fetch_picklist_options(
+                base_url,
+                headers,
                 params.table_logical_name,
                 params.column_logical_name,
                 "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata",
-            )
+                app_ctx.http_client,
+            ),
+        )
+        options = picklist_opts or multi_opts
 
         if not options:
             return json.dumps({
@@ -445,27 +504,12 @@ async def dataverse_list_choice_column_options(
             "count": len(options),
         })
     except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse metadata API error: %s (status=%d)",
-            e.response.text,
-            e.response.status_code,
-        )
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
         return json.dumps({
             "error": True,
-            "message": (
-                f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}"
-            ),
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
-    except HttpError as e:
-        logger.error("Dataverse HTTP error: %s (status=%d)", e.message, e.status_code)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.status_code}: {e.message}",
-            "is_transient": e.is_transient,
-        })
-    except DataverseError as e:
-        logger.error("Dataverse error: %s", e.message)
-        return json.dumps({"error": True, "message": str(e)})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_choice_column_options")
         return json.dumps({
@@ -508,9 +552,10 @@ _REL_TYPE_SELECT = {
 
 async def _fetch_relationships_httpx(
     base_url: str,
-    bearer_token: str,
+    headers: dict,
     url_path: str,
     top: int,
+    http_client: httpx.AsyncClient,
     select: str | None = None,
 ) -> list[dict]:
     """Fetch relationship definitions from the Dataverse metadata API via httpx."""
@@ -519,22 +564,13 @@ async def _fetch_relationships_httpx(
         params["$select"] = select
     params["$top"] = top
 
-    def _request():
-        with httpx.Client(timeout=30.0) as http_client:
-            response = http_client.get(
-                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{url_path}",
-                params=params,
-                headers={
-                    "Authorization": f"Bearer {bearer_token}",
-                    "Accept": "application/json",
-                    "OData-MaxVersion": "4.0",
-                    "OData-Version": "4.0",
-                },
-            )
-            response.raise_for_status()
-            return response.json()
-
-    payload = await asyncio.to_thread(_request)
+    response = await http_client.get(
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{url_path}",
+        params=params,
+        headers=headers,
+    )
+    response.raise_for_status()
+    payload = response.json()
     return payload.get("value", [])
 
 
@@ -563,11 +599,15 @@ async def dataverse_list_relationships(
     ReferencedEntityNavigationPropertyName in OData $expand queries.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
-    scope = f"{base_url}/.default"
-
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
+    try:
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
 
         if params.table_logical_name:
             table_enc = _url_quote(params.table_logical_name, safe="")
@@ -577,23 +617,26 @@ async def dataverse_list_relationships(
                 if params.relationship_type
                 else ["OneToMany", "ManyToOne", "ManyToMany"]
             )
-            all_rels: list[dict] = []
-            for rel_type in types_to_fetch:
-                rels = await _fetch_relationships_httpx(
+            results = await asyncio.gather(*[
+                _fetch_relationships_httpx(
                     base_url,
-                    bearer_token,
+                    headers,
                     f"{base_entity}/{rel_type}Relationships",
                     params.top,
+                    app_ctx.http_client,
                     select=_REL_TYPE_SELECT[rel_type],
                 )
-                all_rels.extend(rels)
+                for rel_type in types_to_fetch
+            ])
+            all_rels: list[dict] = [r for sublist in results for r in sublist]
         else:
             # Polymorphic collection — omit $select to avoid type-specific field errors
             all_rels = await _fetch_relationships_httpx(
                 base_url,
-                bearer_token,
+                headers,
                 "RelationshipDefinitions",
                 params.top,
+                app_ctx.http_client,
             )
 
         return json.dumps({
@@ -643,29 +686,24 @@ async def dataverse_get_relationship(
     $expand queries.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     schema_enc = _url_quote(params.schema_name, safe="")
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"RelationshipDefinitions(SchemaName='{schema_enc}')",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        relationship = await asyncio.to_thread(_request)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
+        response = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"RelationshipDefinitions(SchemaName='{schema_enc}')",
+            headers=headers,
+        )
+        response.raise_for_status()
+        relationship = response.json()
         relationship.pop("@odata.context", None)
         return json.dumps({"relationship": relationship})
     except httpx.HTTPStatusError as e:
@@ -718,33 +756,27 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     to retrieve full option details for a specific choice by name or MetadataId.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     # Strip 'Options' — not selectable on the polymorphic collection type
     raw_select = [f for f in (params.select or [])] if params.select else None
     select = ",".join(raw_select) if raw_select else _DEFAULT_CHOICE_SELECT
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
         query_params: dict[str, str] = {"$select": select}
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
-                    params=query_params,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        payload = await asyncio.to_thread(_request)
+        response = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
+            params=query_params,
+            headers=headers,
+        )
+        response.raise_for_status()
+        payload = response.json()
         all_choices = payload.get("value", [])
         # API ignores $top on this endpoint — slice client-side
         top = params.top or 50
@@ -793,9 +825,10 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
     metadata_id (GUID). If both are provided, name takes precedence.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
-    scope = f"{base_url}/.default"
-
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
     if params.name:
         name_enc = _url_quote(params.name, safe="")
         path = f"GlobalOptionSetDefinitions(Name='{name_enc}')"
@@ -803,23 +836,16 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
         path = f"GlobalOptionSetDefinitions({params.metadata_id})"
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{path}",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        choice = await asyncio.to_thread(_request)
+        headers = await build_headers(
+            app_ctx, base_url,
+            extra=_build_extra_headers(consistency_strong=params.consistency_strong),
+        )
+        response = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{path}",
+            headers=headers,
+        )
+        response.raise_for_status()
+        choice = response.json()
         choice.pop("@odata.context", None)
         return json.dumps({"choice": choice})
     except httpx.HTTPStatusError as e:
@@ -862,51 +888,31 @@ async def dataverse_check_relationship_eligibility(
     Returns eligible (bool) for the requested check_type.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = str(params.dataverse_url)
-    scope = f"{base_url}/.default"
-    table_enc = _url_quote(params.table_logical_name, safe="")
-
-    check_endpoint_map = {
-        "referenced": "CanBeReferenced",
-        "referencing": "CanBeReferencing",
-        "many_to_many": "CanManyToMany",
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+    check_type_to_action = {
+        "referenced": ("CanBeReferenced", "CanBeReferenced"),
+        "referencing": ("CanBeReferencing", "CanBeReferencing"),
+        "many_to_many": ("CanManyToMany", "CanManyToMany"),
     }
-    endpoint = check_endpoint_map[params.check_type]
-
-    def _to_bool(value: object) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, (int, float)):
-            return value != 0
-        if isinstance(value, str):
-            return value.strip().lower() in {"true", "1", "yes"}
-        return False
+    action_name, result_key = check_type_to_action[params.check_type]
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')/{endpoint}",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        result = await asyncio.to_thread(_request)
-        raw = result.get(endpoint, result.get("value", result))
-        eligible = raw.get("Value", raw) if isinstance(raw, dict) else raw
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{action_name}()",
+            json={"EntityName": params.table_logical_name},
+            headers=headers,
+        )
+        response.raise_for_status()
+        result = response.json()
+        eligible = _extract_action_bool(result, result_key)
         return json.dumps({
             "table_logical_name": params.table_logical_name,
             "check_type": params.check_type,
-            "eligible": _to_bool(eligible),
+            "eligible": eligible,
         })
     except httpx.HTTPStatusError as e:
         logger.error(
@@ -999,37 +1005,22 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     body = _build_create_table_body(params)
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-    scope = f"{base_url}/.default"
-
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _request():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response
-
-        response = await asyncio.to_thread(_request)
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
+    try:
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions",
+            json=body,
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
         location = response.headers.get("OData-EntityId") or response.headers.get("location", "")
         logger.info("Created table %s — location: %s", params.schema_name, location)
         return json.dumps({
@@ -1094,37 +1085,21 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
         })
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     table_enc = _url_quote(params.table_logical_name, safe="")
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _get_definition():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        definition = await asyncio.to_thread(_get_definition)
+        headers = await build_headers(app_ctx, base_url)
+        get_resp = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')",
+            headers=headers,
+        )
+        get_resp.raise_for_status()
+        definition = get_resp.json()
         definition.pop("@odata.context", None)
 
         if params.display_name:
@@ -1143,23 +1118,17 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
                 ),
             })
 
-        def _put_definition():
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.put(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions({metadata_id})",
-                    json=definition,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_put_definition)
+        headers_ct = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.put(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions({metadata_id})",
+            json=definition,
+            headers=headers_ct,
+        )
+        response.raise_for_status()
         logger.info("Updated table %s", params.table_logical_name)
         return json.dumps({
             "updated": True,
@@ -1202,38 +1171,22 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
     delete a system table will return an error from the API.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
     table_enc = _url_quote(params.table_logical_name, safe="")
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _get_definition():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')"
-                    f"?$select=LogicalName,SchemaName,DisplayName,IsCustomEntity,IsManaged",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        definition = await asyncio.to_thread(_get_definition)
+        headers = await build_headers(app_ctx, base_url)
+        get_resp = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')"
+            f"?$select=LogicalName,SchemaName,DisplayName,IsCustomEntity,IsManaged",
+            headers=headers,
+        )
+        get_resp.raise_for_status()
+        definition = get_resp.json()
         definition.pop("@odata.context", None)
 
         # Safety check: only allow deletion of custom, unmanaged tables
@@ -1255,20 +1208,13 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
                 ),
             })
 
-        def _delete():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.delete(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_delete)
+        response = await app_ctx.http_client.delete(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')",
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
         logger.info("Deleted table %s", params.table_logical_name)
         return json.dumps({
             "deleted": True,
@@ -1319,14 +1265,6 @@ _ATTRIBUTE_TYPE_ODATA_MAP = {
     "Picklist": "Microsoft.Dynamics.CRM.PicklistAttributeMetadata",
     "MultiSelectPicklist": "Microsoft.Dynamics.CRM.MultiSelectPicklistAttributeMetadata",
 }
-
-_METADATA_HEADERS = {
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-    "OData-MaxVersion": "4.0",
-    "OData-Version": "4.0",
-}
-
 
 @write_tool(
     name="dataverse_create_column",
@@ -1382,37 +1320,27 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
         body.update(params.type_specific_properties)
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
-    scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')/Attributes",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-                return response.headers.get("OData-EntityId", "")
-
-        entity_id = await asyncio.to_thread(_post)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')/Attributes",
+            json=body,
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
+        entity_id = response.headers.get("OData-EntityId", "")
         logger.info(
             "Created column %s on table %s", params.schema_name, params.table_logical_name
         )
@@ -1471,40 +1399,29 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
     Call dataverse_publish_customizations after updating columns.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
-    scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
     column_enc = _url_quote(params.column_logical_name, safe="")
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _put():
-            with httpx.Client(timeout=60.0) as http_client:
-                definition = dict(params.full_definition)
-                definition.pop("@odata.context", None)
-                response = http_client.put(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')"
-                    f"/Attributes(LogicalName='{column_enc}')",
-                    json=definition,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_put)
+        definition = dict(params.full_definition)
+        definition.pop("@odata.context", None)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.put(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')"
+            f"/Attributes(LogicalName='{column_enc}')",
+            json=definition,
+            headers=headers,
+        )
+        response.raise_for_status()
         logger.info(
             "Updated column %s on table %s",
             params.column_logical_name,
@@ -1551,44 +1468,27 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
     Call dataverse_publish_customizations after deleting columns.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
-    scope = f"{base_url}/.default"
     table_enc = _url_quote(params.table_logical_name, safe="")
     column_enc = _url_quote(params.column_logical_name, safe="")
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _get_definition():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')"
-                    f"/Attributes(LogicalName='{column_enc}')"
-                    f"?$select=LogicalName,SchemaName,AttributeType,DisplayName,"
-                    f"IsCustomAttribute,IsManaged",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                data = response.json()
-                data.pop("@odata.context", None)
-                return data
-
-        column_def = await asyncio.to_thread(_get_definition)
+        headers = await build_headers(app_ctx, base_url)
+        get_resp = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')"
+            f"/Attributes(LogicalName='{column_enc}')"
+            f"?$select=LogicalName,SchemaName,AttributeType,DisplayName,"
+            f"IsCustomAttribute,IsManaged",
+            headers=headers,
+        )
+        get_resp.raise_for_status()
+        column_def = get_resp.json()
+        column_def.pop("@odata.context", None)
 
         # Safety check: only allow deletion of custom, unmanaged columns
         is_custom = column_def.get("IsCustomAttribute", False)
@@ -1610,21 +1510,14 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
                 ),
             })
 
-        def _delete():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.delete(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-                    f"EntityDefinitions(LogicalName='{table_enc}')"
-                    f"/Attributes(LogicalName='{column_enc}')",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_delete)
+        response = await app_ctx.http_client.delete(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')"
+            f"/Attributes(LogicalName='{column_enc}')",
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
         logger.info(
             "Deleted column %s from table %s",
             params.column_logical_name,
@@ -1712,35 +1605,24 @@ async def dataverse_create_one_to_many_relationship(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-                return response.headers.get("OData-EntityId", "")
-
-        entity_id = await asyncio.to_thread(_post)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
+            json=body,
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
+        entity_id = response.headers.get("OData-EntityId", "")
         logger.info("Created 1:N relationship %s", params.schema_name)
         return json.dumps({
             "created": True,
@@ -1808,35 +1690,24 @@ async def dataverse_create_many_to_many_relationship(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-                return response.headers.get("OData-EntityId", "")
-
-        entity_id = await asyncio.to_thread(_post)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
+            json=body,
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
+        entity_id = response.headers.get("OData-EntityId", "")
         logger.info("Created N:N relationship %s", params.schema_name)
         return json.dumps({
             "created": True,
@@ -1915,36 +1786,25 @@ async def dataverse_create_multi_table_lookup(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/CreatePolymorphicLookupAttribute",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        result = await asyncio.to_thread(_post)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/CreatePolymorphicLookupAttribute",
+            json=body,
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
+        result = response.json()
         logger.info("Created polymorphic lookup %s", params.lookup_schema_name)
         return json.dumps({
             "created": True,
@@ -2004,37 +1864,25 @@ async def dataverse_update_relationship(
     Call dataverse_publish_customizations after updating relationships.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _put():
-            definition = dict(params.full_definition)
-            definition.pop("@odata.context", None)
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.put(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/RelationshipDefinitions({params.metadata_id})",
-                    json=definition,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_put)
+        definition = dict(params.full_definition)
+        definition.pop("@odata.context", None)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.put(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/RelationshipDefinitions({params.metadata_id})",
+            json=definition,
+            headers=headers,
+        )
+        response.raise_for_status()
         logger.info("Updated relationship %s", params.metadata_id)
         return json.dumps({
             "updated": True,
@@ -2078,40 +1926,23 @@ async def dataverse_delete_relationship(
     Call dataverse_publish_customizations after deleting relationships.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _get_definition():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/RelationshipDefinitions({params.metadata_id})",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                data = response.json()
-                data.pop("@odata.context", None)
-                return data
+        headers = await build_headers(app_ctx, base_url)
 
         try:
-            relationship_def = await asyncio.to_thread(_get_definition)
+            get_resp = await app_ctx.http_client.get(
+                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                f"/RelationshipDefinitions({params.metadata_id})",
+                headers=headers,
+            )
+            get_resp.raise_for_status()
+            relationship_def = get_resp.json()
+            relationship_def.pop("@odata.context", None)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 return json.dumps({
@@ -2141,20 +1972,13 @@ async def dataverse_delete_relationship(
                 ),
             })
 
-        def _delete():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.delete(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/RelationshipDefinitions({params.metadata_id})",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_delete)
+        response = await app_ctx.http_client.delete(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/RelationshipDefinitions({params.metadata_id})",
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
         logger.info("Deleted relationship %s", params.metadata_id)
         return json.dumps({
             "deleted": True,
@@ -2245,35 +2069,23 @@ async def dataverse_create_choice(
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-                return response.headers.get("OData-EntityId", "")
-
-        entity_id = await asyncio.to_thread(_post)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
+            json=body,
+            headers=headers,
+        )
+        response.raise_for_status()
+        entity_id = response.headers.get("OData-EntityId", "")
         logger.info("Created global choice %s", params.name)
         return json.dumps({
             "created": True,
@@ -2316,37 +2128,25 @@ async def dataverse_update_choice(
     supported on GlobalOptionSetDefinitions.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _put():
-            definition = dict(params.full_definition)
-            definition.pop("@odata.context", None)
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.put(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/GlobalOptionSetDefinitions({params.metadata_id})",
-                    json=definition,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_put)
+        definition = dict(params.full_definition)
+        definition.pop("@odata.context", None)
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await app_ctx.http_client.put(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/GlobalOptionSetDefinitions({params.metadata_id})",
+            json=definition,
+            headers=headers,
+        )
+        response.raise_for_status()
         logger.info("Updated global choice %s", params.metadata_id)
         return json.dumps({
             "updated": True,
@@ -2387,35 +2187,19 @@ async def dataverse_delete_choice(
     Call dataverse_publish_customizations after deleting global choices.
     """
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _delete():
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.delete(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/GlobalOptionSetDefinitions(Name='{_url_quote(params.name)}')",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_delete)
+        headers = await build_headers(app_ctx, base_url)
+        response = await app_ctx.http_client.delete(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/GlobalOptionSetDefinitions(Name='{_url_quote(params.name)}')",
+            headers=headers,
+        )
+        response.raise_for_status()
         logger.info("Deleted global choice %s", params.name)
         return json.dumps({
             "deleted": True,
@@ -2462,41 +2246,26 @@ async def dataverse_add_choice_option(
     body: dict = {
         **target_params,
         "Label": _make_label(params.label),
-        "SolutionUniqueName": None,
+        "SolutionUniqueName": params.solution_unique_name,
     }
     if params.value is not None:
         body["Value"] = params.value
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/InsertOptionValue",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        result = await asyncio.to_thread(_post)
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/InsertOptionValue",
+            json=body,
+            headers=headers,
+        )
+        response.raise_for_status()
+        result = response.json()
         logger.info("Added option to choice (target=%s)", target_params)
         return json.dumps({
             "created": True,
@@ -2546,37 +2315,23 @@ async def dataverse_update_choice_option(
         "Value": params.value,
         "Label": _make_label(params.label),
         "MergeLabels": params.merge_labels,
+        "SolutionUniqueName": params.solution_unique_name,
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/UpdateOptionValue",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_post)
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/UpdateOptionValue",
+            json=body,
+            headers=headers,
+        )
+        response.raise_for_status()
         logger.info("Updated option %d in choice (target=%s)", params.value, target_params)
         return json.dumps({
             "updated": True,
@@ -2624,37 +2379,23 @@ async def dataverse_delete_choice_option(
     body = {
         **target_params,
         "Value": params.value,
+        "SolutionUniqueName": params.solution_unique_name,
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/DeleteOptionValue",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_post)
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/DeleteOptionValue",
+            json=body,
+            headers=headers,
+        )
+        response.raise_for_status()
         logger.info("Deleted option %d from choice (target=%s)", params.value, target_params)
         return json.dumps({
             "deleted": True,
@@ -2701,37 +2442,23 @@ async def dataverse_reorder_choice_options(
     body = {
         **target_params,
         "Values": params.values,
+        "SolutionUniqueName": params.solution_unique_name,
     }
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post():
-            with httpx.Client(timeout=60.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/OrderOption",
-                    json=body,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_post)
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/OrderOption",
+            json=body,
+            headers=headers,
+        )
+        response.raise_for_status()
         logger.info("Reordered choice options (target=%s)", target_params)
         return json.dumps({
             "reordered": True,
@@ -2785,33 +2512,19 @@ async def dataverse_publish_customizations(
     """
     if params.publish_all:
         app_ctx = _get_app_ctx(ctx)
-        base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-        if not base_url:
-            return json.dumps({
-                "error": True,
-                "message": (
-                    "No Dataverse environment URL was provided. Supply dataverse_url "
-                    "on the tool input, or set DATAVERSE_URL as a fallback."
-                ),
-            })
-
-        scope = f"{base_url}/.default"
+        try:
+            base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        except ValueError as e:
+            return json.dumps({'error': True, 'message': str(e)})
 
         try:
-            bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-            def _post_all():
-                with httpx.Client(timeout=600.0) as http_client:
-                    response = http_client.post(
-                        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishAllXml",
-                        headers={
-                            "Authorization": f"Bearer {bearer_token}",
-                            **_METADATA_HEADERS,
-                        },
-                    )
-                    response.raise_for_status()
-
-            await asyncio.to_thread(_post_all)
+            headers = await build_headers(app_ctx, base_url, include_content_type=True)
+            response = await app_ctx.http_client.post(
+                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishAllXml",
+                headers=headers,
+                timeout=600.0,
+            )
+            response.raise_for_status()
             logger.info("Published all customizations")
             return json.dumps({"published": True, "action": "PublishAllXml"})
         except httpx.TimeoutException as e:
@@ -2867,34 +2580,20 @@ async def dataverse_publish_customizations(
     parameter_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
 
     app_ctx = _get_app_ctx(ctx)
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
-
-    scope = f"{base_url}/.default"
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({'error': True, 'message': str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
-
-        def _post_xml():
-            with httpx.Client(timeout=300.0) as http_client:
-                response = http_client.post(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
-                    json={"ParameterXml": parameter_xml},
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        **_METADATA_HEADERS,
-                    },
-                )
-                response.raise_for_status()
-
-        await asyncio.to_thread(_post_xml)
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        response = await app_ctx.http_client.post(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
+            json={"ParameterXml": parameter_xml},
+            headers=headers,
+            timeout=300.0,
+        )
+        response.raise_for_status()
         logger.info("Published customizations: %s", parameter_xml)
         return json.dumps({
             "published": True,

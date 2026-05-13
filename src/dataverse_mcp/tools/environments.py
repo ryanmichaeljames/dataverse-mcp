@@ -9,12 +9,17 @@ import httpx
 from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import mcp
-from dataverse_mcp.client import AppContext, get_bearer_token
+from dataverse_mcp.client import (
+    AppContext,
+    _DATAVERSE_API_VERSION,
+    build_headers,
+    get_bearer_token,
+    resolve_base_url,
+)
 from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, RetrievePrincipalAccessInput, RetrieveUserPrivilegesInput, WhoAmIInput
 
 logger = logging.getLogger(__name__)
 
-_DATAVERSE_API_VERSION = "v9.2"
 _ENVIRONMENTS_ENDPOINT = (
     "https://api.bap.microsoft.com/providers/"
     "Microsoft.BusinessAppPlatform/scopes/admin/environments"
@@ -86,20 +91,16 @@ async def dataverse_list_environments(
         if expand_values:
             query_params["$expand"] = ",".join(expand_values)
 
-        def _query():
-            with httpx.Client(timeout=30.0) as client:
-                response = client.get(
-                    _ENVIRONMENTS_ENDPOINT,
-                    params=query_params,
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        payload = await asyncio.to_thread(_query)
+        response = await app_ctx.http_client.get(
+            _ENVIRONMENTS_ENDPOINT,
+            params=query_params,
+            headers={
+                "Authorization": f"Bearer {bearer_token}",
+                "Accept": "application/json",
+            },
+        )
+        response.raise_for_status()
+        payload = response.json()
         environments = [
             _normalize_environment(raw_environment)
             for raw_environment in payload.get("value", [])
@@ -154,36 +155,19 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
     or filtering records owned by the current user).
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(
-            get_bearer_token, app_ctx, f"{base_url}/.default"
+        headers = await build_headers(app_ctx, base_url)
+        response = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/WhoAmI",
+            headers=headers,
         )
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/WhoAmI",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        payload = await asyncio.to_thread(_request)
+        response.raise_for_status()
+        payload = response.json()
         return json.dumps({
             "UserId": payload.get("UserId"),
             "BusinessUnitId": payload.get("BusinessUnitId"),
@@ -231,36 +215,19 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
     Check 'has_more' in the response to determine if additional entries exist.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(
-            get_bearer_token, app_ctx, f"{base_url}/.default"
+        headers = await build_headers(app_ctx, base_url)
+        response = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/",
+            headers=headers,
         )
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        payload = await asyncio.to_thread(_request)
+        response.raise_for_status()
+        payload = response.json()
         all_entries = payload.get("value", [])
 
         # Apply optional substring filter
@@ -326,38 +293,21 @@ async def dataverse_retrieve_user_privileges(
     fail due to missing permissions.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     try:
-        bearer_token = await asyncio.to_thread(
-            get_bearer_token, app_ctx, f"{base_url}/.default"
+        headers = await build_headers(app_ctx, base_url)
+        response = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/systemusers({params.user_id})"
+            f"/Microsoft.Dynamics.CRM.RetrieveUserPrivileges",
+            headers=headers,
         )
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/systemusers({params.user_id})"
-                    f"/Microsoft.Dynamics.CRM.RetrieveUserPrivileges",
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        payload = await asyncio.to_thread(_request)
+        response.raise_for_status()
+        payload = response.json()
         privileges = payload.get("RolePrivileges", [])
         return json.dumps({
             "privileges": privileges,
@@ -406,42 +356,25 @@ async def dataverse_retrieve_principal_access(
     Use dataverse_get_entity_sets to discover the correct name.
     """
     app_ctx: AppContext = ctx.request_context.lifespan_context
-    base_url = params.dataverse_url or app_ctx.fallback_dataverse_url
-    if not base_url:
-        return json.dumps({
-            "error": True,
-            "message": (
-                "No Dataverse environment URL was provided. Supply dataverse_url "
-                "on the tool input, or set DATAVERSE_URL as a fallback."
-            ),
-        })
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
 
     target_ref = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{params.entity_set_name}({params.record_id})"
 
     try:
-        bearer_token = await asyncio.to_thread(
-            get_bearer_token, app_ctx, f"{base_url}/.default"
+        headers = await build_headers(app_ctx, base_url)
+        response = await app_ctx.http_client.get(
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/systemusers({params.user_id})"
+            f"/Microsoft.Dynamics.CRM.RetrievePrincipalAccess"
+            f"(Target=@tid)",
+            params={"@tid": f"{{'@odata.id':'{target_ref}'}}"},
+            headers=headers,
         )
-
-        def _request():
-            with httpx.Client(timeout=30.0) as http_client:
-                response = http_client.get(
-                    f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                    f"/systemusers({params.user_id})"
-                    f"/Microsoft.Dynamics.CRM.RetrievePrincipalAccess"
-                    f"(Target=@tid)",
-                    params={"@tid": f"{{'@odata.id':'{target_ref}'}}"},
-                    headers={
-                        "Authorization": f"Bearer {bearer_token}",
-                        "Accept": "application/json",
-                        "OData-MaxVersion": "4.0",
-                        "OData-Version": "4.0",
-                    },
-                )
-                response.raise_for_status()
-                return response.json()
-
-        payload = await asyncio.to_thread(_request)
+        response.raise_for_status()
+        payload = response.json()
         access_rights = payload.get("AccessRights", "")
 
         # Parse the bitmask string into named access rights

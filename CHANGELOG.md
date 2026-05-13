@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `dataverse_query_table` now uses Dataverse-compatible filtered count behavior (`?$filter=...&$count=true&$top=1`) when `count=true` and `filter` is provided, instead of calling `/$count` with `$filter`
+- `build_headers` now checks the in-process token cache on the event loop first and only uses `asyncio.to_thread` for token acquisition on cache miss
+
+### Changed
+- `dataverse_query_table` and `dataverse_get_record` now apply a conservative default `$select` projection (`createdon,modifiedon`) when `select` is omitted, preventing full-row payload expansion by default
+- Clarified docs to consistently describe `dataverse_get_record` and `dataverse_query_table` as taking `entity_set_name`
+
+## [2.0.0b1] - 2026-05-12
+
+### Added
+- Added `consistency_strong` option to metadata read tools
+- Added `solution_unique_name` option to metadata write tools
+- Added `dataverse_count_records` tool
+- Added `dataverse_aggregate_table` tool
+- Added `count` option to `dataverse_query_table`
+- Added `include_formatted_values` option to `dataverse_query_table` and `dataverse_get_record`
+
+### Fixed
+- Fixed `dataverse_execute_batch` `KeyError` from stale `If-None-Match` deletion
+- Fixed `dataverse_check_relationship_eligibility` action URL format (`ActionName()`)
+- Fixed `dataverse_check_relationship_eligibility` to use POST (not GET)
+- Fixed `dataverse_check_relationship_eligibility` result parsing for `{"Value": true}` payloads
+- Fixed `dataverse_get_column` filter escaping for `column_logical_name`
+- Fixed OData query option encoding (`$select`, `$filter`, `$top`)
+- Fixed `dataverse_list_tables` metadata pagination truncation
+- Fixed default `If-None-Match: null` header usage
+
+### Changed
+- Changed `.github/copilot-instructions.md` to a concise repo-specific ruleset
+- Changed HTTP layer to shared async `httpx.AsyncClient`
+- Changed `build_headers` and `paginate_records` to native async
+- Changed auth flow to use in-process bearer token cache
+- Changed `normalize_dataverse_url` to use `@functools.lru_cache`
+- Changed relationship and choice-option metadata fetches to run in parallel
+- Changed and removed duplicate `_DATAVERSE_API_VERSION` in `environments.py`
+- Changed **BREAKING** `dataverse_query_table` and `dataverse_get_record` to use `entity_set_name` instead of `table_name`
+- Changed read tools to direct Dataverse Web API via `httpx` (removed SDK dependency)
+- Changed base URL resolution behavior to avoid invalid fallback values
+
+### Removed
+- Removed **BREAKING** `powerplatform-dataverse-client` dependency
+
 ## [1.3.2] - 2026-05-11
 
 ### Fixed

@@ -6,35 +6,15 @@
       "sourceType": "github",
       "computedHash": "67c6e536f306655d682651e68b9966c7c9a0a3f31ba8d8a3ce7e596d3b504e36"
     },
-    "dataverse-python-advanced-patterns": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "computedHash": "dd4f65b62c3b702c7dfc14a4e19caaa9ab3515e87a1d7e110482d9ba19469bd0"
-    },
-    "dataverse-python-production-code": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "computedHash": "7299422fdb42dcede45a761921656a6450c476388731288a6e5afb0303f1d25d"
-    },
     "git-commit": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
       "computedHash": "2607fc60629b82b257136dd2a7a373f0a4466c0b49df7746d845d59313c99b21"
     },
-    "mcp-builder": {
-      "source": "anthropics/skills",
-      "sourceType": "github",
-      "computedHash": "f08cbdec74dba480ec5217363446dae154b7576b8c3d9b4cb17aff234f15973b"
-    },
     "microsoft-docs": {
       "source": "github/awesome-copilot",
       "sourceType": "github",
       "computedHash": "e49127ff2162330ac79bfde9e7ed1297df15be9ade09164fdebfe697153fcc36"
-    },
-    "python-mcp-server-generator": {
-      "source": "github/awesome-copilot",
-      "sourceType": "github",
-      "computedHash": "2b598920b5fdc807c9ee5b69bad23b8327c4ea5f1178c38d3a99a9e06a49e628"
     }
   }
 }

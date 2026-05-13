@@ -80,6 +80,22 @@ def _get_app_ctx(ctx: Context) -> AppContext:
     return ctx.request_context.lifespan_context
 
 
+def _escape_odata_string_literal(value: str) -> str:
+    """Escape an OData single-quoted string literal value."""
+    return value.replace("'", "''")
+
+
+def _to_bool(value: object) -> bool:
+    """Coerce Dataverse action payload values to bool."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    if isinstance(value, str):
+        return value.strip().lower() in {"true", "1", "yes"}
+    return False
+
+
 @mcp.tool(
     name="dataverse_list_tables",
     annotations={
@@ -115,7 +131,7 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        tables = await paginate_records(url, headers, 5000, app_ctx.http_client)
+        tables = await paginate_records(url, headers, None, app_ctx.http_client)
         return json.dumps({
             "tables": tables,
             "count": len(tables),
@@ -285,8 +301,10 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
         return json.dumps({"error": True, "message": str(e)})
 
     table_enc = _url_quote(params.table_logical_name, safe="")
-    col_enc = _url_quote(params.column_logical_name, safe="")
-    col_filter = f"LogicalName eq '{col_enc}'"
+    col_filter = (
+        "LogicalName eq "
+        f"'{_escape_odata_string_literal(params.column_logical_name)}'"
+    )
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
@@ -835,7 +853,10 @@ async def dataverse_check_relationship_eligibility(
         )
         response.raise_for_status()
         result = response.json()
-        eligible = bool(result.get(result_key, False))
+        raw = result.get(result_key, result.get("value", result))
+        if isinstance(raw, dict):
+            raw = raw.get("Value", raw.get("value", raw))
+        eligible = _to_bool(raw)
         return json.dumps({
             "table_logical_name": params.table_logical_name,
             "check_type": params.check_type,

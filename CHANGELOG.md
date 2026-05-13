@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `dataverse_check_relationship_eligibility` was calling `POST /api/data/v9.2/{ActionName}` (no parentheses), which returns 404; the correct Dataverse Web API format for unbound actions is `POST /api/data/v9.2/{ActionName}()` — added `()` suffix to all three action URLs (`CanBeReferenced()`, `CanBeReferencing()`, `CanManyToMany()`)
+- `dataverse_get_column` no longer URL-encodes `column_logical_name` inside the OData `$filter` string literal; it now escapes single quotes per OData rules to avoid double-encoding and incorrect matching
+- `dataverse_check_relationship_eligibility` now correctly unwraps structured action results like `{"Value": true}` before bool conversion
+- Removed default `If-None-Match: null` request header from Dataverse API calls
+- `dataverse_list_tables` now fetches all metadata pages instead of silently truncating at 5000 records
 
 ### Changed
 - Migrated all HTTP I/O to a shared `httpx.AsyncClient` with connection pooling (max 20 connections, 10 keep-alive) created once per server lifetime — eliminates per-request TCP handshake overhead

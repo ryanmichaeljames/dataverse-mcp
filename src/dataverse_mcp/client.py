@@ -173,7 +173,6 @@ async def build_headers(
         "Accept": "application/json",
         "OData-MaxVersion": "4.0",
         "OData-Version": "4.0",
-        "If-None-Match": "null",
     }
     if include_content_type:
         headers["Content-Type"] = "application/json"
@@ -185,7 +184,7 @@ async def build_headers(
 async def paginate_records(
     url: str,
     headers: dict[str, str],
-    top: int,
+    top: int | None,
     http_client: httpx.AsyncClient,
 ) -> list[dict]:
     """Asynchronously fetch pages from a Dataverse collection, stopping at top records.
@@ -195,15 +194,15 @@ async def paginate_records(
     """
     records: list[dict] = []
     next_url: str | None = url
-    while next_url and len(records) < top:
+    while next_url and (top is None or len(records) < top):
         response = await http_client.get(next_url, headers=headers)
         response.raise_for_status()
         body = response.json()
         for item in body.get("value", []):
             records.append(item)
-            if len(records) >= top:
+            if top is not None and len(records) >= top:
                 break
-        next_url = body.get("@odata.nextLink") if len(records) < top else None
+        next_url = body.get("@odata.nextLink") if (top is None or len(records) < top) else None
     return records
 
 

@@ -691,7 +691,6 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
             "Content-Type": f"multipart/mixed; boundary={batch_boundary}",
             "Accept": "multipart/mixed",
         }
-        del req_headers["If-None-Match"]
         if params.continue_on_error:
             req_headers["Prefer"] = "odata.continue-on-error"
 

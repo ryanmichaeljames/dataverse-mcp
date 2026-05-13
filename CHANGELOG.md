@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `include_formatted_values` parameter on `dataverse_query_table` and `dataverse_get_record` — when `True`, adds `Prefer: odata.include-annotations` header to return human-readable formatted values (option labels, dates, lookup display names) alongside raw field values
 
 ### Fixed
+- `dataverse_execute_batch` raised `KeyError` at runtime — orphaned `del req_headers["If-None-Match"]` was left behind after the `If-None-Match` header was removed from `build_headers` in a prior refactor; removed the stale `del`
 - `dataverse_check_relationship_eligibility` was calling `POST /api/data/v9.2/{ActionName}` (no parentheses), which returns 404; the correct Dataverse Web API format for unbound actions is `POST /api/data/v9.2/{ActionName}()` — added `()` suffix to all three action URLs (`CanBeReferenced()`, `CanBeReferencing()`, `CanManyToMany()`)
 - `dataverse_get_column` no longer URL-encodes `column_logical_name` inside the OData `$filter` string literal; it now escapes single quotes per OData rules to avoid double-encoding and incorrect matching
 - `dataverse_check_relationship_eligibility` now correctly unwraps structured action results like `{"Value": true}` before bool conversion

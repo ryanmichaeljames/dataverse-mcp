@@ -1,11 +1,6 @@
 {
   "version": 1,
   "skills": {
-    "changelog-automation": {
-      "source": "wshobson/agents",
-      "sourceType": "github",
-      "computedHash": "67c6e536f306655d682651e68b9966c7c9a0a3f31ba8d8a3ce7e596d3b504e36"
-    },
     "git-commit": {
       "source": "github/awesome-copilot",
       "sourceType": "github",

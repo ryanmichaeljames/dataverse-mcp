@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0b2] - 2026-05-15
+
 ### Fixed
 - `dataverse_query_table` now uses Dataverse-compatible filtered count behavior (`?$filter=...&$count=true&$top=1`) when `count=true` and `filter` is provided, instead of calling `/$count` with `$filter`
 - `build_headers` now checks the in-process token cache on the event loop first and only uses `asyncio.to_thread` for token acquisition on cache miss
+- `dataverse_check_relationship_eligibility` no longer returns HTTP 404 — removed erroneous trailing `()` from unbound action URL
 
 ### Changed
 - `dataverse_query_table` and `dataverse_get_record` now apply a conservative default `$select` projection (`createdon,modifiedon`) when `select` is omitted, preventing full-row payload expansion by default
 - Clarified docs to consistently describe `dataverse_get_record` and `dataverse_query_table` as taking `entity_set_name`
+- `dataverse_check_relationship_eligibility` tool description now explicitly states it should only be called before relationship creation tools, preventing agents from invoking it unnecessarily on unrelated prompts
+- `dataverse_create_one_to_many_relationship` and `dataverse_create_many_to_many_relationship` docstrings changed from mandatory pre-check instruction to optional suggestion
 
 ## [2.0.0b1] - 2026-05-12
 

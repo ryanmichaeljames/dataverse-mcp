@@ -879,8 +879,13 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
 async def dataverse_check_relationship_eligibility(
     params: CheckRelationshipEligibilityInput, ctx: Context
 ) -> str:
-    """Check whether a table can participate in a relationship.
-    Calls Dataverse relationship eligibility endpoints for the target table:
+    """Pre-validate whether a table supports a specific relationship role before
+    attempting to create a relationship. Only call this immediately before
+    dataverse_create_one_to_many_relationship or
+    dataverse_create_many_to_many_relationship — do not call it for general
+    queries, data reads, or any other purpose.
+
+    check_type options:
     - 'referenced'    — can be the primary (one) side of a 1:N
     - 'referencing'   — can be the related (many) side of a 1:N
     - 'many_to_many'  — can participate in an N:N relationship
@@ -902,7 +907,7 @@ async def dataverse_check_relationship_eligibility(
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
         response = await app_ctx.http_client.post(
-            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{action_name}()",
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{action_name}",
             json={"EntityName": params.table_logical_name},
             headers=headers,
         )
@@ -1579,8 +1584,7 @@ async def dataverse_create_one_to_many_relationship(
 ) -> str:
     """Create a 1:N relationship between two tables.
     This simultaneously creates the lookup column on the referencing (many) side.
-    Use dataverse_check_relationship_eligibility before calling this tool to
-    confirm the tables can participate in the relationship.
+    Optionally use dataverse_check_relationship_eligibility to pre-validate eligibility.
 
     Call dataverse_publish_customizations after creating relationships.
     """
@@ -1676,8 +1680,7 @@ async def dataverse_create_many_to_many_relationship(
     params: CreateManyToManyRelationshipInput, ctx: Context
 ) -> str:
     """Create an N:N relationship and its intersect (junction) table between two tables.
-    Use dataverse_check_relationship_eligibility before calling this tool to
-    confirm both tables can participate in a many-to-many relationship.
+    Optionally use dataverse_check_relationship_eligibility to pre-validate eligibility.
 
     Call dataverse_publish_customizations after creating relationships.
     """

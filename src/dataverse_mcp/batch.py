@@ -9,7 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 def build_inner_request(method: str, url: str, body: dict | None) -> str:
-    """Build the inner HTTP/1.1 request string for a single batch operation."""
+    """Build the inner HTTP/1.1 request string for a single batch operation.
+
+    Includes Content-Type and Content-Length only for write operations
+    (POST, PUT, PATCH) that carry a body. GET and DELETE requests are always
+    serialized without a body to remain OData-compliant regardless of the
+    ``body`` argument.
+    """
     inner = f"{method} {url} HTTP/1.1\r\nAccept: application/json\r\n"
     if method.upper() in ("POST", "PUT", "PATCH") and body is not None:
         body_bytes = json.dumps(body).encode("utf-8")
@@ -21,7 +27,12 @@ def build_inner_request(method: str, url: str, body: dict | None) -> str:
 
 
 def build_batch_body(operations: list, base_url: str, batch_boundary: str) -> str:
-    """Build an OData-compliant multipart/mixed batch request body."""
+    """Build an OData-compliant multipart/mixed batch request body.
+
+    Change set operations include a ``Content-ID`` header (required by
+    Dataverse) and all write operations carry ``Content-Length`` so the
+    server can parse the inner request body stream correctly.
+    """
     parts: list[str] = []
 
     ops = list(operations)
@@ -85,7 +96,10 @@ def build_batch_body(operations: list, base_url: str, batch_boundary: str) -> st
 
 
 def parse_batch_response(response_text: str, boundary: str) -> list[dict]:
-    """Parse a multipart/mixed batch response into per-operation results."""
+    """Parse a multipart/mixed batch response into per-operation results.
+
+    Returns a list of dictionaries with ``status_code`` and ``body`` keys.
+    """
     results: list[dict] = []
     parts = response_text.split(f"--{boundary}")
 

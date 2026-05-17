@@ -197,12 +197,19 @@ These 21 tools are registered regardless of safety guard settings.
 
 ### Requires `DATAVERSE_ALLOW_WRITE=true`
 
-These 16 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
+These 23 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 
 | Tool | Description |
 |------|-------------|
 | `dataverse_associate_records` | Associate two records via a collection-valued navigation property |
 | `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident) |
+| `dataverse_create_publisher` | Create a Dataverse publisher with unique name and customization prefixes |
+| `dataverse_update_publisher` | Update mutable publisher fields by publisher GUID |
+| `dataverse_create_solution` | Create a solution with display name, version, and publisher binding |
+| `dataverse_update_solution` | Update mutable solution fields by solution GUID or unique name |
+| `dataverse_update_solution_version` | Update only the version of an existing solution |
+| `dataverse_add_component_to_solution` | Add a component to a solution via the `AddSolutionComponent` action |
+| `dataverse_remove_component_from_solution` | Remove a component from a solution via the `RemoveSolutionComponent` action |
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute |
 | `dataverse_update_table` | Update an existing table's display name or description |
 | `dataverse_create_column` | Add a new typed column to a table |

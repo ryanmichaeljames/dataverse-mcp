@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dataverse_create_publisher` tool to create publishers with `uniquename`, `friendlyname`, `customizationprefix`, and `customizationoptionvalueprefix`
+- `dataverse_update_publisher` tool to update mutable publisher properties by `publisher_id`
+- `dataverse_create_solution` tool to create solutions with unique name, display name, version, and publisher binding
+- `dataverse_update_solution` tool to update mutable solution properties by `solution_id` or `solution_unique_name`
+- `dataverse_update_solution_version` tool to update only a solution's version by `solution_id` or `solution_unique_name`
+- `dataverse_add_component_to_solution` tool to add components using the Dataverse `AddSolutionComponent` action
+- `dataverse_remove_component_from_solution` tool to remove components using the Dataverse `RemoveSolutionComponent` action
+- New solution/publisher input models: `CreatePublisherInput`, `UpdatePublisherInput`, `CreateSolutionInput`, `UpdateSolutionInput`, `UpdateSolutionVersionInput`, `AddComponentToSolutionInput`, and `RemoveComponentFromSolutionInput`
+
 ## [2.0.0b2] - 2026-05-15
 
 ### Fixed

@@ -169,7 +169,7 @@ When `dataverse_url` is omitted, the server falls back to `DATAVERSE_URL` if con
 
 ### Always available
 
-These 22 tools are registered regardless of safety guard settings.
+These 24 tools are registered regardless of safety guard settings.
 
 | Tool | Description |
 |------|-------------|
@@ -184,6 +184,8 @@ These 22 tools are registered regardless of safety guard settings.
 | `dataverse_get_cloud_flows` | Get cloud flows by query, and optionally scope to a solution by ID or unique name |
 | `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, and top |
 | `dataverse_get_record` | Get a single record by entity set name and GUID |
+| `dataverse_count_records` | Count table rows with optional filter support |
+| `dataverse_aggregate_table` | Execute aggregate queries (sum, avg, min, max, countdistinct) with optional grouping |
 | `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; GET-only unless `DATAVERSE_ALLOW_WRITE=true` |
 | `dataverse_list_tables` | List available tables with optional metadata filter |
 | `dataverse_get_table_metadata` | Get full schema details for a specific table |

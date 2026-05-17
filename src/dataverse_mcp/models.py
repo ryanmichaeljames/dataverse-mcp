@@ -367,7 +367,7 @@ class RemoveComponentFromSolutionInput(_SolutionIdentifierInput):
 
     component_id: str = Field(
         ...,
-        description="GUID of the component to remove",
+        description="GUID of the underlying component to remove (RemoveSolutionComponent ComponentId)",
         min_length=1,
     )
     component_type: int = Field(

@@ -9,6 +9,7 @@ import httpx
 from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import delete_tool, mcp, write_tool
+from dataverse_mcp.batch import build_batch_body, parse_batch_response
 from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
@@ -32,7 +33,6 @@ from dataverse_mcp.models import (
     UpdateSolutionInput,
     UpdateSolutionVersionInput,
 )
-from dataverse_mcp.tools.tables import _build_batch_body, _parse_batch_response
 
 logger = logging.getLogger(__name__)
 
@@ -245,14 +245,14 @@ async def _execute_cloud_flow_state_batch(
             method="PATCH",
             url=f"/workflows({flow_id})",
             body={"statecode": statecode, "statuscode": target_statuscode},
-            change_set_id=None,
+            change_set_id="cloud_flows_state",
         )
         for flow_id in flow_ids
     ]
 
     batch_boundary = "batch_cloud_flows_state"
     batch_url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/$batch"
-    batch_body = _build_batch_body(operations, base_url, batch_boundary)
+    batch_body = build_batch_body(operations, base_url, batch_boundary)
     headers = await build_headers(app_ctx, base_url)
     request_headers = {
         **headers,
@@ -283,7 +283,7 @@ async def _execute_cloud_flow_state_batch(
     if "boundary=" in content_type:
         response_boundary = content_type.split("boundary=")[1].split(";")[0].strip()
 
-    parsed_results = _parse_batch_response(response.text, response_boundary)
+    parsed_results = parse_batch_response(response.text, response_boundary)
     results = []
     for idx, item in enumerate(parsed_results):
         flow_id = flow_ids[idx] if idx < len(flow_ids) else None
@@ -1237,7 +1237,7 @@ async def dataverse_add_component_to_solution(
     annotations={
         "title": "Remove Component From Solution",
         "readOnlyHint": False,
-        "destructiveHint": False,
+        "destructiveHint": True,
         "idempotentHint": True,
         "openWorldHint": True,
     },
@@ -1280,9 +1280,7 @@ async def dataverse_remove_component_from_solution(
 
         solution_id = solution.get("solutionid")
         body = {
-            # RemoveSolutionComponent expects a solutioncomponent entity parameter,
-            # but Dataverse resolves the underlying ComponentId from this key value.
-            "SolutionComponent": {"solutioncomponentid": params.component_id},
+            "ComponentId": params.component_id,
             "ComponentType": params.component_type,
             "SolutionUniqueName": solution_unique_name,
         }
@@ -1293,7 +1291,6 @@ async def dataverse_remove_component_from_solution(
             "removed": True,
             "solution_unique_name": solution_unique_name,
             "solution_id": solution_id,
-            "solution_component_id": params.component_id,
             "component_id": params.component_id,
             "component_type": params.component_type,
         })

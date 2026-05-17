@@ -198,7 +198,7 @@ These 22 tools are registered regardless of safety guard settings.
 
 ### Requires `DATAVERSE_ALLOW_WRITE=true`
 
-These 27 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
+These 26 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 
 | Tool | Description |
 |------|-------------|
@@ -210,7 +210,6 @@ These 27 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 | `dataverse_update_solution` | Update mutable solution fields by solution GUID or unique name |
 | `dataverse_update_solution_version` | Update only the version of an existing solution |
 | `dataverse_add_component_to_solution` | Add a component to a solution via the `AddSolutionComponent` action |
-| `dataverse_remove_component_from_solution` | Remove a component from a solution via the `RemoveSolutionComponent` action |
 | `dataverse_enable_cloud_flow` | Enable a single cloud flow by workflow ID |
 | `dataverse_batch_enable_cloud_flows` | Enable multiple cloud flows in one `$batch` request with per-item results |
 | `dataverse_disable_cloud_flow` | Disable a single cloud flow by workflow ID |
@@ -232,11 +231,12 @@ These 27 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 
 ### Requires `DATAVERSE_ALLOW_DELETE=true`
 
-These 6 tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set.
+These 7 tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set.
 
 | Tool | Description |
 |------|-------------|
 | `dataverse_disassociate_records` | Remove an association between two records |
+| `dataverse_remove_component_from_solution` | Remove a component from a solution via the `RemoveSolutionComponent` action |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data |
 | `dataverse_delete_column` | Permanently delete a custom column and all its data |
 | `dataverse_delete_relationship` | Delete a custom relationship by MetadataId |

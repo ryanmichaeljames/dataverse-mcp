@@ -8,7 +8,7 @@ from urllib.parse import urlencode
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import mcp, write_tool
+from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
@@ -1232,7 +1232,7 @@ async def dataverse_add_component_to_solution(
         })
 
 
-@write_tool(
+@delete_tool(
     name="dataverse_remove_component_from_solution",
     annotations={
         "title": "Remove Component From Solution",

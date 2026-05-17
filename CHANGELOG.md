@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_update_solution_version` tool to update only a solution's version by `solution_id` or `solution_unique_name`
 - `dataverse_add_component_to_solution` tool to add components using the Dataverse `AddSolutionComponent` action
 - `dataverse_remove_component_from_solution` tool to remove components using the Dataverse `RemoveSolutionComponent` action
-- New solution/publisher input models: `CreatePublisherInput`, `UpdatePublisherInput`, `CreateSolutionInput`, `UpdateSolutionInput`, `UpdateSolutionVersionInput`, `AddComponentToSolutionInput`, and `RemoveComponentFromSolutionInput`
+- `dataverse_get_cloud_flows` tool to retrieve cloud flows by OData query and optionally scope by solution ID or solution unique name
+- `dataverse_enable_cloud_flow` and `dataverse_disable_cloud_flow` tools to toggle a single flow state with PATCH and SetState fallback behavior
+- `dataverse_batch_enable_cloud_flows` and `dataverse_batch_disable_cloud_flows` tools to toggle flow states at scale using Dataverse `$batch` with per-item result reporting
 
 ## [2.0.0b2] - 2026-05-15
 

@@ -383,6 +383,122 @@ class RemoveComponentFromSolutionInput(_SolutionIdentifierInput):
         return v
 
 
+class ListCloudFlowsInput(DataverseEnvironmentInput):
+    """Input for listing cloud flows."""
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "Optional OData $filter expression applied to workflow rows. "
+            "When omitted, defaults to cloud-flow category filtering."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to a cloud-flow projection.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of cloud flows to return",
+        ge=1,
+        le=5000,
+    )
+    solution_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional solution GUID to scope flows to a specific solution. "
+            "Provide either this or solution_unique_name, not both."
+        ),
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional solution unique name to scope flows to a specific solution. "
+            "Provide either this or solution_id, not both."
+        ),
+    )
+
+    @field_validator("solution_id")
+    @classmethod
+    def validate_solution_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_solution_selector(self) -> "ListCloudFlowsInput":
+        if self.solution_id and self.solution_unique_name:
+            raise ValueError(
+                "Provide either solution_id or solution_unique_name, not both"
+            )
+        return self
+
+
+class SetCloudFlowStateInput(DataverseEnvironmentInput):
+    """Input for enabling or disabling a single cloud flow."""
+
+    flow_id: str = Field(
+        ...,
+        description="GUID of the cloud flow workflow row",
+        min_length=1,
+    )
+    statuscode: int | None = Field(
+        default=None,
+        description=(
+            "Optional statuscode override. If omitted, the tool uses defaults "
+            "for the requested enabled/disabled state."
+        ),
+    )
+
+    @field_validator("flow_id")
+    @classmethod
+    def validate_flow_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class BatchSetCloudFlowsStateInput(DataverseEnvironmentInput):
+    """Input for enabling or disabling cloud flows in batch."""
+
+    flow_ids: list[str] = Field(
+        ...,
+        description=(
+            "Ordered list of cloud flow workflow GUIDs to update. "
+            "Maximum 1,000 IDs."
+        ),
+        min_length=1,
+    )
+    statuscode: int | None = Field(
+        default=None,
+        description=(
+            "Optional statuscode override applied to all flow IDs in the batch."
+        ),
+    )
+    continue_on_error: bool = Field(
+        default=True,
+        description=(
+            "When True, includes Prefer: odata.continue-on-error so remaining "
+            "operations continue after failures."
+        ),
+    )
+
+    @field_validator("flow_ids")
+    @classmethod
+    def validate_flow_ids(cls, v: list[str]) -> list[str]:
+        if len(v) > 1000:
+            raise ValueError("flow_ids must not exceed 1,000 per request")
+        seen: set[str] = set()
+        for flow_id in v:
+            if not _GUID_PATTERN.match(flow_id):
+                raise ValueError(f"Invalid GUID format: '{flow_id}'")
+            lower_id = flow_id.lower()
+            if lower_id in seen:
+                raise ValueError(f"Duplicate flow_id provided: '{flow_id}'")
+            seen.add(lower_id)
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Table query tools
 # ---------------------------------------------------------------------------

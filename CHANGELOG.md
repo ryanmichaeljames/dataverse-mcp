@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0b3] - 2026-05-18
+
+### Added
+- `dataverse_create_publisher` tool to create publishers with `uniquename`, `friendlyname`, `customizationprefix`, and `customizationoptionvalueprefix`
+- `dataverse_update_publisher` tool to update mutable publisher properties by `publisher_id`
+- `dataverse_create_solution` tool to create solutions with unique name, display name, version, and publisher binding
+- `dataverse_update_solution` tool to update mutable solution properties by `solution_id` or `solution_unique_name`
+- `dataverse_update_solution_version` tool to update only a solution's version by `solution_id` or `solution_unique_name`
+- `dataverse_add_component_to_solution` tool to add components using the Dataverse `AddSolutionComponent` action
+- `dataverse_remove_component_from_solution` tool to remove components using the Dataverse `RemoveSolutionComponent` action
+- `dataverse_get_cloud_flows` tool to retrieve cloud flows by OData query and optionally scope by solution ID or solution unique name
+- `dataverse_enable_cloud_flow` and `dataverse_disable_cloud_flow` tools to toggle a single flow state with PATCH and SetState fallback behavior
+- `dataverse_batch_enable_cloud_flows` and `dataverse_batch_disable_cloud_flows` tools to toggle flow states at scale using Dataverse `$batch` with per-item result reporting
+
+### Changed
+- `dataverse_remove_component_from_solution` now requires `DATAVERSE_ALLOW_DELETE=true` (delete-gated) instead of write gating
+
 ## [2.0.0b2] - 2026-05-15
 
 ### Fixed
@@ -196,7 +213,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b3...HEAD
+[2.0.0b3]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b2...v2.0.0b3
+[2.0.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b1...v2.0.0b2
+[2.0.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.3.2...v2.0.0b1
+[1.3.2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.3.1...v1.3.2
+[1.3.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.3.0...v1.3.1
 [1.3.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.0.0...v1.1.0

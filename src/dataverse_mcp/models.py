@@ -138,6 +138,367 @@ class ListSolutionComponentsInput(DataverseEnvironmentInput):
     )
 
 
+class CreatePublisherInput(DataverseEnvironmentInput):
+    """Input for creating a publisher."""
+
+    uniquename: str = Field(
+        ...,
+        description=(
+            "Unique name for the publisher (e.g., 'contoso'). "
+            "Use lowercase logical-name style characters."
+        ),
+        min_length=1,
+    )
+    display_name: str = Field(
+        ...,
+        description="Friendly display name for the publisher",
+        min_length=1,
+    )
+    customization_prefix: str = Field(
+        ...,
+        description=(
+            "Customization prefix for publisher-owned components "
+            "(e.g., 'new')."
+        ),
+        min_length=1,
+    )
+    option_value_prefix: int = Field(
+        ...,
+        description="Customization option value prefix (e.g., 10000)",
+        ge=1,
+        le=2147483647,
+    )
+
+
+class UpdatePublisherInput(DataverseEnvironmentInput):
+    """Input for updating a publisher."""
+
+    publisher_id: str = Field(
+        ...,
+        description="GUID of the publisher to update",
+        min_length=1,
+    )
+    display_name: str | None = Field(
+        default=None,
+        description="Updated friendly display name",
+    )
+    customization_prefix: str | None = Field(
+        default=None,
+        description="Updated customization prefix",
+    )
+    option_value_prefix: int | None = Field(
+        default=None,
+        description="Updated customization option value prefix",
+        ge=1,
+        le=2147483647,
+    )
+
+    @field_validator("publisher_id")
+    @classmethod
+    def validate_publisher_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_has_updates(self) -> "UpdatePublisherInput":
+        if (
+            self.display_name is None
+            and self.customization_prefix is None
+            and self.option_value_prefix is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "display_name, customization_prefix, option_value_prefix"
+            )
+        return self
+
+
+class _SolutionIdentifierInput(DataverseEnvironmentInput):
+    """Base input requiring exactly one solution identifier."""
+
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Solution unique name. Provide either this or solution_id, not both."
+        ),
+    )
+    solution_id: str | None = Field(
+        default=None,
+        description=(
+            "Solution GUID. Provide either this or solution_unique_name, not both."
+        ),
+    )
+
+    @field_validator("solution_id")
+    @classmethod
+    def validate_solution_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_solution_identifier_provided(self) -> "_SolutionIdentifierInput":
+        if not self.solution_unique_name and not self.solution_id:
+            raise ValueError(
+                "Either solution_unique_name or solution_id must be provided"
+            )
+        if self.solution_unique_name and self.solution_id:
+            raise ValueError(
+                "Provide either solution_unique_name or solution_id, not both"
+            )
+        return self
+
+
+class CreateSolutionInput(DataverseEnvironmentInput):
+    """Input for creating a solution."""
+
+    solution_unique_name: str = Field(
+        ...,
+        description="Unique name for the solution (e.g., 'contoso_core')",
+        min_length=1,
+    )
+    display_name: str = Field(
+        ...,
+        description="Friendly display name for the solution",
+        min_length=1,
+    )
+    publisher_id: str = Field(
+        ...,
+        description="GUID of the publisher that owns this solution",
+        min_length=1,
+    )
+    version: str = Field(
+        ...,
+        description="Solution version string (typically major.minor.build.revision)",
+        min_length=1,
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional solution description",
+    )
+
+    @field_validator("publisher_id")
+    @classmethod
+    def validate_publisher_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class UpdateSolutionInput(_SolutionIdentifierInput):
+    """Input for updating solution properties."""
+
+    display_name: str | None = Field(
+        default=None,
+        description="Updated friendly display name",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Updated solution description",
+    )
+    publisher_id: str | None = Field(
+        default=None,
+        description="Updated publisher GUID",
+    )
+
+    @field_validator("publisher_id")
+    @classmethod
+    def validate_publisher_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_has_updates(self) -> "UpdateSolutionInput":
+        if (
+            self.display_name is None
+            and self.description is None
+            and self.publisher_id is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "display_name, description, publisher_id"
+            )
+        return self
+
+
+class UpdateSolutionVersionInput(_SolutionIdentifierInput):
+    """Input for updating solution version only."""
+
+    version: str = Field(
+        ...,
+        description="New solution version string",
+        min_length=1,
+    )
+
+
+class AddComponentToSolutionInput(_SolutionIdentifierInput):
+    """Input for adding a component to a solution."""
+
+    component_id: str = Field(
+        ...,
+        description="GUID of the component to add",
+        min_length=1,
+    )
+    component_type: int = Field(
+        ...,
+        description="Dataverse solution component type code",
+    )
+    add_required_components: bool = Field(
+        default=False,
+        description="Whether Dataverse should include required dependencies",
+    )
+    do_not_include_subcomponents: bool = Field(
+        default=False,
+        description="Whether Dataverse should skip adding subcomponents",
+    )
+
+    @field_validator("component_id")
+    @classmethod
+    def validate_component_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class RemoveComponentFromSolutionInput(_SolutionIdentifierInput):
+    """Input for removing a component from a solution."""
+
+    component_id: str = Field(
+        ...,
+        description="GUID of the underlying component to remove (RemoveSolutionComponent ComponentId)",
+        min_length=1,
+    )
+    component_type: int = Field(
+        ...,
+        description="Dataverse solution component type code",
+    )
+
+    @field_validator("component_id")
+    @classmethod
+    def validate_component_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListCloudFlowsInput(DataverseEnvironmentInput):
+    """Input for listing cloud flows."""
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "Optional OData $filter expression applied to workflow rows. "
+            "When omitted, defaults to cloud-flow category filtering."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to a cloud-flow projection.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of cloud flows to return",
+        ge=1,
+        le=5000,
+    )
+    solution_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional solution GUID to scope flows to a specific solution. "
+            "Provide either this or solution_unique_name, not both."
+        ),
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional solution unique name to scope flows to a specific solution. "
+            "Provide either this or solution_id, not both."
+        ),
+    )
+
+    @field_validator("solution_id")
+    @classmethod
+    def validate_solution_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_solution_selector(self) -> "ListCloudFlowsInput":
+        if self.solution_id and self.solution_unique_name:
+            raise ValueError(
+                "Provide either solution_id or solution_unique_name, not both"
+            )
+        return self
+
+
+class SetCloudFlowStateInput(DataverseEnvironmentInput):
+    """Input for enabling or disabling a single cloud flow."""
+
+    flow_id: str = Field(
+        ...,
+        description="GUID of the cloud flow workflow row",
+        min_length=1,
+    )
+    statuscode: int | None = Field(
+        default=None,
+        description=(
+            "Optional statuscode override. If omitted, the tool uses defaults "
+            "for the requested enabled/disabled state."
+        ),
+    )
+
+    @field_validator("flow_id")
+    @classmethod
+    def validate_flow_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class BatchSetCloudFlowsStateInput(DataverseEnvironmentInput):
+    """Input for enabling or disabling cloud flows in batch."""
+
+    flow_ids: list[str] = Field(
+        ...,
+        description=(
+            "Ordered list of cloud flow workflow GUIDs to update. "
+            "Maximum 1,000 IDs."
+        ),
+        min_length=1,
+    )
+    statuscode: int | None = Field(
+        default=None,
+        description=(
+            "Optional statuscode override applied to all flow IDs in the batch."
+        ),
+    )
+    continue_on_error: bool = Field(
+        default=True,
+        description=(
+            "When True, includes Prefer: odata.continue-on-error so remaining "
+            "operations continue after failures."
+        ),
+    )
+
+    @field_validator("flow_ids")
+    @classmethod
+    def validate_flow_ids(cls, v: list[str]) -> list[str]:
+        if len(v) > 1000:
+            raise ValueError("flow_ids must not exceed 1,000 per request")
+        seen: set[str] = set()
+        for flow_id in v:
+            if not _GUID_PATTERN.match(flow_id):
+                raise ValueError(f"Invalid GUID format: '{flow_id}'")
+            lower_id = flow_id.lower()
+            if lower_id in seen:
+                raise ValueError(f"Duplicate flow_id provided: '{flow_id}'")
+            seen.add(lower_id)
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Table query tools
 # ---------------------------------------------------------------------------

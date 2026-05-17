@@ -169,7 +169,7 @@ When `dataverse_url` is omitted, the server falls back to `DATAVERSE_URL` if con
 
 ### Always available
 
-These 21 tools are registered regardless of safety guard settings.
+These 24 tools are registered regardless of safety guard settings.
 
 | Tool | Description |
 |------|-------------|
@@ -181,8 +181,11 @@ These 21 tools are registered regardless of safety guard settings.
 | `dataverse_list_solutions` | List solutions with optional OData filter and pagination |
 | `dataverse_get_solution` | Get a single solution by unique name or GUID |
 | `dataverse_list_solution_components` | List components in a solution with optional type filter |
+| `dataverse_get_cloud_flows` | Get cloud flows by query, and optionally scope to a solution by ID or unique name |
 | `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, and top |
 | `dataverse_get_record` | Get a single record by entity set name and GUID |
+| `dataverse_count_records` | Count table rows with optional filter support |
+| `dataverse_aggregate_table` | Execute aggregate queries (sum, avg, min, max, countdistinct) with optional grouping |
 | `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; GET-only unless `DATAVERSE_ALLOW_WRITE=true` |
 | `dataverse_list_tables` | List available tables with optional metadata filter |
 | `dataverse_get_table_metadata` | Get full schema details for a specific table |
@@ -197,12 +200,22 @@ These 21 tools are registered regardless of safety guard settings.
 
 ### Requires `DATAVERSE_ALLOW_WRITE=true`
 
-These 16 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
+These 26 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 
 | Tool | Description |
 |------|-------------|
 | `dataverse_associate_records` | Associate two records via a collection-valued navigation property |
 | `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident) |
+| `dataverse_create_publisher` | Create a Dataverse publisher with unique name and customization prefixes |
+| `dataverse_update_publisher` | Update mutable publisher fields by publisher GUID |
+| `dataverse_create_solution` | Create a solution with display name, version, and publisher binding |
+| `dataverse_update_solution` | Update mutable solution fields by solution GUID or unique name |
+| `dataverse_update_solution_version` | Update only the version of an existing solution |
+| `dataverse_add_component_to_solution` | Add a component to a solution via the `AddSolutionComponent` action |
+| `dataverse_enable_cloud_flow` | Enable a single cloud flow by workflow ID |
+| `dataverse_batch_enable_cloud_flows` | Enable multiple cloud flows in one `$batch` request with per-item results |
+| `dataverse_disable_cloud_flow` | Disable a single cloud flow by workflow ID |
+| `dataverse_batch_disable_cloud_flows` | Disable multiple cloud flows in one `$batch` request with per-item results |
 | `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute |
 | `dataverse_update_table` | Update an existing table's display name or description |
 | `dataverse_create_column` | Add a new typed column to a table |
@@ -220,11 +233,12 @@ These 16 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 
 ### Requires `DATAVERSE_ALLOW_DELETE=true`
 
-These 6 tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set.
+These 7 tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set.
 
 | Tool | Description |
 |------|-------------|
 | `dataverse_disassociate_records` | Remove an association between two records |
+| `dataverse_remove_component_from_solution` | Remove a component from a solution via the `RemoveSolutionComponent` action |
 | `dataverse_delete_table` | Permanently delete a custom table and all its data |
 | `dataverse_delete_column` | Permanently delete a custom column and all its data |
 | `dataverse_delete_relationship` | Delete a custom relationship by MetadataId |

@@ -245,9 +245,11 @@ async def _execute_cloud_flow_state_batch(
             method="PATCH",
             url=f"/workflows({flow_id})",
             body={"statecode": statecode, "statuscode": target_statuscode},
-            change_set_id="cloud_flows_state",
+            # Use one-op change sets so a single failing flow does not roll back
+            # all other flow updates in the same batch request.
+            change_set_id=f"cloud_flows_state_{idx}",
         )
-        for flow_id in flow_ids
+        for idx, flow_id in enumerate(flow_ids)
     ]
 
     batch_boundary = "batch_cloud_flows_state"
@@ -1280,7 +1282,11 @@ async def dataverse_remove_component_from_solution(
 
         solution_id = solution.get("solutionid")
         body = {
-            "ComponentId": params.component_id,
+            "SolutionComponent": {
+                # Dataverse RemoveSolutionComponent expects this nested entity key.
+                # For some component types, this must be the underlying object id.
+                "solutioncomponentid": params.component_id,
+            },
             "ComponentType": params.component_type,
             "SolutionUniqueName": solution_unique_name,
         }

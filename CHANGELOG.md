@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-05-18
+
+### Changed
+- Official stable release of the 2.0.0 feature set previously published as `2.0.0b3`
+
 ## [2.0.0b3] - 2026-05-18
 
 ### Added
@@ -213,7 +218,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b3...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b3...v2.0.0
 [2.0.0b3]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b2...v2.0.0b3
 [2.0.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b1...v2.0.0b2
 [2.0.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.3.2...v2.0.0b1

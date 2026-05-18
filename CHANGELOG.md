@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-05-18
+
+### Added
+- Solution and publisher lifecycle tools, including create/update operations and solution component add/remove actions
+- Cloud flow management tools for querying, single-flow enable/disable, and batch state updates with per-item results
+- New query capabilities: `dataverse_count_records`, `dataverse_aggregate_table`, and optional formatted values in record/query responses
+
+### Changed
+- Official stable release of the feature set previously published through the `2.0.0b*` prereleases
+- Read/write/delete guardrail model consolidated around server environment flags (`DATAVERSE_ALLOW_WRITE`, `DATAVERSE_ALLOW_DELETE`)
+- Dataverse HTTP layer and auth flow optimized for async execution and in-process token caching
+
+### Fixed
+- Batch request/response handling reliability, including multipart parsing and required inner-request headers
+- OData compatibility issues across filtering, count behavior, and relationship eligibility checks
+- Azure CLI token acquisition reliability when the CLI path is missing in non-login shell launches
+
+### Removed
+- **BREAKING:** `powerplatform-dataverse-client` dependency in favor of direct Dataverse Web API usage
+- **BREAKING:** Per-call write/delete preview and allow flags from tool inputs
+
 ## [2.0.0b3] - 2026-05-18
 
 ### Added
@@ -213,7 +234,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b3...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b3...v2.0.0
 [2.0.0b3]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b2...v2.0.0b3
 [2.0.0b2]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b1...v2.0.0b2
 [2.0.0b1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v1.3.2...v2.0.0b1

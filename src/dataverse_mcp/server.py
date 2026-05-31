@@ -17,6 +17,9 @@ import dataverse_mcp.tools.environments  # noqa: E402, F401
 import dataverse_mcp.tools.solutions  # noqa: E402, F401
 import dataverse_mcp.tools.tables  # noqa: E402, F401
 import dataverse_mcp.tools.metadata  # noqa: E402, F401
+import dataverse_mcp.tools.forms  # noqa: E402, F401
+import dataverse_mcp.tools.views  # noqa: E402, F401
+import dataverse_mcp.tools.apps  # noqa: E402, F401
 
 
 def main():

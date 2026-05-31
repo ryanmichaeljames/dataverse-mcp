@@ -2045,3 +2045,691 @@ class ExecuteBatchInput(DataverseEnvironmentInput):
                 seen.add(cs)
                 current_cs = cs
         return v
+
+
+# ---------------------------------------------------------------------------
+# View (savedquery) tools
+# ---------------------------------------------------------------------------
+
+
+class ViewSort(BaseModel):
+    """A single sort clause for a view's FetchXml <order>."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    attribute: str = Field(description="Logical name of the column to sort by.")
+    descending: bool = Field(
+        default=False,
+        description="True for descending (Z→A, newest first); False for ascending.",
+    )
+
+
+class ListViewsInput(DataverseEnvironmentInput):
+    """Input for listing saved views (savedqueries) in a Dataverse table."""
+
+    table_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the table to list views for (e.g. 'account'). "
+            "Omit to list views for all tables."
+        ),
+    )
+    query_type: int | None = Field(
+        default=None,
+        description=(
+            "Filter by querytype. 0 = main grid, 1 = advanced find, "
+            "2 = associated, 4 = quick find, 64 = lookup. Omit for all."
+        ),
+    )
+
+
+class GetViewInput(DataverseEnvironmentInput):
+    """Input for retrieving a single view's structured layout."""
+
+    view_id: str = Field(
+        description="GUID of the view (savedquery) to retrieve.",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("view_id")
+    @classmethod
+    def _v(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("view_id must be a valid GUID.")
+        return v.lower()
+
+
+class ValidateViewInput(DataverseEnvironmentInput):
+    """Input for validating the FetchXml/LayoutXml of a view."""
+
+    view_id: str = Field(
+        description="GUID of the view to validate.",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("view_id")
+    @classmethod
+    def _v(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("view_id must be a valid GUID.")
+        return v.lower()
+
+
+class CreateViewInput(DataverseEnvironmentInput):
+    """Input for creating a new saved view."""
+
+    table_logical_name: str = Field(
+        description="Logical name of the target table.",
+        min_length=1,
+    )
+    name: str = Field(
+        description="View name shown in the view selector.",
+        min_length=1,
+        max_length=200,
+    )
+    columns: list[str] = Field(
+        description="Ordered column logical names to show as grid columns.",
+        min_length=1,
+    )
+    sort: list[ViewSort] | None = Field(
+        default=None,
+        description="Optional ordered sort clauses.",
+    )
+    filter_fetchxml: str | None = Field(
+        default=None,
+        description="Optional raw <filter>…</filter> FetchXml snippet to embed.",
+    )
+    query_type: int = Field(
+        default=0,
+        description="View querytype. Default 0 (main grid).",
+    )
+    is_default: bool = Field(
+        default=False,
+        description="Set this as the table's default view.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional description.",
+    )
+    widths: dict[str, int] | None = Field(
+        default=None,
+        description="Per-column pixel width override, e.g. {'apl_name': 300}.",
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description="Add the new view to this solution.",
+    )
+
+
+class UpdateViewInput(DataverseEnvironmentInput):
+    """Input for updating an existing saved view."""
+
+    view_id: str = Field(
+        description="GUID of the view to update.",
+        min_length=36,
+        max_length=36,
+    )
+    name: str | None = Field(
+        default=None,
+        description="New view name (optional).",
+    )
+    columns: list[str] | None = Field(
+        default=None,
+        description=(
+            "If given, replaces the grid columns (rebuilds fetch+layout) "
+            "while preserving existing filters."
+        ),
+    )
+    sort: list[ViewSort] | None = Field(
+        default=None,
+        description="If given, replaces the sort order.",
+    )
+    filter_fetchxml: str | None = Field(
+        default=None,
+        description="If given, replaces the non-quickfind <filter> block.",
+    )
+    widths: dict[str, int] | None = Field(
+        default=None,
+        description="Per-column pixel width override.",
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description="Add the view to this solution.",
+    )
+
+    @field_validator("view_id")
+    @classmethod
+    def _v(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("view_id must be a valid GUID.")
+        return v.lower()
+
+
+class AddViewColumnInput(DataverseEnvironmentInput):
+    """Input for adding a single column to a view."""
+
+    view_id: str = Field(
+        description="GUID of the view to add a column to.",
+        min_length=36,
+        max_length=36,
+    )
+    column: str = Field(
+        description="Logical name of the column to add.",
+        min_length=1,
+    )
+    width: int | None = Field(
+        default=None,
+        ge=1,
+        description="Pixel width for the new cell (default 100).",
+    )
+    position: int | None = Field(
+        default=None,
+        ge=0,
+        description="Zero-based grid position to insert at. Omit to append.",
+    )
+    solution_unique_name: str | None = Field(default=None)
+
+    @field_validator("view_id")
+    @classmethod
+    def _v(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("view_id must be a valid GUID.")
+        return v.lower()
+
+
+class RemoveViewColumnInput(DataverseEnvironmentInput):
+    """Input for removing a single column from a view."""
+
+    view_id: str = Field(
+        description="GUID of the view to remove a column from.",
+        min_length=36,
+        max_length=36,
+    )
+    column: str = Field(
+        description="Logical name of the column to remove.",
+        min_length=1,
+    )
+    solution_unique_name: str | None = Field(default=None)
+
+    @field_validator("view_id")
+    @classmethod
+    def _v(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("view_id must be a valid GUID.")
+        return v.lower()
+
+
+# ---------------------------------------------------------------------------
+# Form tools
+# ---------------------------------------------------------------------------
+
+
+class ValidateFormInput(DataverseEnvironmentInput):
+    """Input for validating the FormXml of a form against structural XSD rules."""
+
+    form_id: str = Field(
+        description="GUID of the form to validate (e.g., 'd0e900e1-ddbf-434b-868a-fa48d45ea15f').",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("form_id")
+    @classmethod
+    def validate_form_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("form_id must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).")
+        return v.lower()
+
+
+class ListFormsInput(DataverseEnvironmentInput):
+    """Input for listing model-driven app forms."""
+
+    table_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the table to filter forms by (e.g., 'account'). "
+            "Omit to return forms for all tables."
+        ),
+    )
+    form_type: int | None = Field(
+        default=None,
+        description=(
+            "Filter by form type integer. Common values: "
+            "2 = Main, 4 = Quick View, 5 = Quick Create, 9 = Card. "
+            "Omit to return all types."
+        ),
+    )
+
+
+class GetFormInput(DataverseEnvironmentInput):
+    """Input for retrieving a single form's structured layout."""
+
+    form_id: str = Field(
+        description="GUID of the form to retrieve (e.g., 'd0e900e1-ddbf-434b-868a-fa48d45ea15f').",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("form_id")
+    @classmethod
+    def validate_form_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("form_id must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).")
+        return v.lower()
+
+
+class AddFormControlInput(DataverseEnvironmentInput):
+    """Input for adding a column control to a form."""
+
+    form_id: str = Field(
+        description="GUID of the form to update.",
+        min_length=36,
+        max_length=36,
+    )
+    table_logical_name: str = Field(
+        description=(
+            "Logical name of the table the form belongs to (e.g., 'apl_integrationrequest'). "
+            "Used to look up column metadata to determine the correct control type."
+        ),
+        min_length=1,
+    )
+    datafieldname: str = Field(
+        description="Logical name of the column to add (e.g., 'apl_requestbody').",
+        min_length=1,
+    )
+    label: str | None = Field(
+        default=None,
+        description=(
+            "Display label for the control. Defaults to the column's display name "
+            "if omitted."
+        ),
+    )
+    section_index: int = Field(
+        default=0,
+        description=(
+            "Zero-based index of the section (within the first tab) to add the control to. "
+            "Use dataverse_get_form to see the current section layout. Defaults to 0."
+        ),
+        ge=0,
+    )
+    row_index: int | None = Field(
+        default=None,
+        description=(
+            "Zero-based position within the section to insert the control. "
+            "Omit to append at the end of the section."
+        ),
+        ge=0,
+    )
+    rowspan: int | None = Field(
+        default=None,
+        description=(
+            "Number of rows the cell spans vertically (maps to 'rowspan' on <cell> per "
+            "the FormXml XSD). Omit to use the automatic default: Memo and TextArea columns "
+            "default to 3 for usable height; all other types default to 1 (no rowspan set)."
+        ),
+        ge=1,
+    )
+    disabled: bool = Field(
+        default=False,
+        description=(
+            "When True, renders the control as read-only on the form. Maps to the 'disabled' "
+            "boolean attribute on <control> in the FormXml XSD."
+        ),
+    )
+    isrequired: bool = Field(
+        default=False,
+        description=(
+            "When True, shows the required indicator on the form control. Maps to 'isrequired' "
+            "on <control> in the FormXml XSD. Distinct from the column's RequiredLevel metadata."
+        ),
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "If provided, adds the form to this solution after the update via "
+            "AddSolutionComponent (component type 60 — System Form)."
+        ),
+    )
+
+    @field_validator("form_id")
+    @classmethod
+    def validate_form_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("form_id must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).")
+        return v.lower()
+
+
+class RemoveFormControlInput(DataverseEnvironmentInput):
+    """Input for removing a column control from a form."""
+
+    form_id: str = Field(
+        description="GUID of the form to update.",
+        min_length=36,
+        max_length=36,
+    )
+    datafieldname: str = Field(
+        description="Logical name of the column whose control should be removed.",
+        min_length=1,
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "If provided, adds the form to this solution after the update via "
+            "AddSolutionComponent (component type 60 — System Form)."
+        ),
+    )
+
+    @field_validator("form_id")
+    @classmethod
+    def validate_form_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("form_id must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).")
+        return v.lower()
+
+
+# ---------------------------------------------------------------------------
+# Model-driven app (AppModule) tools
+# ---------------------------------------------------------------------------
+
+
+class ListAppsInput(DataverseEnvironmentInput):
+    """Input for listing model-driven apps."""
+
+    include_unpublished: bool = Field(
+        default=False,
+        description=(
+            "When true, uses RetrieveUnpublishedMultiple to include apps that have not "
+            "yet been published. Defaults to false (published apps only)."
+        ),
+    )
+
+
+class GetAppInput(DataverseEnvironmentInput):
+    """Input for getting a single model-driven app and its components."""
+
+    app_id: str = Field(
+        description="GUID of the app (appmoduleid) to retrieve.",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("app_id")
+    @classmethod
+    def validate_app_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("app_id must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).")
+        return v.lower()
+
+
+class CreateAppInput(DataverseEnvironmentInput):
+    """Input for creating a new model-driven app."""
+
+    name: str = Field(
+        description="Display name of the app (e.g. 'My Operations App').",
+        min_length=1,
+        max_length=100,
+    )
+    unique_name: str = Field(
+        description=(
+            "Unique name for the app. Dataverse auto-prepends the publisher prefix "
+            "(e.g. 'new_'). Use only English letters, digits, and underscores."
+        ),
+        min_length=1,
+        max_length=100,
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional description for the app.",
+    )
+    tables: list[str] | None = Field(
+        default=None,
+        description=(
+            "Logical names of tables to add as entity components and include in the "
+            "auto-generated sitemap (e.g. ['account', 'contact']). Strongly recommended — "
+            "apps without a sitemap fail validation and cannot be published."
+        ),
+    )
+    run_validate: bool = Field(
+        default=True,
+        description=(
+            "Run ValidateApp after creating. If validation errors exist, publish is skipped "
+            "unless publish_anyway=true."
+        ),
+    )
+    publish: bool = Field(
+        default=True,
+        description="Publish the app after creation (and successful validation).",
+    )
+    publish_anyway: bool = Field(
+        default=False,
+        description="Publish even when validation errors are present. Use with caution.",
+    )
+
+
+class UpdateAppInput(DataverseEnvironmentInput):
+    """Input for updating a model-driven app's mutable properties."""
+
+    app_id: str = Field(
+        description="GUID of the app to update.",
+        min_length=36,
+        max_length=36,
+    )
+    name: str | None = Field(
+        default=None,
+        description="New display name for the app.",
+        min_length=1,
+        max_length=100,
+    )
+    description: str | None = Field(
+        default=None,
+        description="New description for the app.",
+    )
+
+    @field_validator("app_id")
+    @classmethod
+    def validate_app_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("app_id must be a valid GUID.")
+        return v.lower()
+
+
+class AppComponentSpec(BaseModel):
+    """A single component to add to or remove from a model-driven app."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    type: str = Field(
+        description=(
+            "Component type. Valid values: 'table', 'form', 'view', 'chart', 'bpf', 'sitemap'. "
+            "Use 'table' with logical_name; all others require id (GUID)."
+        ),
+    )
+    id: str | None = Field(
+        default=None,
+        description="GUID of the component. Required for form, view, chart, bpf, sitemap.",
+    )
+    logical_name: str | None = Field(
+        default=None,
+        description="Table logical name. Required when type='table'.",
+    )
+
+    @model_validator(mode="after")
+    def validate_component_spec(self) -> "AppComponentSpec":
+        valid = {"table", "form", "view", "chart", "bpf", "sitemap"}
+        t = (self.type or "").lower()
+        if t not in valid:
+            raise ValueError(f"type must be one of: {', '.join(sorted(valid))}")
+        if t == "table":
+            if not self.logical_name:
+                raise ValueError("logical_name is required when type='table'.")
+        else:
+            if not self.id:
+                raise ValueError(f"id is required when type='{t}'.")
+            if not _GUID_PATTERN.match(self.id):
+                raise ValueError("id must be a valid GUID.")
+        return self
+
+
+class AddAppComponentsInput(DataverseEnvironmentInput):
+    """Input for adding components to a model-driven app."""
+
+    app_id: str = Field(
+        description="GUID of the app to add components to.",
+        min_length=36,
+        max_length=36,
+    )
+    components: list[AppComponentSpec] = Field(
+        description=(
+            "Components to add. Each has type and either id (GUID) or logical_name (for tables). "
+            "Use dataverse_get_app to see current components before adding."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("app_id")
+    @classmethod
+    def validate_app_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("app_id must be a valid GUID.")
+        return v.lower()
+
+
+class RemoveAppComponentsInput(DataverseEnvironmentInput):
+    """Input for removing components from a model-driven app."""
+
+    app_id: str = Field(
+        description="GUID of the app to remove components from.",
+        min_length=36,
+        max_length=36,
+    )
+    components: list[AppComponentSpec] = Field(
+        description=(
+            "Components to remove. Use object_id values from dataverse_get_app. "
+            "Each has type and either id (GUID) or logical_name (for tables)."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("app_id")
+    @classmethod
+    def validate_app_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("app_id must be a valid GUID.")
+        return v.lower()
+
+
+class SetAppSitemapInput(DataverseEnvironmentInput):
+    """Input for creating or replacing a model-driven app's sitemap."""
+
+    app_id: str = Field(
+        description="GUID of the app whose sitemap to create or update.",
+        min_length=36,
+        max_length=36,
+    )
+    tables: list[str] | None = Field(
+        default=None,
+        description=(
+            "Flat list of table logical names — auto-generates one Area with one Group. "
+            "Mutually exclusive with areas. Example: ['account', 'contact', 'opportunity']."
+        ),
+    )
+    areas: list[dict] | None = Field(
+        default=None,
+        description=(
+            "Structured sitemap as a list of area dicts. Each area: "
+            "{title: str, id?: str, groups: [{title: str, id?: str, subareas: "
+            "[{entity?: str, url?: str, title?: str, id?: str}]}]}. "
+            "Mutually exclusive with tables."
+        ),
+    )
+    area_title: str = Field(
+        default="Main",
+        description="Title for the auto-generated area (only used when tables is provided).",
+    )
+    group_title: str = Field(
+        default="Workspace",
+        description="Title for the auto-generated group (only used when tables is provided).",
+    )
+
+    @field_validator("app_id")
+    @classmethod
+    def validate_app_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("app_id must be a valid GUID.")
+        return v.lower()
+
+    @model_validator(mode="after")
+    def validate_tables_or_areas(self) -> "SetAppSitemapInput":
+        if not self.tables and not self.areas:
+            raise ValueError("Supply either tables or areas.")
+        if self.tables and self.areas:
+            raise ValueError("Supply tables or areas, not both.")
+        return self
+
+
+class ValidateAppInput(DataverseEnvironmentInput):
+    """Input for validating a model-driven app."""
+
+    app_id: str = Field(
+        description="GUID of the app to validate.",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("app_id")
+    @classmethod
+    def validate_app_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("app_id must be a valid GUID.")
+        return v.lower()
+
+
+class PublishAppInput(DataverseEnvironmentInput):
+    """Input for publishing a model-driven app."""
+
+    app_id: str = Field(
+        description="GUID of the app to publish.",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("app_id")
+    @classmethod
+    def validate_app_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("app_id must be a valid GUID.")
+        return v.lower()
+
+
+class AssignAppRoleInput(DataverseEnvironmentInput):
+    """Input for assigning or removing a security role from a model-driven app."""
+
+    app_id: str = Field(
+        description="GUID of the app.",
+        min_length=36,
+        max_length=36,
+    )
+    role_id: str = Field(
+        description="GUID of the security role to associate or disassociate.",
+        min_length=36,
+        max_length=36,
+    )
+    action: str = Field(
+        description="'add' to grant the role access to the app; 'remove' to revoke it.",
+    )
+
+    @field_validator("app_id", "role_id")
+    @classmethod
+    def validate_guids(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("Must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).")
+        return v.lower()
+
+    @field_validator("action")
+    @classmethod
+    def validate_action(cls, v: str) -> str:
+        if v.lower() not in {"add", "remove"}:
+            raise ValueError("action must be 'add' or 'remove'.")
+        return v.lower()

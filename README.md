@@ -169,7 +169,7 @@ When `dataverse_url` is omitted, the server falls back to `DATAVERSE_URL` if con
 
 ### Always available
 
-These 33 tools are registered regardless of safety guard settings.
+These 34 tools are registered regardless of safety guard settings.
 
 | Tool | Description |
 |------|-------------|
@@ -197,6 +197,7 @@ These 33 tools are registered regardless of safety guard settings.
 | `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship before creating one |
 | `dataverse_list_choices` | List all global choice (option set) definitions in the environment |
 | `dataverse_get_choice` | Get a specific global choice by name or MetadataId, including all option values |
+| `dataverse_list_plugin_type_statistics` | List runtime performance statistics (execution count, failure rate, crash metrics) for plug-in types |
 | `dataverse_list_forms` | List model-driven app forms for a table with optional form type filter |
 | `dataverse_get_form` | Get a form's layout as a structured tabs → sections → controls tree |
 | `dataverse_validate_formxml` | Validate a form's FormXml against structural XSD rules |

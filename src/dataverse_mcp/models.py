@@ -2733,3 +2733,45 @@ class AssignAppRoleInput(DataverseEnvironmentInput):
         if v.lower() not in {"add", "remove"}:
             raise ValueError("action must be 'add' or 'remove'.")
         return v.lower()
+
+
+# ---------------------------------------------------------------------------
+# Plugin performance tools
+# ---------------------------------------------------------------------------
+
+
+class ListPluginTypeStatisticsInput(DataverseEnvironmentInput):
+    """Input for listing PluginTypeStatistic records."""
+
+    plugin_type_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the plug-in type to filter by "
+            "(e.g. 'a1b2c3d4-0000-0000-0000-000000000000'). "
+            "Omit to return statistics for all plug-in types."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
+    )
+    include_plugin_type_details: bool = Field(
+        default=False,
+        description=(
+            "When true, expands the plugintypeid lookup to include the plug-in "
+            "type name, typename, and assemblyname."
+        ),
+    )
+
+    @field_validator("plugin_type_id")
+    @classmethod
+    def _validate_plugin_type_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("plugin_type_id must be a valid GUID.")
+        return v.lower()

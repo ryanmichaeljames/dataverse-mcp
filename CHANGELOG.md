@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_list_plugin_type_statistics` tool to query runtime performance statistics for Dataverse plug-in types; returns execution count, failure rate, crash metrics, and worker-process termination contribution percentages with optional expansion to plug-in type name and assembly
 - Form tools: `dataverse_list_forms`, `dataverse_get_form` (returns structured tabs → sections → controls tree), and `dataverse_validate_formxml` for read-only form inspection
 - Form write tools (require `DATAVERSE_ALLOW_WRITE=true`): `dataverse_add_form_control` (auto-resolves classid from column metadata) and `dataverse_remove_form_control`
 - View tools: `dataverse_list_views`, `dataverse_get_view` (returns FetchXml, LayoutXml, and column list), and `dataverse_validate_view` for read-only view inspection

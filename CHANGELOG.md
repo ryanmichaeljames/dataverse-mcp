@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Form tools: `dataverse_list_forms`, `dataverse_get_form` (returns structured tabs → sections → controls tree), and `dataverse_validate_formxml` for read-only form inspection
+- Form write tools (require `DATAVERSE_ALLOW_WRITE=true`): `dataverse_add_form_control` (auto-resolves classid from column metadata) and `dataverse_remove_form_control`
+- View tools: `dataverse_list_views`, `dataverse_get_view` (returns FetchXml, LayoutXml, and column list), and `dataverse_validate_view` for read-only view inspection
+- View write tools (require `DATAVERSE_ALLOW_WRITE=true`): `dataverse_create_view`, `dataverse_update_view`, `dataverse_add_view_column`, and `dataverse_remove_view_column`
+- Model-driven app tools: `dataverse_list_apps`, `dataverse_get_app` (returns grouped component list via RetrieveAppComponents), and `dataverse_validate_app`
+- App write tools (require `DATAVERSE_ALLOW_WRITE=true`): `dataverse_create_app` (auto-generates sitemap and adds entity components), `dataverse_update_app`, `dataverse_add_app_components`, `dataverse_remove_app_components`, `dataverse_set_app_sitemap`, `dataverse_publish_app`, and `dataverse_assign_app_role`
+
 ## [2.0.0] - 2026-05-18
 
 ### Added

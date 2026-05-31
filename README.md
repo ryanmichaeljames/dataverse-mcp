@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/dataverse-mcp)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, and explore Power Platform environments.
+An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, manage model-driven app forms, views, and apps, and explore Power Platform environments.
 
 Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** for seamless VS Code Copilot integration.
 
@@ -169,7 +169,7 @@ When `dataverse_url` is omitted, the server falls back to `DATAVERSE_URL` if con
 
 ### Always available
 
-These 24 tools are registered regardless of safety guard settings.
+These 33 tools are registered regardless of safety guard settings.
 
 | Tool | Description |
 |------|-------------|
@@ -197,10 +197,19 @@ These 24 tools are registered regardless of safety guard settings.
 | `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship before creating one |
 | `dataverse_list_choices` | List all global choice (option set) definitions in the environment |
 | `dataverse_get_choice` | Get a specific global choice by name or MetadataId, including all option values |
+| `dataverse_list_forms` | List model-driven app forms for a table with optional form type filter |
+| `dataverse_get_form` | Get a form's layout as a structured tabs → sections → controls tree |
+| `dataverse_validate_formxml` | Validate a form's FormXml against structural XSD rules |
+| `dataverse_list_views` | List saved views (savedquery records) for a table with optional query type filter |
+| `dataverse_get_view` | Get a view's FetchXml, LayoutXml, and column list |
+| `dataverse_validate_view` | Validate a view's FetchXml and LayoutXml against structural rules |
+| `dataverse_list_apps` | List model-driven apps; set `include_unpublished=true` to include drafts |
+| `dataverse_get_app` | Get a model-driven app's properties and component list grouped by type |
+| `dataverse_validate_app` | Validate a model-driven app using ValidateApp — surfaces missing sitemap and other errors |
 
 ### Requires `DATAVERSE_ALLOW_WRITE=true`
 
-These 26 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
+These 39 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 
 | Tool | Description |
 |------|-------------|
@@ -230,6 +239,19 @@ These 26 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
 | `dataverse_update_choice_option` | Update the display label of an existing choice option |
 | `dataverse_reorder_choice_options` | Reorder all options in a global or local choice |
 | `dataverse_publish_customizations` | Publish schema changes via `PublishXml` (targeted) or `PublishAllXml` (environment-wide) |
+| `dataverse_add_form_control` | Add a column control to a form — resolves classid from column metadata automatically |
+| `dataverse_remove_form_control` | Remove a column control from a form by logical name |
+| `dataverse_create_view` | Create a new saved view with FetchXml and LayoutXml |
+| `dataverse_update_view` | Update an existing view's FetchXml, LayoutXml, name, or description |
+| `dataverse_add_view_column` | Add a column to a view's LayoutXml |
+| `dataverse_remove_view_column` | Remove a column from a view's LayoutXml |
+| `dataverse_create_app` | Create a model-driven app with auto-generated sitemap, entity components, validation, and publish |
+| `dataverse_update_app` | Update a model-driven app's name or description |
+| `dataverse_add_app_components` | Add tables, forms, views, charts, or BPFs to a model-driven app |
+| `dataverse_remove_app_components` | Remove components from a model-driven app |
+| `dataverse_set_app_sitemap` | Create or replace a model-driven app's navigation sitemap from a table list or structured areas |
+| `dataverse_publish_app` | Publish a model-driven app to make it visible to users |
+| `dataverse_assign_app_role` | Associate or disassociate a security role with a model-driven app |
 
 ### Requires `DATAVERSE_ALLOW_DELETE=true`
 

@@ -27,6 +27,7 @@ from dataverse_mcp.models import (
     GetFormInput,
     ListFormsInput,
     RemoveFormControlInput,
+    SetFormXmlInput,
     ValidateFormInput,
 )
 
@@ -839,9 +840,15 @@ async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) 
     },
 )
 async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) -> str:
-    """Validate the FormXml of a Dataverse form against structural rules from the FormXml XSD.
+    """Validate FormXml against structural rules from the FormXml XSD.
 
-    Fetches the live formxml for the given form_id and checks:
+    Two modes:
+    - Dry-run (formxml provided): validates the given XML string directly without
+      fetching from Dataverse. Use this before calling dataverse_set_formxml to
+      catch structural errors before committing.
+    - Live (formxml omitted): fetches the current formxml for form_id and validates it.
+
+    Checks performed:
     - XML is well-formed
     - <form> root with required <tabs> / <tab> / <columns> / <column> hierarchy
     - Each <column> has the required 'width' attribute
@@ -849,9 +856,8 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
     - Every <control> has a brace-wrapped GUID classid and a datafieldname
     - No duplicate datafieldname values within the form
 
-    Returns valid=true and the current control list on success, or valid=false
-    with a full list of errors. Note: write tools (add_form_control,
-    remove_form_control) run this validation automatically before every PATCH.
+    Returns valid=true and the control list on success, or valid=false with a full
+    error list. Note: all write tools run this validation automatically before every PATCH.
     """
     app_ctx = _get_app_ctx(ctx)
     try:
@@ -860,6 +866,30 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
         return json.dumps({"error": True, "message": str(e)})
 
     try:
+        # Dry-run path: validate the provided XML without hitting Dataverse
+        if params.formxml is not None:
+            errors = _validate_formxml(params.formxml)
+            if errors:
+                return json.dumps({
+                    "valid": False,
+                    "form_id": params.form_id,
+                    "error_count": len(errors),
+                    "errors": errors,
+                })
+            root = ET.fromstring(params.formxml)
+            controls = [
+                ctrl.get("datafieldname")
+                for ctrl in root.iter("control")
+                if ctrl.get("datafieldname")
+            ]
+            return json.dumps({
+                "valid": True,
+                "form_id": params.form_id,
+                "control_count": len(controls),
+                "controls": controls,
+            })
+
+        # Live path: fetch and validate the stored formxml
         headers = await build_headers(app_ctx, base_url)
         record = await _fetch_formxml(app_ctx, base_url, headers, params.form_id)
         if record is None:
@@ -878,7 +908,6 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
                 "errors": errors,
             })
 
-        # Parse structured layout for the summary
         root = ET.fromstring(formxml)
         controls = [
             ctrl.get("datafieldname")
@@ -999,4 +1028,103 @@ async def dataverse_remove_form_control(params: RemoveFormControlInput, ctx: Con
         return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
         logger.exception("Unexpected error in dataverse_remove_form_control")
+        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+
+
+# ---------------------------------------------------------------------------
+# Tool: dataverse_set_formxml
+# ---------------------------------------------------------------------------
+
+
+@write_tool(
+    name="dataverse_set_formxml",
+    annotations={
+        "title": "Set Form XML",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_set_formxml(params: SetFormXmlInput, ctx: Context) -> str:
+    """Replace a Dataverse form's FormXml with a complete new XML string, then publish.
+
+    Handles form redesign scenarios that add_form_control / remove_form_control cannot:
+    adding or removing tabs and sections, reordering controls across sections,
+    setting section labels and visibility, and setting column widths.
+
+    Steps performed:
+    1. Fetches the current formxml and saves it as formxml_backup in the response.
+    2. Validates the incoming formxml against FormXml XSD structural rules.
+       Returns validation errors without writing if the XML is invalid.
+    3. PATCHes systemforms({form_id}) with {"formxml": <new xml>}.
+    4. Publishes customizations for the form's table via PublishXml.
+
+    Use dataverse_get_form to retrieve the current FormXml as a starting point, and
+    dataverse_validate_formxml with the formxml parameter as an explicit dry-run
+    before calling this tool. formxml_backup in the response can be used to revert
+    by calling this tool again with the backup value if the result looks wrong.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = _get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+
+        # 1. Fetch current form (backup + table name for publish)
+        record = await _fetch_formxml(app_ctx, base_url, headers, params.form_id)
+        if record is None:
+            return json.dumps({"error": True, "message": f"Form '{params.form_id}' not found."})
+
+        formxml_backup = record.get("formxml") or ""
+        table_logical_name = record.get("objecttypecode", "")
+
+        # 2. Validate + PATCH (_patch_formxml raises ValueError on invalid XML)
+        try:
+            await _patch_formxml(app_ctx, base_url, headers, params.form_id, params.formxml)
+        except ValueError as e:
+            return json.dumps({"error": True, "message": str(e)})
+
+        logger.info("Set formxml for form %s", params.form_id)
+
+        # 3. Optional: add form to solution
+        if params.solution_unique_name:
+            try:
+                await _add_form_to_solution(
+                    app_ctx, base_url, headers, params.form_id, params.solution_unique_name
+                )
+                logger.info("Added form %s to solution %s", params.form_id, params.solution_unique_name)
+            except httpx.HTTPStatusError as e:
+                logger.warning(
+                    "Could not add form to solution %s: %d %s",
+                    params.solution_unique_name, e.response.status_code, e.response.text,
+                )
+
+        # 4. Publish
+        try:
+            await _publish_table(app_ctx, base_url, headers, table_logical_name)
+            logger.info("Published customizations for %s", table_logical_name)
+        except httpx.HTTPStatusError as e:
+            logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
+
+        return json.dumps({
+            "updated": True,
+            "published": True,
+            "form_id": params.form_id,
+            "table": table_logical_name,
+            "solution_unique_name": params.solution_unique_name,
+            "formxml_backup": formxml_backup,
+        })
+
+    except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
+        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
+        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
+    except Exception as e:
+        logger.exception("Unexpected error in dataverse_set_formxml")
         return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})

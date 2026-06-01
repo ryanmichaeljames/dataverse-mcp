@@ -2274,6 +2274,47 @@ class ValidateFormInput(DataverseEnvironmentInput):
         min_length=36,
         max_length=36,
     )
+    formxml: str | None = Field(
+        default=None,
+        description=(
+            "FormXml string to validate directly. When provided, validates this XML without "
+            "fetching from Dataverse — use as a dry-run before calling dataverse_set_formxml. "
+            "When omitted, fetches and validates the live form's current FormXml."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("form_id")
+    @classmethod
+    def validate_form_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("form_id must be a valid GUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).")
+        return v.lower()
+
+
+class SetFormXmlInput(DataverseEnvironmentInput):
+    """Input for replacing a form's FormXml directly."""
+
+    form_id: str = Field(
+        description="GUID of the form to update.",
+        min_length=36,
+        max_length=36,
+    )
+    formxml: str = Field(
+        description=(
+            "Complete replacement FormXml string. Must be well-formed XML with a <form> root. "
+            "Use dataverse_get_form to retrieve the current FormXml as a starting point, and "
+            "dataverse_validate_formxml with this string as a dry-run before committing."
+        ),
+        min_length=1,
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "If provided, adds the form to this solution after the update via "
+            "AddSolutionComponent (component type 60 — System Form)."
+        ),
+    )
 
     @field_validator("form_id")
     @classmethod
@@ -2774,4 +2815,278 @@ class ListPluginTypeStatisticsInput(DataverseEnvironmentInput):
             return None
         if not _GUID_PATTERN.match(v):
             raise ValueError("plugin_type_id must be a valid GUID.")
+        return v.lower()
+
+
+# ---------------------------------------------------------------------------
+# Plugin trace log tools
+# ---------------------------------------------------------------------------
+
+
+class GetPluginTraceLogSettingInput(DataverseEnvironmentInput):
+    """Input for reading the organization plug-in trace log setting."""
+
+
+class SetPluginTraceLogSettingInput(DataverseEnvironmentInput):
+    """Input for updating the organization plug-in trace log setting."""
+
+    setting: str = Field(
+        description=(
+            "Trace log verbosity level: 'off' (disabled), 'exception' (log only "
+            "on plug-in exceptions), or 'all' (log every plug-in execution)."
+        ),
+    )
+
+    @field_validator("setting")
+    @classmethod
+    def _validate_setting(cls, v: str) -> str:
+        if v.lower() not in {"off", "exception", "all"}:
+            raise ValueError("setting must be one of: 'off', 'exception', 'all'.")
+        return v.lower()
+
+
+class ListPluginTraceLogsInput(DataverseEnvironmentInput):
+    """Input for listing plug-in trace log records."""
+
+    type_name: str | None = Field(
+        default=None,
+        description=(
+            "Filter by plug-in class name (typename). Supports partial match; "
+            "e.g. 'MyPlugin' matches 'Acme.MyPlugin'."
+        ),
+        max_length=1024,
+    )
+    message_name: str | None = Field(
+        default=None,
+        description=(
+            "Filter by the Dataverse message that triggered the plug-in "
+            "(e.g., 'Create', 'Update', 'Delete')."
+        ),
+        max_length=1024,
+    )
+    primary_entity: str | None = Field(
+        default=None,
+        description=(
+            "Filter by the primary entity logical name the plug-in ran against "
+            "(e.g., 'account', 'contact')."
+        ),
+        max_length=1000,
+    )
+    operation_type: int | None = Field(
+        default=None,
+        description=(
+            "Filter by operation type: 0 = Unknown, 1 = Plug-in, "
+            "2 = Workflow Activity. Omit to include all types."
+        ),
+        ge=0,
+        le=2,
+    )
+    exceptions_only: bool = Field(
+        default=False,
+        description="When true, return only records where exceptiondetails is populated.",
+    )
+    hours_ago: int | None = Field(
+        default=None,
+        description=(
+            "Limit results to logs created within the last N hours. "
+            "Omit to return logs regardless of age."
+        ),
+        ge=1,
+        le=720,
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Connection reference tools
+# ---------------------------------------------------------------------------
+
+
+class ListConnectionReferencesInput(DataverseEnvironmentInput):
+    """Input for listing connection references."""
+
+    connector_id: str | None = Field(
+        default=None,
+        description=(
+            "Filter by connector ID (e.g., '/providers/Microsoft.PowerApps/apis/shared_sharepointonline'). "
+            "Exact match on the connectorid field."
+        ),
+        min_length=1,
+    )
+    statecode: int | None = Field(
+        default=None,
+        description="Filter by status: 0 = Active, 1 = Inactive. Omit to return all.",
+        ge=0,
+        le=1,
+    )
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "Additional OData $filter expression (e.g., \"ismanaged eq false\"). "
+            "Combined with other filter parameters using 'and'."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+class GetConnectionReferenceInput(DataverseEnvironmentInput):
+    """Input for retrieving a single connection reference by ID or logical name."""
+
+    connection_reference_id: str | None = Field(
+        default=None,
+        description="GUID of the connection reference.",
+        min_length=36,
+        max_length=36,
+    )
+    connection_reference_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name (connectionreferencelogicalname) of the connection reference "
+            "(e.g., 'new_myconnectionreference')."
+        ),
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _require_one(self) -> "GetConnectionReferenceInput":
+        has_id = bool(self.connection_reference_id)
+        has_name = bool(self.connection_reference_logical_name)
+        if not has_id and not has_name:
+            raise ValueError(
+                "Provide either connection_reference_id or connection_reference_logical_name."
+            )
+        if has_id and has_name:
+            raise ValueError(
+                "Provide either connection_reference_id or connection_reference_logical_name, not both."
+            )
+        return self
+
+    @field_validator("connection_reference_id")
+    @classmethod
+    def _validate_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("connection_reference_id must be a valid GUID.")
+        return v.lower()
+
+
+class CreateConnectionReferenceInput(DataverseEnvironmentInput):
+    """Input for creating a connection reference."""
+
+    display_name: str = Field(
+        description="Display name for the connection reference.",
+        min_length=1,
+    )
+    logical_name: str = Field(
+        description=(
+            "Unique logical name for the connection reference "
+            "(e.g., 'new_myconnectionreference'). Must be unique within the environment."
+        ),
+        min_length=1,
+    )
+    connector_id: str = Field(
+        description=(
+            "ID of the public/shared connector this reference targets "
+            "(e.g., '/providers/Microsoft.PowerApps/apis/shared_sharepointonline')."
+        ),
+        min_length=1,
+    )
+    connection_id: str | None = Field(
+        default=None,
+        description=(
+            "ID of the connection in API hub to assign immediately. "
+            "Omit to leave unassigned and wire up later via dataverse_update_connection_reference."
+        ),
+    )
+    description: str | None = Field(
+        default=None,
+        description="Description of the connection reference.",
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Unique name of the solution to associate this connection reference with. "
+            "Passed as the MSCRM.SolutionUniqueName request header."
+        ),
+    )
+
+
+class UpdateConnectionReferenceInput(DataverseEnvironmentInput):
+    """Input for updating a connection reference."""
+
+    connection_reference_id: str = Field(
+        description="GUID of the connection reference to update.",
+        min_length=36,
+        max_length=36,
+    )
+    connection_id: str | None = Field(
+        default=None,
+        description=(
+            "Connection ID in API hub to assign. Pass an empty string to clear "
+            "the current connection. Omit to leave unchanged."
+        ),
+    )
+    display_name: str | None = Field(
+        default=None,
+        description="New display name for the connection reference.",
+        min_length=1,
+    )
+    description: str | None = Field(
+        default=None,
+        description="New description for the connection reference.",
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Unique name of the solution to associate this connection reference with. "
+            "Passed as the MSCRM.SolutionUniqueName request header on the PATCH."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_at_least_one(self) -> "UpdateConnectionReferenceInput":
+        if (
+            self.connection_id is None
+            and self.display_name is None
+            and self.description is None
+            and self.solution_unique_name is None
+        ):
+            raise ValueError(
+                "Provide at least one of: connection_id, display_name, description, solution_unique_name."
+            )
+        return self
+
+    @field_validator("connection_reference_id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("connection_reference_id must be a valid GUID.")
+        return v.lower()
+
+
+class DeleteConnectionReferenceInput(DataverseEnvironmentInput):
+    """Input for deleting a connection reference."""
+
+    connection_reference_id: str = Field(
+        description="GUID of the connection reference to delete.",
+        min_length=36,
+        max_length=36,
+    )
+
+    @field_validator("connection_reference_id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("connection_reference_id must be a valid GUID.")
         return v.lower()

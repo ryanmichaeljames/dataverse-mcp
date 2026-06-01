@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-06-02
+
+### Added
+- `dataverse_list_connection_references` tool to list connection references with optional filters for connector ID, status, and a raw OData expression
+- `dataverse_get_connection_reference` tool to retrieve a single connection reference by GUID or logical name
+- `dataverse_create_connection_reference` write tool (requires `DATAVERSE_ALLOW_WRITE=true`) to create a connection reference with optional immediate connection assignment and optional solution association via `MSCRM.SolutionUniqueName` header
+- `dataverse_update_connection_reference` write tool (requires `DATAVERSE_ALLOW_WRITE=true`) to assign or clear a connection, or update display name and description; supports `solution_unique_name` to associate the reference with a solution via `MSCRM.SolutionUniqueName` header
+- `dataverse_delete_connection_reference` delete tool (requires `DATAVERSE_ALLOW_DELETE=true`) to delete an unmanaged connection reference
+- `dataverse_set_formxml` write tool (requires `DATAVERSE_ALLOW_WRITE=true`) to replace a form's FormXml directly and publish; returns `formxml_backup` for revert; validates XML before PATCHing
+- `dataverse_validate_formxml` now accepts an optional `formxml` parameter for dry-run validation of a proposed XML string without fetching from Dataverse
+- `dataverse_get_plugin_trace_log_setting` tool to read the current organization-wide plug-in trace log verbosity (off / exception / all)
+- `dataverse_set_plugin_trace_log_setting` write tool (requires `DATAVERSE_ALLOW_WRITE=true`) to enable or disable plug-in trace logging; accepts `'off'`, `'exception'`, or `'all'`
+- `dataverse_list_plugin_trace_logs` tool to query `plugintracelog` records with filters for plug-in class name (partial match), triggering message, primary entity, operation type, exceptions-only, and a rolling time window (`hours_ago`)
+- `dataverse_list_plugin_type_statistics` tool to query runtime performance statistics for Dataverse plug-in types; returns execution count, failure rate, crash metrics, and worker-process termination contribution percentages with optional expansion to plug-in type name and assembly
+- Form tools: `dataverse_list_forms`, `dataverse_get_form` (returns structured tabs → sections → controls tree), and `dataverse_validate_formxml` for read-only form inspection
+- Form write tools (require `DATAVERSE_ALLOW_WRITE=true`): `dataverse_add_form_control` (auto-resolves classid from column metadata) and `dataverse_remove_form_control`
+- View tools: `dataverse_list_views`, `dataverse_get_view` (returns FetchXml, LayoutXml, and column list), and `dataverse_validate_view` for read-only view inspection
+- View write tools (require `DATAVERSE_ALLOW_WRITE=true`): `dataverse_create_view`, `dataverse_update_view`, `dataverse_add_view_column`, and `dataverse_remove_view_column`
+- Model-driven app tools: `dataverse_list_apps`, `dataverse_get_app` (returns grouped component list via RetrieveAppComponents), and `dataverse_validate_app`
+- App write tools (require `DATAVERSE_ALLOW_WRITE=true`): `dataverse_create_app` (auto-generates sitemap and adds entity components), `dataverse_update_app`, `dataverse_add_app_components`, `dataverse_remove_app_components`, `dataverse_set_app_sitemap`, `dataverse_publish_app`, and `dataverse_assign_app_role`
+
 ## [2.0.0] - 2026-05-18
 
 ### Added

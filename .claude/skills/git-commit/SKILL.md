@@ -1,12 +1,11 @@
 ---
 name: git-commit
 description: Create a conventional commit by analysing the staged/unstaged diff, inferring type and scope, and executing the commit. Invoke with /git-commit.
-allowed-tools: Bash
 ---
 
 # Git Commit — Conventional Commits v1.0.0
 
-## Specification (all 16 rules)
+## Specification
 
 1. Commits **must** be prefixed with a type (a noun: `feat`, `fix`, etc.), optional scope, optional `!`, then a required colon and single space.
 2. `feat` **must** be used when a commit introduces a new feature (SemVer MINOR).
@@ -89,18 +88,18 @@ git add 'src/components/*'
 ### 3. Infer type, scope, and description from the diff
 
 - **Type** — pick the most specific type from the table above.
-- **Scope** — the module, solution, or layer affected (e.g. `APLPortal`, `plugins`, `webresources`). Omit if the change is repo-wide.
+- **Scope** — the module, solution, or layer affected (e.g. `api`, `plugins`, `webresources`). Omit if the change is repo-wide.
 - **Description** — imperative mood, present tense, ≤72 characters, no trailing period.
 
 ### 4. Execute the commit
 
 ```bash
 # Simple one-liner
-git commit -m "fix(APLPortal): resolve null ref in card order plugin"
+git commit -m "fix(api): resolve null ref in request handler"
 
 # With body and/or footer
 git commit -m "$(cat <<'EOF'
-feat(APLCreditApplications): add document upload to credit form
+feat(portal): add document upload to credit form
 
 Adds a drag-and-drop file input that uploads to SharePoint via the
 existing document service. Validates MIME type and size client-side.

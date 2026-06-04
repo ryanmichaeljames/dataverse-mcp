@@ -1,12 +1,11 @@
 ---
 name: git-commit
 description: Create a conventional commit by analysing the staged/unstaged diff, inferring type and scope, and executing the commit. Invoke with /git-commit.
-allowed-tools: Bash
 ---
 
 # Git Commit — Conventional Commits v1.0.0
 
-## Specification (all 16 rules)
+## Specification
 
 1. Commits **must** be prefixed with a type (a noun: `feat`, `fix`, etc.), optional scope, optional `!`, then a required colon and single space.
 2. `feat` **must** be used when a commit introduces a new feature (SemVer MINOR).

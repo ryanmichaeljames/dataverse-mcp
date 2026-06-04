@@ -2155,7 +2155,7 @@ class CreateViewInput(DataverseEnvironmentInput):
     )
     widths: dict[str, int] | None = Field(
         default=None,
-        description="Per-column pixel width override, e.g. {'apl_name': 300}.",
+        description="Per-column pixel width override, e.g. {'cr123_name': 300}.",
     )
     solution_unique_name: str | None = Field(
         default=None,
@@ -2371,13 +2371,13 @@ class AddFormControlInput(DataverseEnvironmentInput):
     )
     table_logical_name: str = Field(
         description=(
-            "Logical name of the table the form belongs to (e.g., 'apl_integrationrequest'). "
+            "Logical name of the table the form belongs to (e.g., 'cr123_myentity'). "
             "Used to look up column metadata to determine the correct control type."
         ),
         min_length=1,
     )
     datafieldname: str = Field(
-        description="Logical name of the column to add (e.g., 'apl_requestbody').",
+        description="Logical name of the column to add (e.g., 'cr123_description').",
         min_length=1,
     )
     label: str | None = Field(

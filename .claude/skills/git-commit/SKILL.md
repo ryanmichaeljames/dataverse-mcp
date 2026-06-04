@@ -89,18 +89,18 @@ git add 'src/components/*'
 ### 3. Infer type, scope, and description from the diff
 
 - **Type** — pick the most specific type from the table above.
-- **Scope** — the module, solution, or layer affected (e.g. `APLPortal`, `plugins`, `webresources`). Omit if the change is repo-wide.
+- **Scope** — the module, solution, or layer affected (e.g. `api`, `plugins`, `webresources`). Omit if the change is repo-wide.
 - **Description** — imperative mood, present tense, ≤72 characters, no trailing period.
 
 ### 4. Execute the commit
 
 ```bash
 # Simple one-liner
-git commit -m "fix(APLPortal): resolve null ref in card order plugin"
+git commit -m "fix(api): resolve null ref in request handler"
 
 # With body and/or footer
 git commit -m "$(cat <<'EOF'
-feat(APLCreditApplications): add document upload to credit form
+feat(portal): add document upload to credit form
 
 Adds a drag-and-drop file input that uploads to SharePoint via the
 existing document service. Validates MIME type and size client-side.

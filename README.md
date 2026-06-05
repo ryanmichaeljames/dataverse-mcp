@@ -6,20 +6,37 @@
 
 An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, manage model-driven app forms, views, and apps, manage plug-in trace logging, and explore Power Platform environments.
 
-Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** for seamless VS Code Copilot integration.
+Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** and works with Claude, GitHub Copilot, and any MCP-compatible client.
 
 ---
 
 ## Quick Start
 
-**1. Install**
+**1. Install uv**
 
 ```bash
-# Run directly from PyPI — no install needed
-uvx dataverse-mcp
+pip install uv
 ```
 
-**2. Configure** — add to `.vscode/mcp.json`:
+**2. Configure** — add to your MCP client config:
+
+**Claude** (`claude_desktop_config.json` or `.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "dataverse-mcp": {
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "azure_cli"
+      }
+    }
+  }
+}
+```
+
+**GitHub Copilot** (`.vscode/mcp.json`):
 
 ```json
 {
@@ -42,11 +59,19 @@ uvx dataverse-mcp
 az login
 ```
 
-That's it. Copilot can now query your Dataverse environments.
+That's it. Your AI agent can now query your Dataverse environments.
 
 ---
 
 ## Installation
+
+### Install uv
+
+`uvx` is provided by [uv](https://docs.astral.sh/uv/). Install it first if you don't have it:
+
+```bash
+pip install uv
+```
 
 ### Run from PyPI (recommended)
 
@@ -54,7 +79,7 @@ That's it. Copilot can now query your Dataverse environments.
 uvx dataverse-mcp
 ```
 
-[`uvx`](https://docs.astral.sh/uv/) downloads and runs the package in an isolated environment — no virtual environment management required.
+`uvx` downloads and runs the package in an isolated environment — no virtual environment management required.
 
 ### Run from a local checkout
 
@@ -64,7 +89,7 @@ cd dataverse-mcp
 uv sync
 ```
 
-This creates `.venv`. Use the local source MCP config shown in [VS Code Setup](#vs-code-setup) to point VS Code at it. No build step required — code changes are picked up on the next server start.
+This creates `.venv`. Use the local source MCP config shown in [Client Setup](#client-setup) to point your client at it. No build step required — code changes are picked up on the next server start.
 
 ---
 
@@ -111,9 +136,78 @@ Each flag is independent — set only `DATAVERSE_ALLOW_WRITE=true` to allow crea
 
 ---
 
-## VS Code Setup
+## Client Setup
 
-### Run from PyPI
+### Claude
+
+#### Claude Desktop
+
+Add to `claude_desktop_config.json`:
+- **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "dataverse-mcp": {
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "azure_cli"
+      }
+    }
+  }
+}
+```
+
+#### Claude Code
+
+Add via the CLI:
+
+```bash
+claude mcp add dataverse-mcp --env DATAVERSE_AUTH_TYPE=azure_cli uvx dataverse-mcp
+```
+
+Or add directly to `.claude/settings.json` (project) or `~/.claude/settings.json` (user):
+
+```json
+{
+  "mcpServers": {
+    "dataverse-mcp": {
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "azure_cli"
+      }
+    }
+  }
+}
+```
+
+#### Run from a local checkout
+
+```json
+{
+  "mcpServers": {
+    "dataverse-mcp-local": {
+      "command": "C:\\path\\to\\dataverse-mcp\\.venv\\Scripts\\python.exe",
+      "args": ["-m", "dataverse_mcp.server"],
+      "env": {
+        "PYTHONPATH": "C:\\path\\to\\dataverse-mcp\\src",
+        "DATAVERSE_AUTH_TYPE": "azure_cli"
+      }
+    }
+  }
+}
+```
+
+---
+
+### GitHub Copilot
+
+Add to `.vscode/mcp.json` in your project root.
+
+#### Run from PyPI
 
 ```json
 {
@@ -130,7 +224,7 @@ Each flag is independent — set only `DATAVERSE_ALLOW_WRITE=true` to allow crea
 }
 ```
 
-### Run from a local checkout
+#### Run from a local checkout
 
 ```json
 {
@@ -147,6 +241,8 @@ Each flag is independent — set only `DATAVERSE_ALLOW_WRITE=true` to allow crea
   }
 }
 ```
+
+---
 
 ### Multi-environment targeting
 

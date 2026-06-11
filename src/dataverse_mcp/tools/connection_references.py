@@ -13,6 +13,7 @@ from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
     extract_error_message,
+    odata_quote,
     paginate_records,
     resolve_base_url,
 )
@@ -86,8 +87,7 @@ async def dataverse_list_connection_references(
 
     filters: list[str] = []
     if params.connector_id:
-        escaped = params.connector_id.replace("'", "''")
-        filters.append(f"connectorid eq '{escaped}'")
+        filters.append(f"connectorid eq '{odata_quote(params.connector_id)}'")
     if params.statecode is not None:
         filters.append(f"statecode eq {params.statecode}")
     if params.filter:
@@ -175,7 +175,7 @@ async def dataverse_get_connection_reference(
             return json.dumps({"record": _strip_odata(resp.json())})
 
         # Lookup by logical name
-        escaped = params.connection_reference_logical_name.replace("'", "''")  # type: ignore[union-attr]
+        escaped = odata_quote(params.connection_reference_logical_name)  # type: ignore[arg-type]
         query = urlencode(
             {
                 "$select": _SELECT,

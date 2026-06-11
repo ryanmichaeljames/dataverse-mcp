@@ -15,6 +15,7 @@ from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
     extract_error_message,
+    odata_quote,
     paginate_records,
     resolve_base_url,
 )
@@ -207,7 +208,7 @@ async def _list_solution_cloud_flow_ids(
     query_params = {
         "$select": "objectid",
         "$filter": (
-            f"_solutionid_value eq '{resolved_solution_id}' and "
+            f"_solutionid_value eq '{odata_quote(resolved_solution_id)}' and "
             f"componenttype eq {_CLOUD_FLOW_COMPONENT_TYPE}"
         ),
         "$top": "5000",
@@ -335,10 +336,6 @@ def _enrich_component_type(record: dict) -> dict:
     return record
 
 
-def _escape_odata_string(value: str) -> str:
-    return value.replace("'", "''")
-
-
 async def _resolve_solution_record(
     app_ctx: AppContext,
     base_url: str,
@@ -360,7 +357,7 @@ async def _resolve_solution_record(
         resp.raise_for_status()
         return resp.json()
 
-    escaped_name = _escape_odata_string(solution_unique_name or "")
+    escaped_name = odata_quote(solution_unique_name or "")
     query_params = {
         "$select": select,
         "$filter": f"uniquename eq '{escaped_name}'",
@@ -479,7 +476,7 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
             resp.raise_for_status()
             record = resp.json()
         else:
-            escaped_name = params.solution_unique_name.replace("'", "''")
+            escaped_name = odata_quote(params.solution_unique_name)
             query_params = {
                 "$select": ",".join(select),
                 "$filter": f"uniquename eq '{escaped_name}'",
@@ -544,7 +541,7 @@ async def dataverse_list_solution_components(
         return json.dumps({"error": True, "message": str(e)})
 
     top = params.top
-    odata_filter = f"_solutionid_value eq '{params.solution_id}'"
+    odata_filter = f"_solutionid_value eq '{odata_quote(params.solution_id)}'"
     if params.component_type is not None:
         odata_filter += f" and componenttype eq {params.component_type}"
 
@@ -644,7 +641,9 @@ async def dataverse_get_cloud_flows(params: ListCloudFlowsInput, ctx: Context) -
             if remaining <= 0:
                 break
             chunk = flow_ids[i : i + chunk_size]
-            chunk_filter = " or ".join([f"workflowid eq '{flow_id}'" for flow_id in chunk])
+            chunk_filter = " or ".join(
+                [f"workflowid eq '{odata_quote(flow_id)}'" for flow_id in chunk]
+            )
             query_params = {
                 "$select": ",".join(select),
                 "$top": str(remaining),

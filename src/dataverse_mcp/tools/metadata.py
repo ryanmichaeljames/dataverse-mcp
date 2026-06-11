@@ -15,6 +15,7 @@ from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
     extract_error_message,
+    odata_quote,
     paginate_records,
     resolve_base_url,
 )
@@ -92,11 +93,6 @@ def _build_extra_headers(
 def _get_app_ctx(ctx: Context) -> AppContext:
     """Return the application context from the request context."""
     return ctx.request_context.lifespan_context
-
-
-def _escape_odata_string_literal(value: str) -> str:
-    """Escape an OData single-quoted string literal value."""
-    return value.replace("'", "''")
 
 
 def _to_bool(value: object) -> bool:
@@ -278,7 +274,7 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     select = params.select or _DEFAULT_COLUMN_SELECT
     query_params: dict[str, str] = {"$select": ",".join(select)}
     if params.attribute_type:
-        query_params["$filter"] = f"AttributeType eq '{params.attribute_type}'"
+        query_params["$filter"] = f"AttributeType eq '{odata_quote(params.attribute_type)}'"
 
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
@@ -340,7 +336,7 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     table_enc = _url_quote(params.table_logical_name, safe="")
     col_filter = (
         "LogicalName eq "
-        f"'{_escape_odata_string_literal(params.column_logical_name)}'"
+        f"'{odata_quote(params.column_logical_name)}'"
     )
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
@@ -415,7 +411,6 @@ async def _fetch_picklist_options(
 ) -> list[dict]:
     """Fetch option values for a Picklist or MultiSelectPicklist column."""
     table_enc = _url_quote(table, safe="")
-    col_enc = _url_quote(column, safe="")
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')"
@@ -424,7 +419,7 @@ async def _fetch_picklist_options(
     params = {
         "$select": "LogicalName",
         "$expand": "OptionSet($select=Options)",
-        "$filter": f"LogicalName eq '{col_enc}'",
+        "$filter": f"LogicalName eq '{odata_quote(column)}'",
     }
 
     response = await http_client.get(url, params=params, headers=headers)
@@ -647,12 +642,12 @@ async def dataverse_list_relationships(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse metadata API error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_relationships")
@@ -709,12 +704,12 @@ async def dataverse_get_relationship(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse metadata API error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_relationship")
@@ -790,12 +785,12 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse metadata API error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_list_choices")
@@ -851,12 +846,12 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse metadata API error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_choice")
@@ -922,12 +917,12 @@ async def dataverse_check_relationship_eligibility(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse eligibility API error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_check_relationship_eligibility")
@@ -1050,12 +1045,12 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse create table error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_create_table")
@@ -1142,12 +1137,12 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse update table error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_update_table")
@@ -1241,12 +1236,12 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse delete table error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_table")
@@ -1371,12 +1366,12 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse create column error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_create_column")
@@ -1440,12 +1435,12 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse update column error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_update_column")
@@ -1549,12 +1544,12 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse delete column error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_column")
@@ -1651,12 +1646,12 @@ async def dataverse_create_one_to_many_relationship(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse create 1:N relationship error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_create_one_to_many_relationship")
@@ -1735,12 +1730,12 @@ async def dataverse_create_many_to_many_relationship(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse create N:N relationship error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_create_many_to_many_relationship")
@@ -1832,12 +1827,12 @@ async def dataverse_create_multi_table_lookup(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse create polymorphic lookup error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_create_multi_table_lookup")
@@ -1894,12 +1889,12 @@ async def dataverse_update_relationship(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse update relationship error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_update_relationship")
@@ -2004,12 +1999,12 @@ async def dataverse_delete_relationship(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse delete relationship error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_relationship")
@@ -2098,12 +2093,12 @@ async def dataverse_create_choice(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse create choice error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_create_choice")
@@ -2158,12 +2153,12 @@ async def dataverse_update_choice(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse update choice error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_update_choice")
@@ -2211,12 +2206,12 @@ async def dataverse_delete_choice(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse delete choice error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_choice")
@@ -2278,12 +2273,12 @@ async def dataverse_add_choice_option(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse add choice option error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_add_choice_option")
@@ -2344,12 +2339,12 @@ async def dataverse_update_choice_option(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse update choice option error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_update_choice_option")
@@ -2407,12 +2402,12 @@ async def dataverse_delete_choice_option(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse delete choice option error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_delete_choice_option")
@@ -2470,12 +2465,12 @@ async def dataverse_reorder_choice_options(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse reorder choice options error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_reorder_choice_options")
@@ -2548,12 +2543,12 @@ async def dataverse_publish_customizations(
         except httpx.HTTPStatusError as e:
             logger.error(
                 "Dataverse PublishAllXml error: %s (status=%d)",
-                e.response.text,
+                extract_error_message(e.response),
                 e.response.status_code,
             )
             return json.dumps({
                 "error": True,
-                "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+                "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
             })
         except Exception as e:
             logger.exception("Unexpected error in dataverse_publish_customizations (PublishAllXml)")
@@ -2622,12 +2617,12 @@ async def dataverse_publish_customizations(
     except httpx.HTTPStatusError as e:
         logger.error(
             "Dataverse PublishXml error: %s (status=%d)",
-            e.response.text,
+            extract_error_message(e.response),
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_publish_customizations (PublishXml)")

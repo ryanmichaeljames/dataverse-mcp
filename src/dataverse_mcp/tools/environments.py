@@ -13,6 +13,7 @@ from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
+    extract_error_message,
     get_bearer_token,
     resolve_base_url,
 )
@@ -111,16 +112,17 @@ async def dataverse_list_environments(
             "count": len(environments),
         })
     except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
         logger.error(
             "Power Platform admin API error: %s (status=%d)",
-            e.response.text,
+            msg,
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
             "message": (
                 "Power Platform admin API returned HTTP "
-                f"{e.response.status_code}: {e.response.text}"
+                f"{e.response.status_code}: {msg}"
             ),
         })
     except Exception as e:
@@ -174,14 +176,15 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
             "OrganizationId": payload.get("OrganizationId"),
         })
     except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
         logger.error(
             "Dataverse WhoAmI API error: %s (status=%d)",
-            e.response.text,
+            msg,
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_whoami")
@@ -248,14 +251,15 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
             "has_more": has_more,
         })
     except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
         logger.error(
             "Dataverse service document API error: %s (status=%d)",
-            e.response.text,
+            msg,
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_get_entity_sets")
@@ -314,14 +318,15 @@ async def dataverse_retrieve_user_privileges(
             "count": len(privileges),
         })
     except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
         logger.error(
             "Dataverse RetrieveUserPrivileges error: %s (status=%d)",
-            e.response.text,
+            msg,
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_retrieve_user_privileges")
@@ -392,14 +397,15 @@ async def dataverse_retrieve_principal_access(
             "record_id": params.record_id,
         })
     except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
         logger.error(
             "Dataverse RetrievePrincipalAccess error: %s (status=%d)",
-            e.response.text,
+            msg,
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
         })
     except Exception as e:
         logger.exception("Unexpected error in dataverse_retrieve_principal_access")

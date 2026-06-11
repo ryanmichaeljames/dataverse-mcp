@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlencode
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -20,6 +20,7 @@ from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
     extract_error_message,
+    odata_quote,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -468,14 +469,16 @@ async def _resolve_column_info(
 ) -> dict | None:
     """Return {attribute_type, display_name, format_name_value} for a column, or None."""
     table_enc = _url_quote(table_logical_name, safe="")
-    field_enc = _url_quote(datafieldname, safe="")
+    field_filter = f"LogicalName eq '{odata_quote(datafieldname)}'"
 
     # Basic metadata (works for all types)
+    query = urlencode(
+        {"$filter": field_filter, "$select": "LogicalName,AttributeType,DisplayName"},
+        safe="$,",
+    )
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
-        f"?$filter=LogicalName eq '{field_enc}'"
-        f"&$select=LogicalName,AttributeType,DisplayName"
+        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes?{query}"
     )
     resp = await app_ctx.http_client.get(url, headers=headers)
     resp.raise_for_status()
@@ -492,12 +495,14 @@ async def _resolve_column_info(
     format_name_value: str | None = None
     if attribute_type == "String":
         # Hit the cast endpoint to get FormatName
+        cast_query = urlencode(
+            {"$filter": field_filter, "$select": "LogicalName,FormatName"},
+            safe="$,",
+        )
         cast_url = (
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')"
-            f"/Attributes/Microsoft.Dynamics.CRM.StringAttributeMetadata"
-            f"?$filter=LogicalName eq '{field_enc}'"
-            f"&$select=LogicalName,FormatName"
+            f"/Attributes/Microsoft.Dynamics.CRM.StringAttributeMetadata?{cast_query}"
         )
         try:
             cast_resp = await app_ctx.http_client.get(cast_url, headers=headers)
@@ -507,8 +512,11 @@ async def _resolve_column_info(
                 fn = cast_items[0].get("FormatName")
                 if isinstance(fn, dict):
                     format_name_value = fn.get("Value")
-        except httpx.HTTPStatusError:
-            pass
+        except httpx.HTTPStatusError as e:
+            logger.debug(
+                "Could not resolve FormatName for %s.%s (HTTP %d); continuing without it",
+                table_logical_name, datafieldname, e.response.status_code,
+            )
 
     return {
         "attribute_type": attribute_type,
@@ -549,8 +557,7 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
 
     filters: list[str] = []
     if params.table_logical_name:
-        t = params.table_logical_name.replace("'", "''")
-        filters.append(f"objecttypecode eq '{t}'")
+        filters.append(f"objecttypecode eq '{odata_quote(params.table_logical_name)}'")
     if params.form_type is not None:
         filters.append(f"type eq {params.form_type}")
 

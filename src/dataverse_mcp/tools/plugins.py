@@ -14,6 +14,7 @@ from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
     extract_error_message,
+    odata_quote,
     paginate_records,
     resolve_base_url,
 )
@@ -331,14 +332,11 @@ async def dataverse_list_plugin_trace_logs(
 
     filters: list[str] = []
     if params.type_name:
-        escaped = params.type_name.replace("'", "''")
-        filters.append(f"contains(typename,'{escaped}')")
+        filters.append(f"contains(typename,'{odata_quote(params.type_name)}')")
     if params.message_name:
-        escaped = params.message_name.replace("'", "''")
-        filters.append(f"messagename eq '{escaped}'")
+        filters.append(f"messagename eq '{odata_quote(params.message_name)}'")
     if params.primary_entity:
-        escaped = params.primary_entity.replace("'", "''")
-        filters.append(f"primaryentity eq '{escaped}'")
+        filters.append(f"primaryentity eq '{odata_quote(params.primary_entity)}'")
     if params.operation_type is not None:
         filters.append(f"operationtype eq {params.operation_type}")
     if params.exceptions_only:

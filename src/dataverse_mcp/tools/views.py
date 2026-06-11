@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlencode
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -19,6 +19,7 @@ from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
     extract_error_message,
+    odata_quote,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -165,12 +166,16 @@ async def _resolve_columns(
     if not names:
         return {}
     table_enc = _url_quote(table, safe="")
-    name_filters = " or ".join(f"LogicalName eq '{n}'" for n in names)
+    name_filters = " or ".join(
+        f"LogicalName eq '{odata_quote(n)}'" for n in names
+    )
+    query = urlencode(
+        {"$filter": name_filters, "$select": "LogicalName,DisplayName"},
+        safe="$,",
+    )
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-        f"/EntityDefinitions(LogicalName='{table_enc}')/Attributes"
-        f"?$filter={name_filters}"
-        f"&$select=LogicalName,DisplayName"
+        f"/EntityDefinitions(LogicalName='{table_enc}')/Attributes?{query}"
     )
     resp = await app_ctx.http_client.get(url, headers=headers)
     resp.raise_for_status()
@@ -580,8 +585,7 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
 
     filters: list[str] = []
     if params.table_logical_name:
-        t = params.table_logical_name.replace("'", "''")
-        filters.append(f"returnedtypecode eq '{t}'")
+        filters.append(f"returnedtypecode eq '{odata_quote(params.table_logical_name)}'")
     if params.query_type is not None:
         filters.append(f"querytype eq {params.query_type}")
 

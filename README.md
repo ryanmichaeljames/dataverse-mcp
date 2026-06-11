@@ -103,6 +103,7 @@ Set these in the `env` block of your MCP server entry. This project does not use
 | `DATAVERSE_URL` | — | Fallback org URL used when a tool call omits `dataverse_url` |
 | `DATAVERSE_ALLOW_WRITE` | `false` | Set to `true` to register create, update, associate, merge, and schema mutation tools |
 | `DATAVERSE_ALLOW_DELETE` | `false` | Set to `true` to register delete and disassociate tools |
+| `DATAVERSE_ALLOWED_HOST_SUFFIXES` | — | Comma-separated extra hostname suffixes to accept for `dataverse_url` (e.g., `.contoso.internal`). Standard Dataverse domains (`.dynamics.com`, `.dynamics-int.com`, and sovereign cloud equivalents) are always allowed; all other hosts are rejected to prevent requests and tokens being directed at unknown servers |
 
 ### Authentication
 

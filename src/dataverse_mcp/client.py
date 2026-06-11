@@ -20,6 +20,33 @@ logger = logging.getLogger(__name__)
 SUPPORTED_AUTH_TYPES = ("interactive", "azure_cli")
 _DATAVERSE_API_VERSION = "v9.2"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
+_MAX_ERROR_MESSAGE_LENGTH = 2000
+
+# Hostname suffixes accepted for Dataverse organization URLs. Tokens are minted
+# for whatever host a tool call supplies, so unknown hosts must be rejected.
+_DEFAULT_ALLOWED_HOST_SUFFIXES = (
+    ".dynamics.com",
+    ".dynamics-int.com",
+    ".crm.dynamics.cn",
+    ".microsoftdynamics.us",
+    ".microsoftdynamics.de",
+)
+
+
+def _load_allowed_host_suffixes() -> tuple[str, ...]:
+    """Combine default Dataverse host suffixes with DATAVERSE_ALLOWED_HOST_SUFFIXES."""
+    raw = os.environ.get("DATAVERSE_ALLOWED_HOST_SUFFIXES", "")
+    extra = tuple(
+        s if s.startswith(".") else f".{s}"
+        for s in (part.strip().lower() for part in raw.split(","))
+        if s
+    )
+    return _DEFAULT_ALLOWED_HOST_SUFFIXES + extra
+
+
+# Read once at import: normalize_dataverse_url is lru_cached, so the allowlist
+# must not vary per call.
+_ALLOWED_HOST_SUFFIXES = _load_allowed_host_suffixes()
 
 # Common Azure CLI installation paths that may not be on the system PATH when
 # the MCP server process is launched (e.g., from VS Code without a login shell).
@@ -126,7 +153,15 @@ def normalize_dataverse_url(url: str) -> str:
             "dataverse_url must not include params, query strings, or fragments"
         )
 
-    netloc = parsed.hostname.lower()
+    hostname = parsed.hostname.lower()
+    if not hostname.endswith(_ALLOWED_HOST_SUFFIXES):
+        raise ValueError(
+            f"dataverse_url host '{hostname}' is not an allowed Dataverse domain. "
+            f"Allowed suffixes: {', '.join(_ALLOWED_HOST_SUFFIXES)}. "
+            "Set DATAVERSE_ALLOWED_HOST_SUFFIXES to permit additional domains."
+        )
+
+    netloc = hostname
     if parsed.port:
         netloc = f"{netloc}:{parsed.port}"
 
@@ -222,6 +257,18 @@ async def paginate_records(
     return records
 
 
+def odata_quote(value: str) -> str:
+    """Escape a value for use inside an OData single-quoted string literal."""
+    return value.replace("'", "''")
+
+
+def _truncate_message(text: str) -> str:
+    """Cap error messages so large response bodies never flood tool output."""
+    if len(text) > _MAX_ERROR_MESSAGE_LENGTH:
+        return text[:_MAX_ERROR_MESSAGE_LENGTH] + "… (truncated)"
+    return text
+
+
 def extract_error_message(response: httpx.Response) -> str:
     """Extract a human-readable error message from an OData error response."""
     try:
@@ -230,10 +277,11 @@ def extract_error_message(response: httpx.Response) -> str:
         code = err.get("code", "")
         message = err.get("message", "") or response.text
         if code:
-            return f"[{code}] {message}"
-        return message or f"HTTP {response.status_code}"
-    except Exception:
-        return response.text or f"HTTP {response.status_code}"
+            return _truncate_message(f"[{code}] {message}")
+        return _truncate_message(message) or f"HTTP {response.status_code}"
+    except Exception as e:
+        logger.debug("Could not parse error response as OData JSON: %s", e)
+        return _truncate_message(response.text) or f"HTTP {response.status_code}"
 
 
 @asynccontextmanager

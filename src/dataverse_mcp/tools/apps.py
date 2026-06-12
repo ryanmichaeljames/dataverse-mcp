@@ -66,7 +66,7 @@ _GUID_RE = re.compile(
 )
 
 _APP_SELECT = (
-    "appmoduleid,appmoduleidunique,name,uniquename,description,ispublished,statecode,clienttype"
+    "appmoduleid,appmoduleidunique,name,uniquename,description,publishedon,statecode,clienttype"
 )
 
 
@@ -340,9 +340,15 @@ async def _fetch_app_sitemap(
         headers=headers,
     )
     resp.raise_for_status()
-    components = resp.json().get("AppModuleComponents", [])
+    # RetrieveAppComponents returns appmodulecomponent records in "value"
+    components = resp.json().get("value", [])
+    # objectid is a lookup attribute, so the Web API returns it as _objectid_value
     sitemap_id = next(
-        (c.get("objectid") for c in components if c.get("componenttype") == 62),
+        (
+            c.get("objectid") or c.get("_objectid_value")
+            for c in components
+            if c.get("componenttype") == 62
+        ),
         None,
     )
     if not sitemap_id:
@@ -389,7 +395,7 @@ def _summarise_validation(vr: dict) -> dict:
 )
 async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
     """List model-driven apps (AppModule records) in a Dataverse environment.
-    Returns appmoduleid, name, uniquename, description, ispublished, and statecode.
+    Returns appmoduleid, name, uniquename, description, publish state, and statecode.
     Set include_unpublished=true to also return draft apps not yet published.
     Use dataverse_get_app to fetch a single app's components.
     """
@@ -421,7 +427,7 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
                 "name": r.get("name"),
                 "unique_name": r.get("uniquename"),
                 "description": r.get("description"),
-                "is_published": r.get("ispublished"),
+                "is_published": r.get("publishedon") is not None,
                 "state": r.get("statecode"),
                 "client_type": r.get("clienttype"),
             }
@@ -478,14 +484,15 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
             headers=headers,
         )
         comp_resp.raise_for_status()
-        raw_components = comp_resp.json().get("AppModuleComponents", [])
+        # RetrieveAppComponents returns appmodulecomponent records in "value"
+        raw_components = comp_resp.json().get("value", [])
 
         grouped: dict[str, list] = {}
         for c in raw_components:
             ct = c.get("componenttype", 0)
             label = _COMPONENT_TYPE_NAMES.get(ct, f"Type {ct}")
             grouped.setdefault(label, []).append({
-                "object_id": c.get("objectid"),
+                "object_id": c.get("objectid") or c.get("_objectid_value"),
                 "component_type": ct,
                 "root_component_behavior": c.get("rootcomponentbehavior"),
             })
@@ -496,7 +503,7 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
             "name": app_data.get("name"),
             "unique_name": app_data.get("uniquename"),
             "description": app_data.get("description"),
-            "is_published": app_data.get("ispublished"),
+            "is_published": app_data.get("publishedon") is not None,
             "state": app_data.get("statecode"),
             "client_type": app_data.get("clienttype"),
             "components": grouped,
@@ -616,7 +623,8 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
                     "message": f"Generated sitemap XML is invalid: {'; '.join(xml_errors)}",
                 })
 
-            sitemap_unique = re.sub(r"[^a-zA-Z0-9_]", "_", params.unique_name) + "_sitemap"
+            # sitemapnameunique allows only letters and numbers, max 40 chars
+            sitemap_unique = re.sub(r"[^a-zA-Z0-9]", "", params.unique_name)[:33] + "sitemap"
             sitemap_id = await _upsert_sitemap(
                 app_ctx, base_url, headers,
                 sitemap_xml=sitemap_xml,
@@ -928,7 +936,9 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
 
         existing_id, backup_xml = await _fetch_app_sitemap(app_ctx, base_url, headers, params.app_id)
 
-        sitemap_unique = re.sub(r"[^a-zA-Z0-9_]", "_", params.app_id) + "_sitemap"
+        # sitemapnameunique allows only letters and numbers, max 40 chars; the
+        # GUID's 32 hex chars plus the suffix fit exactly under the limit
+        sitemap_unique = re.sub(r"[^a-zA-Z0-9]", "", params.app_id)[:33] + "sitemap"
         sitemap_id = await _upsert_sitemap(
             app_ctx, base_url, headers,
             sitemap_xml=sitemap_xml,

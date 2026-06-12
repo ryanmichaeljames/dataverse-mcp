@@ -4,19 +4,19 @@ import json
 import logging
 from urllib.parse import urlencode
 
-import httpx
 from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.client import (
-    AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
     odata_quote,
     paginate_records,
     request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     CreateConnectionReferenceInput,
@@ -42,10 +42,6 @@ _SELECT = (
     "createdon,"
     "modifiedon"
 )
-
-
-def _get_app_ctx(ctx: Context) -> AppContext:
-    return ctx.request_context.lifespan_context
 
 
 def _strip_odata(record: dict) -> dict:
@@ -80,7 +76,7 @@ async def dataverse_list_connection_references(
     field to identify which references still need a connection assigned — an empty
     connectionid means the flow or app using it will fail at runtime.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -110,21 +106,13 @@ async def dataverse_list_connection_references(
     try:
         headers = await build_headers(app_ctx, base_url)
         records = await paginate_records(url, headers, params.top, app_ctx.http_client)
-        return json.dumps({
+        return finalize_response({
             "records": [_strip_odata(r) for r in records],
             "count": len(records),
             "has_more": len(records) >= params.top,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_connection_references")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_list_connection_references")
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +139,7 @@ async def dataverse_get_connection_reference(
     status, and managed state. An empty connectionid means no connection has
     been wired up yet — use dataverse_update_connection_reference to assign one.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -173,7 +161,7 @@ async def dataverse_get_connection_reference(
                     "message": f"Connection reference '{params.connection_reference_id}' not found.",
                 })
             resp.raise_for_status()
-            return json.dumps({"record": _strip_odata(resp.json())})
+            return finalize_response({"record": _strip_odata(resp.json())})
 
         # Lookup by logical name
         escaped = odata_quote(params.connection_reference_logical_name)  # type: ignore[arg-type]
@@ -200,18 +188,10 @@ async def dataverse_get_connection_reference(
                     f"'{params.connection_reference_logical_name}' not found."
                 ),
             })
-        return json.dumps({"record": _strip_odata(items[0])})
+        return finalize_response({"record": _strip_odata(items[0])})
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_connection_reference")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_get_connection_reference")
 
 
 # ---------------------------------------------------------------------------
@@ -243,7 +223,7 @@ async def dataverse_create_connection_reference(
 
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -277,16 +257,8 @@ async def dataverse_create_connection_reference(
             "solution_unique_name": params.solution_unique_name,
             "location": location,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_connection_reference")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_create_connection_reference")
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +293,7 @@ async def dataverse_update_connection_reference(
 
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -354,16 +326,8 @@ async def dataverse_update_connection_reference(
             "solution_unique_name": params.solution_unique_name,
             "changes": body,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_connection_reference")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_update_connection_reference")
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +358,7 @@ async def dataverse_delete_connection_reference(
 
     Requires DATAVERSE_ALLOW_DELETE=true.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -419,13 +383,5 @@ async def dataverse_delete_connection_reference(
             "deleted": True,
             "connection_reference_id": params.connection_reference_id,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_delete_connection_reference")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_delete_connection_reference")

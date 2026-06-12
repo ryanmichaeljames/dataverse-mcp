@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import json
 import logging
 import os
 import shutil
@@ -27,6 +28,10 @@ _MAX_ERROR_MESSAGE_LENGTH = 2000
 _RETRYABLE_STATUS_CODES = (429, 502, 503, 504)
 _MAX_RETRY_AFTER_SECONDS = 30.0
 _DEFAULT_RETRY_AFTER_SECONDS = 2.0
+# Tool responses above the warn threshold are logged; above the cap they are
+# replaced with an actionable error so a single call can't flood the client.
+_RESPONSE_WARN_BYTES = 1_000_000
+_RESPONSE_MAX_BYTES = 5_000_000
 # Dataverse pages are capped server-side at 5,000; we never ask for more than
 # 500 per page to keep individual responses small.
 _MAX_PAGE_SIZE = 500
@@ -390,6 +395,67 @@ def extract_error_message(response: httpx.Response) -> str:
     except Exception as e:
         logger.debug("Could not parse error response as OData JSON: %s", e)
         return _truncate_message(response.text) or f"HTTP {response.status_code}"
+
+
+def get_app_ctx(ctx: Any) -> AppContext:
+    """Return the application context from a FastMCP request context."""
+    return ctx.request_context.lifespan_context
+
+
+def tool_error_response(e: Exception, tool_name: str) -> str:
+    """Map an exception to the standard {"error": true, ...} JSON tool contract.
+
+    Call from a tool's except block; ordering mirrors the specificity of the
+    exception hierarchy (HTTP status first, broad Exception last).
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        msg = extract_error_message(e.response)
+        logger.error(
+            "Dataverse HTTP %d in %s: %s", e.response.status_code, tool_name, msg
+        )
+        return json.dumps({
+            "error": True,
+            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
+        })
+    if isinstance(e, httpx.TimeoutException):
+        logger.warning("Timeout in %s: %s", tool_name, e)
+        return json.dumps({
+            "error": True,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. The "
+                "operation may still have completed on the server; verify "
+                "before retrying."
+            ),
+        })
+    if isinstance(e, (DataverseConnectionError, httpx.RequestError)):
+        logger.error("Network error in %s: %s", tool_name, e)
+        return json.dumps({"error": True, "message": str(e) or f"Network error: {type(e).__name__}"})
+    if isinstance(e, ValueError):
+        return json.dumps({"error": True, "message": str(e)})
+    logger.exception("Unexpected error in %s", tool_name)
+    return json.dumps({
+        "error": True,
+        "message": f"Unexpected error: {type(e).__name__}: {e}",
+    })
+
+
+def finalize_response(payload: dict, *, max_bytes: int = _RESPONSE_MAX_BYTES) -> str:
+    """Serialize a success payload, guarding against oversized responses."""
+    text = json.dumps(payload)
+    size = len(text)
+    if size > max_bytes:
+        logger.warning("Tool response of %d bytes exceeds cap (%d)", size, max_bytes)
+        return json.dumps({
+            "error": True,
+            "message": (
+                f"Response too large ({size / 1_000_000:.1f} MB). "
+                "Narrow the query with select/top/filter."
+            ),
+        })
+    if size > _RESPONSE_WARN_BYTES:
+        logger.warning("Large tool response: %.1f MB", size / 1_000_000)
+    return text
 
 
 @asynccontextmanager

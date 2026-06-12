@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_set_app_sitemap` no longer fails when the app already has a sitemap, and newly created sitemap unique names now respect Dataverse's 40-character letters-and-numbers-only limit (previously creation always failed)
 - `dataverse_create_multi_table_lookup` no longer fails with HTTP 400 — the action payload now matches the documented CreatePolymorphicLookupAttribute format
 
+## [2.1.0] - 2026-06-02
+
 ### Added
 - `dataverse_list_connection_references` tool to list connection references with optional filters for connector ID, status, and a raw OData expression
 - `dataverse_get_connection_reference` tool to retrieve a single connection reference by GUID or logical name

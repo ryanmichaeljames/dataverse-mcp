@@ -1533,9 +1533,11 @@ async def dataverse_create_multi_table_lookup(
 
     Call dataverse_publish_customizations after creating lookup columns.
     """
+    # CreatePolymorphicLookupAttribute rejects @odata.type annotations on its
+    # entity-typed parameters ("Incompatible type kinds"); the documented
+    # payload supplies plain objects with AttributeType/AttributeTypeName.
     relationships = [
         {
-            "@odata.type": "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
             "ReferencedEntity": target,
             "ReferencingEntity": params.owning_entity,
             "SchemaName": f"{params.lookup_schema_name}_{target}",
@@ -1543,7 +1545,8 @@ async def dataverse_create_multi_table_lookup(
         for target in params.target_entities
     ]
     lookup = {
-        "@odata.type": "Microsoft.Dynamics.CRM.LookupAttributeMetadata",
+        "AttributeType": "Lookup",
+        "AttributeTypeName": {"Value": "LookupType"},
         "SchemaName": params.lookup_schema_name,
         "DisplayName": _make_label(params.lookup_display_name),
     }

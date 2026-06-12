@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-12
+
 ### Security
 - `dataverse_url` is now validated against an allowlist of Dataverse hostname suffixes (`.dynamics.com`, `.dynamics-int.com`, and sovereign cloud equivalents) so requests and access tokens can no longer be directed at unknown servers; additional domains can be permitted via the new `DATAVERSE_ALLOWED_HOST_SUFFIXES` environment variable
 - `dataverse_create_view`, `dataverse_update_view`, and `dataverse_add_view_column` now escape column names when verifying they exist, preventing crafted names from altering the metadata query; the same escaping is applied consistently across all tools that build OData filters from inputs

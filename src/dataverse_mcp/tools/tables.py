@@ -5,19 +5,19 @@ import logging
 import os
 from urllib.parse import urlencode
 
-import httpx
 from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.batch import build_batch_body, parse_batch_response
 from dataverse_mcp.client import (
-    AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
     paginate_records,
     request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     AggregateTableInput,
@@ -59,7 +59,7 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
     Use dataverse_list_tables or dataverse_get_table_metadata first to
     discover available tables and their column names.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -113,20 +113,9 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
                 count_resp = await request_with_retry(app_ctx.http_client, "GET", count_url, headers=count_headers)
                 count_resp.raise_for_status()
                 result["total_count"] = int(count_resp.text.strip().lstrip("\ufeff"))
-        return json.dumps(result)
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
+        return finalize_response(result)
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_query_table")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_query_table")
 
 
 @mcp.tool(
@@ -144,7 +133,7 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
     Returns selected columns for the given table
     and record GUID. Use dataverse_query_table first to find record IDs.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -167,20 +156,9 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
         resp.raise_for_status()
         record = resp.json()
         record.pop("@odata.context", None)
-        return json.dumps({"record": record})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
+        return finalize_response({"record": record})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_record")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_get_record")
 
 
 @mcp.tool(
@@ -202,7 +180,7 @@ async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> st
     Use filter to narrow the count to matching records, e.g.,
     "statecode eq 0" to count only active records.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -233,19 +211,8 @@ async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> st
             "total_count": total,
             "capped": total >= 5000,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_count_records")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_count_records")
 
 
 @mcp.tool(
@@ -278,7 +245,7 @@ async def dataverse_aggregate_table(params: AggregateTableInput, ctx: Context) -
     Note: Lookup fields (e.g. ownerid) cannot be used in groupby — use
     regular columns like statecode, statuscode, or other integer fields.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -300,23 +267,12 @@ async def dataverse_aggregate_table(params: AggregateTableInput, ctx: Context) -
         resp.raise_for_status()
         body = resp.json()
         records = body.get("value", [])
-        return json.dumps({
+        return finalize_response({
             "records": records,
             "count": len(records),
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_aggregate_table")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_aggregate_table")
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +299,7 @@ async def dataverse_associate_records(
     Use dataverse_list_relationships to discover the correct navigation_property name.
     Use dataverse_get_entity_sets to resolve entity set names.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -363,22 +319,10 @@ async def dataverse_associate_records(
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
         response = await request_with_retry(app_ctx.http_client, "POST", url, headers=headers, json=body)
-        if response.status_code == 204:
-            return json.dumps({"success": True})
-        try:
-            err = response.json()
-        except Exception:
-            err = response.text
-        return json.dumps({
-            "error": True,
-            "message": f"HTTP {response.status_code}: {err}",
-        })
+        response.raise_for_status()
+        return json.dumps({"success": True})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_associate_records")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_associate_records")
 
 
 @delete_tool(
@@ -397,7 +341,7 @@ async def dataverse_disassociate_records(
     """Remove an association between two records via a collection-valued navigation property.
     Unlinks the related record by sending a DELETE to the navigation property $ref endpoint.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -412,22 +356,10 @@ async def dataverse_disassociate_records(
     try:
         headers = await build_headers(app_ctx, base_url)
         response = await request_with_retry(app_ctx.http_client, "DELETE", url, headers=headers)
-        if response.status_code == 204:
-            return json.dumps({"success": True})
-        try:
-            err = response.json()
-        except Exception:
-            err = response.text
-        return json.dumps({
-            "error": True,
-            "message": f"HTTP {response.status_code}: {err}",
-        })
+        response.raise_for_status()
+        return json.dumps({"success": True})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_disassociate_records")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_disassociate_records")
 
 
 # ---------------------------------------------------------------------------
@@ -453,7 +385,7 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
     Use update_content to carry specific field values from the subordinate
     to the target.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -475,22 +407,10 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
         response = await request_with_retry(app_ctx.http_client, "POST", url, headers=headers, json=body)
-        if response.status_code == 204:
-            return json.dumps({"success": True})
-        try:
-            err = response.json()
-        except Exception:
-            err = response.text
-        return json.dumps({
-            "error": True,
-            "message": f"HTTP {response.status_code}: {err}",
-        })
+        response.raise_for_status()
+        return json.dumps({"success": True})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_merge_records")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_merge_records")
 
 
 @mcp.tool(
@@ -512,7 +432,7 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
     Returns a list of per-operation results: [{index, status_code, body}].
     Change set results are flattened into the list in order.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -582,13 +502,9 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
             logger.debug(
                 "Batch result[%d]: status=%s", item["index"], item.get("status_code")
             )
-        return json.dumps({
+        return finalize_response({
             "results": indexed,
             "count": len(indexed),
         })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_execute_batch")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_execute_batch")

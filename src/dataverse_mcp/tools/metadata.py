@@ -11,14 +11,15 @@ from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import delete_tool, mcp, write_tool
 from dataverse_mcp.client import (
-    AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
     odata_quote,
     paginate_records,
     request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     AddChoiceOptionInput,
@@ -96,11 +97,6 @@ def _build_extra_headers(
     return extra or None
 
 
-def _get_app_ctx(ctx: Context) -> AppContext:
-    """Return the application context from the request context."""
-    return ctx.request_context.lifespan_context
-
-
 def _to_bool(value: object) -> bool:
     """Coerce bool-ish Dataverse values.
 
@@ -146,7 +142,7 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     dataverse_query_table or inspecting their schema with
     dataverse_get_table_metadata.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -165,23 +161,12 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
             extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
         tables = await paginate_records(url, headers, None, app_ctx.http_client)
-        return json.dumps({
+        return finalize_response({
             "tables": tables,
             "count": len(tables),
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_tables")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_list_tables")
 
 
 @mcp.tool(
@@ -203,7 +188,7 @@ async def dataverse_get_table_metadata(
     understand a table's structure before querying it with
     dataverse_query_table.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -234,19 +219,8 @@ async def dataverse_get_table_metadata(
             "primary_name_attribute": raw.get("PrimaryNameAttribute"),
         }
         return json.dumps({"table": table_info})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_table_metadata")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_get_table_metadata")
 
 
 @mcp.tool(
@@ -270,7 +244,7 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     dataverse_get_column. For choice options, use
     dataverse_list_choice_column_options.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -294,23 +268,12 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
             extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
         columns = await paginate_records(url, headers, 5000, app_ctx.http_client)
-        return json.dumps({
+        return finalize_response({
             "columns": columns,
             "count": len(columns),
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_columns")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_list_columns")
 
 
 @mcp.tool(
@@ -333,7 +296,7 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     For Picklist/MultiSelectPicklist option values, use
     dataverse_list_choice_column_options.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -366,20 +329,9 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
             })
         column = columns[0]
         column.pop("@odata.context", None)
-        return json.dumps({"column": column})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
+        return finalize_response({"column": column})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_column")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_get_column")
 
 
 def _extract_options(items: list) -> list[dict]:
@@ -461,7 +413,7 @@ async def dataverse_list_choice_column_options(
     Only works for columns with a local (non-global) option set. Global
     option sets shared across tables are not currently supported.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -502,23 +454,12 @@ async def dataverse_list_choice_column_options(
                 ),
             })
 
-        return json.dumps({
+        return finalize_response({
             "options": options,
             "count": len(options),
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_choice_column_options")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_list_choice_column_options")
 
 
 # ---------------------------------------------------------------------------
@@ -603,7 +544,7 @@ async def dataverse_list_relationships(
     ReferencingEntityNavigationPropertyName /
     ReferencedEntityNavigationPropertyName in OData $expand queries.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -644,27 +585,13 @@ async def dataverse_list_relationships(
                 app_ctx.http_client,
             )
 
-        return json.dumps({
+        return finalize_response({
             "relationships": all_rels,
             "count": len(all_rels),
             "has_more": len(all_rels) >= params.top,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse metadata API error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_relationships")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_list_relationships")
 
 
 @mcp.tool(
@@ -690,7 +617,7 @@ async def dataverse_get_relationship(
     SchemaName. The navigation property names are required for OData
     $expand queries.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -710,23 +637,9 @@ async def dataverse_get_relationship(
         response.raise_for_status()
         relationship = response.json()
         relationship.pop("@odata.context", None)
-        return json.dumps({"relationship": relationship})
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse metadata API error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
+        return finalize_response({"relationship": relationship})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_relationship")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_get_relationship")
 
 
 # ---------------------------------------------------------------------------
@@ -760,7 +673,7 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     Option values and labels are not included — use dataverse_get_choice
     to retrieve full option details for a specific choice by name or MetadataId.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -787,27 +700,13 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
         top = params.top or 50
         choices = all_choices[:top]
         has_more = len(all_choices) > top or "@odata.nextLink" in payload
-        return json.dumps({
+        return finalize_response({
             "choices": choices,
             "count": len(choices),
             "has_more": has_more,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse metadata API error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_choices")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_list_choices")
 
 
 @mcp.tool(
@@ -829,7 +728,7 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
     Provide either name (logical name, e.g., 'incident_prioritycode') or
     metadata_id (GUID). If both are provided, name takes precedence.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -852,23 +751,9 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
         response.raise_for_status()
         choice = response.json()
         choice.pop("@odata.context", None)
-        return json.dumps({"choice": choice})
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse metadata API error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
+        return finalize_response({"choice": choice})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_choice")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_get_choice")
 
 
 @mcp.tool(
@@ -897,7 +782,7 @@ async def dataverse_check_relationship_eligibility(
 
     Returns eligible (bool) for the requested check_type.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -924,22 +809,8 @@ async def dataverse_check_relationship_eligibility(
             "check_type": params.check_type,
             "eligible": eligible,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse eligibility API error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_check_relationship_eligibility")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_check_relationship_eligibility")
 
 
 # ---------------------------------------------------------------------------
@@ -1014,7 +885,7 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     """
     body = _build_create_table_body(params)
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1052,22 +923,8 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
             ),
             "schema_name": params.schema_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse create table error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_table")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_create_table")
 
 
 @write_tool(
@@ -1094,7 +951,7 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
             "message": "Provide at least one of display_name or description to update.",
         })
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1144,22 +1001,8 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
             "updated": True,
             "table_logical_name": params.table_logical_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse update table error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_table")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_update_table")
 
 
 @delete_tool(
@@ -1180,7 +1023,7 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
     Only custom tables (IsCustomEntity=true) can be deleted. Attempting to
     delete a system table will return an error from the API.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1243,22 +1086,8 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
             ),
             "table_logical_name": params.table_logical_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse delete table error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_delete_table")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_delete_table")
 
 
 # ---------------------------------------------------------------------------
@@ -1329,7 +1158,7 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     if params.type_specific_properties:
         body.update(params.type_specific_properties)
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1373,22 +1202,8 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
             "table_logical_name": params.table_logical_name,
             "schema_name": params.schema_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse create column error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_column")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_create_column")
 
 
 @write_tool(
@@ -1408,7 +1223,7 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
 
     Call dataverse_publish_customizations after updating columns.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1442,22 +1257,8 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
             "table_logical_name": params.table_logical_name,
             "column_logical_name": params.column_logical_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse update column error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_column")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_update_column")
 
 
 @delete_tool(
@@ -1477,7 +1278,7 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
 
     Call dataverse_publish_customizations after deleting columns.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1551,22 +1352,8 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
             "table_logical_name": params.table_logical_name,
             "column_logical_name": params.column_logical_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse delete column error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_delete_column")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_delete_column")
 
 
 # ---------------------------------------------------------------------------
@@ -1613,7 +1400,7 @@ async def dataverse_create_one_to_many_relationship(
         },
     }
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1653,22 +1440,8 @@ async def dataverse_create_one_to_many_relationship(
             ),
             "schema_name": params.schema_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse create 1:N relationship error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_one_to_many_relationship")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_create_one_to_many_relationship")
 
 
 @write_tool(
@@ -1697,7 +1470,7 @@ async def dataverse_create_many_to_many_relationship(
         "IntersectEntityName": params.intersect_entity_name,
     }
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1737,22 +1510,8 @@ async def dataverse_create_many_to_many_relationship(
             ),
             "schema_name": params.schema_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse create N:N relationship error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_many_to_many_relationship")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_create_many_to_many_relationship")
 
 
 @write_tool(
@@ -1793,7 +1552,7 @@ async def dataverse_create_multi_table_lookup(
         "Lookup": lookup,
     }
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1834,22 +1593,8 @@ async def dataverse_create_multi_table_lookup(
             ),
             "lookup_schema_name": params.lookup_schema_name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse create polymorphic lookup error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_multi_table_lookup")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_create_multi_table_lookup")
 
 
 @write_tool(
@@ -1871,7 +1616,7 @@ async def dataverse_update_relationship(
 
     Call dataverse_publish_customizations after updating relationships.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1896,22 +1641,8 @@ async def dataverse_update_relationship(
             "updated": True,
             "metadata_id": params.metadata_id,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse update relationship error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_relationship")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_update_relationship")
 
 
 @delete_tool(
@@ -1933,7 +1664,7 @@ async def dataverse_delete_relationship(
 
     Call dataverse_publish_customizations after deleting relationships.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2006,22 +1737,8 @@ async def dataverse_delete_relationship(
             ),
             "metadata_id": params.metadata_id,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse delete relationship error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_delete_relationship")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_delete_relationship")
 
 
 # ---------------------------------------------------------------------------
@@ -2076,7 +1793,7 @@ async def dataverse_create_choice(
         "Options": options_body,
     }
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2100,22 +1817,8 @@ async def dataverse_create_choice(
             "name": params.name,
             "entity_id": entity_id,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse create choice error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_choice")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_create_choice")
 
 
 @write_tool(
@@ -2135,7 +1838,7 @@ async def dataverse_update_choice(
     The Dataverse metadata API requires a full PUT — partial updates are not
     supported on GlobalOptionSetDefinitions.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2160,22 +1863,8 @@ async def dataverse_update_choice(
             "updated": True,
             "metadata_id": params.metadata_id,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse update choice error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_choice")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_update_choice")
 
 
 @delete_tool(
@@ -2194,7 +1883,7 @@ async def dataverse_delete_choice(
     """Delete a global choice (option set) by logical name.
     Call dataverse_publish_customizations after deleting global choices.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2213,22 +1902,8 @@ async def dataverse_delete_choice(
             "deleted": True,
             "name": params.name,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse delete choice error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_delete_choice")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_delete_choice")
 
 
 @write_tool(
@@ -2259,7 +1934,7 @@ async def dataverse_add_choice_option(
     if params.value is not None:
         body["Value"] = params.value
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2280,22 +1955,8 @@ async def dataverse_add_choice_option(
             "value": result.get("NewOptionValue"),
             "label": params.label,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse add choice option error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_add_choice_option")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_add_choice_option")
 
 
 @write_tool(
@@ -2326,7 +1987,7 @@ async def dataverse_update_choice_option(
         "SolutionUniqueName": params.solution_unique_name,
     }
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2346,22 +2007,8 @@ async def dataverse_update_choice_option(
             "value": params.value,
             "label": params.label,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse update choice option error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_choice_option")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_update_choice_option")
 
 
 @delete_tool(
@@ -2390,7 +2037,7 @@ async def dataverse_delete_choice_option(
         "SolutionUniqueName": params.solution_unique_name,
     }
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2409,22 +2056,8 @@ async def dataverse_delete_choice_option(
             "deleted": True,
             "value": params.value,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse delete choice option error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_delete_choice_option")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_delete_choice_option")
 
 
 @write_tool(
@@ -2453,7 +2086,7 @@ async def dataverse_reorder_choice_options(
         "SolutionUniqueName": params.solution_unique_name,
     }
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2472,22 +2105,8 @@ async def dataverse_reorder_choice_options(
             "reordered": True,
             "values": params.values,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse reorder choice options error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_reorder_choice_options")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_reorder_choice_options")
 
 
 # ---------------------------------------------------------------------------
@@ -2519,7 +2138,7 @@ async def dataverse_publish_customizations(
       the environment via PublishAllXml. May take several minutes.
     """
     if params.publish_all:
-        app_ctx = _get_app_ctx(ctx)
+        app_ctx = get_app_ctx(ctx)
         try:
             base_url = resolve_base_url(app_ctx, params.dataverse_url)
         except ValueError as e:
@@ -2550,22 +2169,8 @@ async def dataverse_publish_customizations(
                     "Check your model-driven app to verify."
                 ),
             })
-        except httpx.HTTPStatusError as e:
-            logger.error(
-                "Dataverse PublishAllXml error: %s (status=%d)",
-                extract_error_message(e.response),
-                e.response.status_code,
-            )
-            return json.dumps({
-                "error": True,
-                "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-            })
         except Exception as e:
-            logger.exception("Unexpected error in dataverse_publish_customizations (PublishAllXml)")
-            return json.dumps({
-                "error": True,
-                "message": f"Unexpected error: {type(e).__name__}: {e}",
-            })
+            return tool_error_response(e, "dataverse_publish_customizations")
 
     # Targeted PublishXml
     root = ET.Element("importexportxml")
@@ -2587,7 +2192,7 @@ async def dataverse_publish_customizations(
 
     parameter_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
 
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -2624,19 +2229,5 @@ async def dataverse_publish_customizations(
             ),
             "parameter_xml": parameter_xml,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse PublishXml error: %s (status=%d)",
-            extract_error_message(e.response),
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {extract_error_message(e.response)}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_publish_customizations (PublishXml)")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_publish_customizations")

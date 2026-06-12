@@ -15,6 +15,7 @@ from dataverse_mcp.client import (
     build_headers,
     extract_error_message,
     get_bearer_token,
+    request_with_retry,
     resolve_base_url,
 )
 from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, RetrievePrincipalAccessInput, RetrieveUserPrivilegesInput, WhoAmIInput
@@ -92,7 +93,7 @@ async def dataverse_list_environments(
         if expand_values:
             query_params["$expand"] = ",".join(expand_values)
 
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             _ENVIRONMENTS_ENDPOINT,
             params=query_params,
             headers={
@@ -164,7 +165,7 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/WhoAmI",
             headers=headers,
         )
@@ -225,7 +226,7 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/",
             headers=headers,
         )
@@ -304,7 +305,7 @@ async def dataverse_retrieve_user_privileges(
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/systemusers({params.user_id})"
             f"/Microsoft.Dynamics.CRM.RetrieveUserPrivileges",
@@ -370,7 +371,7 @@ async def dataverse_retrieve_principal_access(
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/systemusers({params.user_id})"
             f"/Microsoft.Dynamics.CRM.RetrievePrincipalAccess"

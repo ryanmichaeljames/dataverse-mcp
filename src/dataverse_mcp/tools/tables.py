@@ -16,6 +16,7 @@ from dataverse_mcp.client import (
     build_headers,
     extract_error_message,
     paginate_records,
+    request_with_retry,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -32,6 +33,9 @@ from dataverse_mcp.models import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_RECORD_SELECT = ["createdon", "modifiedon"]
+
+# $batch requests bundle many operations and need longer than the client default.
+_BATCH_TIMEOUT = 120.0
 
 
 @mcp.tool(
@@ -101,12 +105,12 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
                     f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
                     f"{urlencode(count_params, safe='$,')}"
                 )
-                count_resp = await app_ctx.http_client.get(count_url, headers=count_headers)
+                count_resp = await request_with_retry(app_ctx.http_client, "GET", count_url, headers=count_headers)
                 count_resp.raise_for_status()
                 count_body = count_resp.json()
                 result["total_count"] = int(count_body.get("@odata.count", 0))
             else:
-                count_resp = await app_ctx.http_client.get(count_url, headers=count_headers)
+                count_resp = await request_with_retry(app_ctx.http_client, "GET", count_url, headers=count_headers)
                 count_resp.raise_for_status()
                 result["total_count"] = int(count_resp.text.strip().lstrip("\ufeff"))
         return json.dumps(result)
@@ -159,7 +163,7 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url, extra=extra_headers or None)
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         record = resp.json()
         record.pop("@odata.context", None)
@@ -216,13 +220,13 @@ async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> st
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
                 f"{urlencode(query_params, safe='$,')}"
             )
-            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
             resp.raise_for_status()
             body = resp.json()
             total = body.get("@odata.count", 0)
         else:
             url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}/$count"
-            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
             resp.raise_for_status()
             total = int(resp.text.strip().lstrip("\ufeff"))
         return json.dumps({
@@ -292,7 +296,7 @@ async def dataverse_aggregate_table(params: AggregateTableInput, ctx: Context) -
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         body = resp.json()
         records = body.get("value", [])
@@ -358,7 +362,7 @@ async def dataverse_associate_records(
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(url, headers=headers, json=body)
+        response = await request_with_retry(app_ctx.http_client, "POST", url, headers=headers, json=body)
         if response.status_code == 204:
             return json.dumps({"success": True})
         try:
@@ -407,7 +411,7 @@ async def dataverse_disassociate_records(
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.delete(url, headers=headers)
+        response = await request_with_retry(app_ctx.http_client, "DELETE", url, headers=headers)
         if response.status_code == 204:
             return json.dumps({"success": True})
         try:
@@ -470,7 +474,7 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(url, headers=headers, json=body)
+        response = await request_with_retry(app_ctx.http_client, "POST", url, headers=headers, json=body)
         if response.status_code == 204:
             return json.dumps({"success": True})
         try:
@@ -545,8 +549,8 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
         if params.continue_on_error:
             req_headers["Prefer"] = "odata.continue-on-error"
 
-        response = await app_ctx.http_client.post(
-            url, headers=req_headers, content=batch_body_bytes, timeout=120
+        response = await request_with_retry(app_ctx.http_client, "POST",
+            url, headers=req_headers, content=batch_body_bytes, timeout=_BATCH_TIMEOUT
         )
         logger.debug(
             "Batch response: status=%d content_type=%s",

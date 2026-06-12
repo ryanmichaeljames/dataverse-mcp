@@ -16,6 +16,7 @@ from dataverse_mcp.client import (
     extract_error_message,
     odata_quote,
     paginate_records,
+    request_with_retry,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -187,7 +188,7 @@ async def dataverse_get_plugin_trace_log_setting(
     )
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         records = resp.json().get("value", [])
         if not records:
@@ -255,7 +256,7 @@ async def dataverse_set_plugin_trace_log_setting(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             "/organizations?$select=organizationid&$top=1"
         )
-        org_resp = await app_ctx.http_client.get(org_url, headers=headers)
+        org_resp = await request_with_retry(app_ctx.http_client, "GET", org_url, headers=headers)
         org_resp.raise_for_status()
         records = org_resp.json().get("value", [])
         if not records:
@@ -266,7 +267,7 @@ async def dataverse_set_plugin_trace_log_setting(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/organizations({org_id})"
         )
-        patch_resp = await app_ctx.http_client.patch(
+        patch_resp = await request_with_retry(app_ctx.http_client, "PATCH",
             patch_url,
             headers={**headers, "Content-Type": "application/json"},
             json={"plugintracelogsetting": setting_value},

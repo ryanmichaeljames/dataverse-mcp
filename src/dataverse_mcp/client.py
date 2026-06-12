@@ -22,6 +22,15 @@ _DATAVERSE_API_VERSION = "v9.2"
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
 _MAX_ERROR_MESSAGE_LENGTH = 2000
 
+# Dataverse service-protection limits return 429; 502/503/504 are transient
+# gateway failures. Anything else is returned to the caller untouched.
+_RETRYABLE_STATUS_CODES = (429, 502, 503, 504)
+_MAX_RETRY_AFTER_SECONDS = 30.0
+_DEFAULT_RETRY_AFTER_SECONDS = 2.0
+# Dataverse pages are capped server-side at 5,000; we never ask for more than
+# 500 per page to keep individual responses small.
+_MAX_PAGE_SIZE = 500
+
 # Hostname suffixes accepted for Dataverse organization URLs. Tokens are minted
 # for whatever host a tool call supplies, so unknown hosts must be rejected.
 _DEFAULT_ALLOWED_HOST_SUFFIXES = (
@@ -116,6 +125,10 @@ def _build_credential(auth_type: str):
     )
 
 
+class DataverseConnectionError(Exception):
+    """Raised when a Dataverse host cannot be reached after retries are exhausted."""
+
+
 @dataclass
 class AppContext:
     """Application context holding shared auth state and HTTP client."""
@@ -125,6 +138,7 @@ class AppContext:
     fallback_dataverse_url: str | None
     http_client: httpx.AsyncClient
     _token_cache: dict[str, tuple[str, float]] = field(default_factory=dict)
+    _token_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
 
 
 @functools.lru_cache(maxsize=64)
@@ -212,11 +226,17 @@ async def build_headers(
     """Build standard Dataverse Web API headers with a cached Bearer token.
 
     Token acquisition runs in a thread on cache miss to avoid blocking the event loop.
+    A per-scope lock ensures concurrent cold-cache calls trigger a single acquisition.
     """
     scope = f"{base_url}/.default"
     token = _get_cached_bearer_token(app_ctx, scope)
     if token is None:
-        token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+        # Lazy lock creation is race-free on a single-threaded event loop.
+        lock = app_ctx._token_locks.setdefault(scope, asyncio.Lock())
+        async with lock:
+            token = _get_cached_bearer_token(app_ctx, scope)
+            if token is None:
+                token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -230,6 +250,81 @@ async def build_headers(
     return headers
 
 
+def _parse_retry_after_seconds(response: httpx.Response) -> float:
+    """Parse a Retry-After header as seconds, falling back to a safe default."""
+    raw = response.headers.get("Retry-After")
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            logger.debug("Unparseable Retry-After header: %r", raw)
+    return _DEFAULT_RETRY_AFTER_SECONDS
+
+
+async def request_with_retry(
+    http_client: httpx.AsyncClient,
+    method: str,
+    url: str,
+    *,
+    headers: dict[str, str] | None = None,
+    max_attempts: int = 3,
+    **kwargs: Any,
+) -> httpx.Response:
+    """Issue a Dataverse request, retrying throttled and transient failures.
+
+    - 429 sleeps for Retry-After (capped at 30s; 2s when absent) and retries
+    - 502/503/504 retry with exponential backoff (1s, 2s, 4s)
+    - Timeouts and connection failures retry for GET requests only; timeouts
+      re-raise unchanged (callers have specific handlers), connection failures
+      raise DataverseConnectionError
+    - Any other status returns immediately; callers keep their
+      raise_for_status() flow
+    """
+    method_upper = method.upper()
+    response: httpx.Response | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = await http_client.request(
+                method_upper, url, headers=headers, **kwargs
+            )
+        except httpx.ConnectError as e:
+            if method_upper != "GET" or attempt == max_attempts:
+                host = urlparse(url).netloc or url
+                raise DataverseConnectionError(
+                    f"Could not reach {host}: {e}"
+                ) from e
+            delay = float(2 ** (attempt - 1))
+            logger.warning(
+                "Connection error on %s %s: %s; retrying in %.1fs (attempt %d/%d)",
+                method_upper, url, e, delay, attempt, max_attempts,
+            )
+            await asyncio.sleep(delay)
+            continue
+        except httpx.TimeoutException as e:
+            if method_upper != "GET" or attempt == max_attempts:
+                raise
+            delay = float(2 ** (attempt - 1))
+            logger.warning(
+                "Timeout on %s %s: %s; retrying in %.1fs (attempt %d/%d)",
+                method_upper, url, e, delay, attempt, max_attempts,
+            )
+            await asyncio.sleep(delay)
+            continue
+        if response.status_code not in _RETRYABLE_STATUS_CODES or attempt == max_attempts:
+            return response
+        if response.status_code == 429:
+            delay = min(_parse_retry_after_seconds(response), _MAX_RETRY_AFTER_SECONDS)
+        else:
+            delay = float(2 ** (attempt - 1))
+        logger.warning(
+            "Dataverse returned %d for %s %s; retrying in %.1fs (attempt %d/%d)",
+            response.status_code, method_upper, url, delay, attempt, max_attempts,
+        )
+        await asyncio.sleep(delay)
+    assert response is not None  # loop always returns, raises, or sets response
+    return response
+
+
 async def paginate_records(
     url: str,
     headers: dict[str, str],
@@ -239,14 +334,27 @@ async def paginate_records(
     """Asynchronously fetch pages from a Dataverse collection, stopping at top records.
 
     Follows @odata.nextLink until top records are collected or no more pages remain.
+    When top is set, asks the server for right-sized pages via odata.maxpagesize.
     Uses the shared AsyncClient for connection reuse.
     """
+    request_headers = headers
+    if top is not None:
+        page_size_pref = f"odata.maxpagesize={min(top, _MAX_PAGE_SIZE)}"
+        existing_prefer = headers.get("Prefer")
+        request_headers = {
+            **headers,
+            "Prefer": f"{existing_prefer},{page_size_pref}"
+            if existing_prefer
+            else page_size_pref,
+        }
     records: list[dict] = []
     next_url: str | None = url
     while next_url:
         if top is not None and len(records) >= top:
             break
-        response = await http_client.get(next_url, headers=headers)
+        response = await request_with_retry(
+            http_client, "GET", next_url, headers=request_headers
+        )
         response.raise_for_status()
         body = response.json()
         for item in body.get("value", []):
@@ -301,7 +409,7 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
 
     credential = _build_credential(auth_type)
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=10.0, read=30.0, write=60.0, pool=5.0),
+        timeout=httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=5.0),
         limits=httpx.Limits(max_connections=20, max_keepalive_connections=10),
     ) as http_client:
         app_ctx = AppContext(

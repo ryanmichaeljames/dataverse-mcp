@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_create_view`, `dataverse_update_view`, and `dataverse_add_view_column` now escape column names when verifying they exist, preventing crafted names from altering the metadata query; the same escaping is applied consistently across all tools that build OData filters from inputs
 
 ### Changed
+- All tools now automatically retry requests throttled by Dataverse service-protection limits (HTTP 429, honoring `Retry-After`) and transient gateway failures (HTTP 502/503/504, with exponential backoff)
+- Read-only requests that time out or fail to connect are retried, and unreachable hosts now produce a clear "Could not reach {host}" error message
+- Concurrent tool calls no longer trigger duplicate authentication round-trips when the token cache is cold
+- List tools now ask Dataverse for right-sized result pages (`odata.maxpagesize`, capped at 500) instead of always receiving full 5,000-record pages
+- Default read timeout raised from 30 to 60 seconds so larger result pages complete reliably
 - Error messages returned by tools are now capped at 2,000 characters and consistently include the Dataverse OData error code instead of echoing raw API response bodies
 
 ### Added

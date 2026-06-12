@@ -15,6 +15,7 @@ from dataverse_mcp.client import (
     extract_error_message,
     odata_quote,
     paginate_records,
+    request_with_retry,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -165,7 +166,7 @@ async def dataverse_get_connection_reference(
                 f"/connectionreferences({params.connection_reference_id})"
                 f"?$select={_SELECT}"
             )
-            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
             if resp.status_code == 404:
                 return json.dumps({
                     "error": True,
@@ -188,7 +189,7 @@ async def dataverse_get_connection_reference(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/connectionreferences?{query}"
         )
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         items = resp.json().get("value", [])
         if not items:
@@ -264,7 +265,7 @@ async def dataverse_create_connection_reference(
         headers = await build_headers(app_ctx, base_url)
         if params.solution_unique_name:
             headers = {**headers, "MSCRM.SolutionUniqueName": params.solution_unique_name}
-        resp = await app_ctx.http_client.post(url, json=body, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "POST", url, json=body, headers=headers)
         resp.raise_for_status()
         location = resp.headers.get("OData-EntityId") or resp.headers.get("location", "")
         logger.info("Created connection reference '%s' (%s)", params.logical_name, location)
@@ -344,7 +345,7 @@ async def dataverse_update_connection_reference(
         patch_headers = {**headers, "Content-Type": "application/json"}
         if params.solution_unique_name:
             patch_headers["MSCRM.SolutionUniqueName"] = params.solution_unique_name
-        resp = await app_ctx.http_client.patch(url, json=body, headers=patch_headers)
+        resp = await request_with_retry(app_ctx.http_client, "PATCH", url, json=body, headers=patch_headers)
         resp.raise_for_status()
         logger.info("Updated connection reference %s", params.connection_reference_id)
         return json.dumps({
@@ -406,7 +407,7 @@ async def dataverse_delete_connection_reference(
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.delete(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "DELETE", url, headers=headers)
         if resp.status_code == 404:
             return json.dumps({
                 "error": True,

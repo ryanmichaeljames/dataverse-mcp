@@ -17,6 +17,7 @@ from dataverse_mcp.client import (
     extract_error_message,
     odata_quote,
     paginate_records,
+    request_with_retry,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -74,6 +75,11 @@ _DEFAULT_COLUMN_SELECT = [
 ]
 
 _CREATE_COLUMN_RESERVED_KEYS = {"@odata.type", "SchemaName", "DisplayName", "RequiredLevel"}
+
+# Metadata writes (EntityDefinitions, attributes, relationships) can be slow;
+# publishing all customizations slower still.
+_METADATA_TIMEOUT = 300.0
+_PUBLISH_TIMEOUT = 600.0
 
 
 def _build_extra_headers(
@@ -216,7 +222,7 @@ async def dataverse_get_table_metadata(
             app_ctx, base_url,
             extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         raw = resp.json()
         table_info = {
@@ -422,7 +428,9 @@ async def _fetch_picklist_options(
         "$filter": f"LogicalName eq '{odata_quote(column)}'",
     }
 
-    response = await http_client.get(url, params=params, headers=headers)
+    response = await request_with_retry(
+        http_client, "GET", url, params=params, headers=headers
+    )
     response.raise_for_status()
     payload = response.json()
     return _extract_options(payload.get("value", []))
@@ -559,7 +567,9 @@ async def _fetch_relationships_httpx(
         params["$select"] = select
     params["$top"] = top
 
-    response = await http_client.get(
+    response = await request_with_retry(
+        http_client,
+        "GET",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{url_path}",
         params=params,
         headers=headers,
@@ -692,7 +702,7 @@ async def dataverse_get_relationship(
             app_ctx, base_url,
             extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"RelationshipDefinitions(SchemaName='{schema_enc}')",
             headers=headers,
@@ -765,7 +775,7 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
             extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
         query_params: dict[str, str] = {"$select": select}
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
             params=query_params,
             headers=headers,
@@ -835,7 +845,7 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
             app_ctx, base_url,
             extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{path}",
             headers=headers,
         )
@@ -901,7 +911,7 @@ async def dataverse_check_relationship_eligibility(
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{action_name}",
             json={"EntityName": params.table_logical_name},
             headers=headers,
@@ -1014,11 +1024,11 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/EntityDefinitions",
             json=body,
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         location = response.headers.get("OData-EntityId") or response.headers.get("location", "")
@@ -1093,7 +1103,7 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        get_resp = await app_ctx.http_client.get(
+        get_resp = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')",
             headers=headers,
@@ -1122,7 +1132,7 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.put(
+        response = await request_with_retry(app_ctx.http_client, "PUT",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions({metadata_id})",
             json=definition,
@@ -1179,7 +1189,7 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        get_resp = await app_ctx.http_client.get(
+        get_resp = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')"
             f"?$select=LogicalName,SchemaName,DisplayName,IsCustomEntity,IsManaged",
@@ -1208,11 +1218,11 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
                 ),
             })
 
-        response = await app_ctx.http_client.delete(
+        response = await request_with_retry(app_ctx.http_client, "DELETE",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')",
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         logger.info("Deleted table %s", params.table_logical_name)
@@ -1332,12 +1342,12 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')/Attributes",
             json=body,
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         entity_id = response.headers.get("OData-EntityId", "")
@@ -1414,7 +1424,7 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.put(
+        response = await request_with_retry(app_ctx.http_client, "PUT",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')"
             f"/Attributes(LogicalName='{column_enc}')",
@@ -1478,7 +1488,7 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        get_resp = await app_ctx.http_client.get(
+        get_resp = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')"
             f"/Attributes(LogicalName='{column_enc}')"
@@ -1510,12 +1520,12 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
                 ),
             })
 
-        response = await app_ctx.http_client.delete(
+        response = await request_with_retry(app_ctx.http_client, "DELETE",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')"
             f"/Attributes(LogicalName='{column_enc}')",
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         logger.info(
@@ -1614,11 +1624,11 @@ async def dataverse_create_one_to_many_relationship(
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
             json=body,
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         entity_id = response.headers.get("OData-EntityId", "")
@@ -1698,11 +1708,11 @@ async def dataverse_create_many_to_many_relationship(
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RelationshipDefinitions",
             json=body,
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         entity_id = response.headers.get("OData-EntityId", "")
@@ -1794,12 +1804,12 @@ async def dataverse_create_multi_table_lookup(
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/CreatePolymorphicLookupAttribute",
             json=body,
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         result = response.json()
@@ -1874,7 +1884,7 @@ async def dataverse_update_relationship(
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.put(
+        response = await request_with_retry(app_ctx.http_client, "PUT",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/RelationshipDefinitions({params.metadata_id})",
             json=definition,
@@ -1933,7 +1943,7 @@ async def dataverse_delete_relationship(
         headers = await build_headers(app_ctx, base_url)
 
         try:
-            get_resp = await app_ctx.http_client.get(
+            get_resp = await request_with_retry(app_ctx.http_client, "GET",
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
                 f"/RelationshipDefinitions({params.metadata_id})",
                 headers=headers,
@@ -1970,11 +1980,11 @@ async def dataverse_delete_relationship(
                 ),
             })
 
-        response = await app_ctx.http_client.delete(
+        response = await request_with_retry(app_ctx.http_client, "DELETE",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/RelationshipDefinitions({params.metadata_id})",
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         logger.info("Deleted relationship %s", params.metadata_id)
@@ -2077,7 +2087,7 @@ async def dataverse_create_choice(
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/GlobalOptionSetDefinitions",
             json=body,
             headers=headers,
@@ -2138,7 +2148,7 @@ async def dataverse_update_choice(
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
-        response = await app_ctx.http_client.put(
+        response = await request_with_retry(app_ctx.http_client, "PUT",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/GlobalOptionSetDefinitions({params.metadata_id})",
             json=definition,
@@ -2192,7 +2202,7 @@ async def dataverse_delete_choice(
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.delete(
+        response = await request_with_retry(app_ctx.http_client, "DELETE",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/GlobalOptionSetDefinitions(Name='{_url_quote(params.name)}')",
             headers=headers,
@@ -2257,7 +2267,7 @@ async def dataverse_add_choice_option(
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/InsertOptionValue",
             json=body,
             headers=headers,
@@ -2324,7 +2334,7 @@ async def dataverse_update_choice_option(
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/UpdateOptionValue",
             json=body,
             headers=headers,
@@ -2388,7 +2398,7 @@ async def dataverse_delete_choice_option(
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/DeleteOptionValue",
             json=body,
             headers=headers,
@@ -2451,7 +2461,7 @@ async def dataverse_reorder_choice_options(
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/OrderOption",
             json=body,
             headers=headers,
@@ -2517,10 +2527,10 @@ async def dataverse_publish_customizations(
 
         try:
             headers = await build_headers(app_ctx, base_url, include_content_type=True)
-            response = await app_ctx.http_client.post(
+            response = await request_with_retry(app_ctx.http_client, "POST",
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishAllXml",
                 headers=headers,
-                timeout=600.0,
+                timeout=_PUBLISH_TIMEOUT,
             )
             response.raise_for_status()
             logger.info("Published all customizations")
@@ -2585,11 +2595,11 @@ async def dataverse_publish_customizations(
 
     try:
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        response = await app_ctx.http_client.post(
+        response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
             json={"ParameterXml": parameter_xml},
             headers=headers,
-            timeout=300.0,
+            timeout=_METADATA_TIMEOUT,
         )
         response.raise_for_status()
         logger.info("Published customizations: %s", parameter_xml)

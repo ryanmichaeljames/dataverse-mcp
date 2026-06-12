@@ -20,6 +20,7 @@ from dataverse_mcp.client import (
     build_headers,
     extract_error_message,
     odata_quote,
+    request_with_retry,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -120,7 +121,7 @@ async def _fetch_view(
         f"/savedqueries({view_id})"
         f"?$select={_SAVEDQUERY_SELECT},fetchxml,layoutxml"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -144,7 +145,7 @@ async def _resolve_entity_view_info(
         f"/EntityDefinitions(LogicalName='{table_enc}')"
         f"?$select=ObjectTypeCode,PrimaryIdAttribute,PrimaryNameAttribute,EntitySetName"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     resp.raise_for_status()
     data = resp.json()
     return {
@@ -177,7 +178,7 @@ async def _resolve_columns(
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
         f"/EntityDefinitions(LogicalName='{table_enc}')/Attributes?{query}"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     resp.raise_for_status()
     items = resp.json().get("value", [])
     found: dict[str, str] = {}
@@ -205,7 +206,7 @@ async def _publish_table(
         f"<optionsets /><relationships />"
         f"</importexportxml>"
     )
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
         json={"ParameterXml": xml},
         headers={**headers, "Content-Type": "application/json"},
@@ -228,7 +229,7 @@ async def _add_component_to_solution(
         "AddRequiredComponents": False,
         "DoNotIncludeSubcomponents": False,
     }
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/AddSolutionComponent",
         json=body,
         headers=headers,
@@ -545,7 +546,7 @@ async def _patch_view(
                 f"{len(errors)} error(s): " + "; ".join(errors)
             )
     patch_headers = {**headers, "Content-Type": "application/json"}
-    resp = await app_ctx.http_client.patch(
+    resp = await request_with_retry(app_ctx.http_client, "PATCH",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/savedqueries({view_id})",
         json=body,
         headers=patch_headers,
@@ -598,7 +599,7 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         records = resp.json().get("value", [])
         views = [
@@ -874,7 +875,7 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
             post_body["description"] = params.description
 
         post_headers = {**headers, "Content-Type": "application/json"}
-        resp = await app_ctx.http_client.post(
+        resp = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/savedqueries",
             json=post_body,
             headers=post_headers,

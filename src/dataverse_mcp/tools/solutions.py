@@ -17,6 +17,7 @@ from dataverse_mcp.client import (
     extract_error_message,
     odata_quote,
     paginate_records,
+    request_with_retry,
     resolve_base_url,
 )
 from dataverse_mcp.models import (
@@ -100,6 +101,10 @@ _DEFAULT_CLOUD_FLOW_SELECT = [
 _CLOUD_FLOW_COMPONENT_TYPE = 29
 _CLOUD_FLOW_CATEGORY_FILTER = "category eq 5"
 
+# $batch requests and workflow state transitions need longer than the client default.
+_BATCH_TIMEOUT = 120.0
+_FLOW_STATE_TIMEOUT = 120.0
+
 
 def _combine_filters(*filters: str | None) -> str | None:
     active = [f"({f})" for f in filters if f]
@@ -128,11 +133,11 @@ async def _set_cloud_flow_state(
     patch_url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/workflows({flow_id})"
 
     try:
-        patch_resp = await app_ctx.http_client.patch(
+        patch_resp = await request_with_retry(app_ctx.http_client, "PATCH",
             patch_url,
             json={"statecode": statecode, "statuscode": target_statuscode},
             headers=headers,
-            timeout=120.0,
+            timeout=_FLOW_STATE_TIMEOUT,
         )
         patch_resp.raise_for_status()
         return {
@@ -157,11 +162,11 @@ async def _set_cloud_flow_state(
         "Status": {"Value": target_statuscode},
     }
     try:
-        action_resp = await app_ctx.http_client.post(
+        action_resp = await request_with_retry(app_ctx.http_client, "POST",
             set_state_url,
             json=set_state_body,
             headers=headers,
-            timeout=120.0,
+            timeout=_FLOW_STATE_TIMEOUT,
         )
         action_resp.raise_for_status()
         return {
@@ -265,11 +270,11 @@ async def _execute_cloud_flow_state_batch(
     if continue_on_error:
         request_headers["Prefer"] = "odata.continue-on-error"
 
-    response = await app_ctx.http_client.post(
+    response = await request_with_retry(app_ctx.http_client, "POST",
         batch_url,
         headers=request_headers,
         content=batch_body.encode("utf-8"),
-        timeout=120.0,
+        timeout=_BATCH_TIMEOUT,
     )
     if response.status_code not in (200, 202):
         try:
@@ -351,7 +356,7 @@ async def _resolve_solution_record(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions({solution_id})"
             f"?$select={select}"
         )
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         if resp.status_code == 404:
             return None
         resp.raise_for_status()
@@ -472,7 +477,7 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions({params.solution_id})"
                 f"?$select={','.join(select)}"
             )
-            resp = await app_ctx.http_client.get(url, headers=headers)
+            resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
             resp.raise_for_status()
             record = resp.json()
         else:
@@ -879,7 +884,7 @@ async def dataverse_create_publisher(params: CreatePublisherInput, ctx: Context)
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.post(url, json=body, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "POST", url, json=body, headers=headers)
         resp.raise_for_status()
         location = resp.headers.get("OData-EntityId") or resp.headers.get("location", "")
         return json.dumps({
@@ -933,7 +938,7 @@ async def dataverse_update_publisher(params: UpdatePublisherInput, ctx: Context)
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.patch(url, json=body, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "PATCH", url, json=body, headers=headers)
         resp.raise_for_status()
         return json.dumps({"updated": True, "publisher_id": params.publisher_id})
     except httpx.HTTPStatusError as e:
@@ -982,7 +987,7 @@ async def dataverse_create_solution(params: CreateSolutionInput, ctx: Context) -
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.post(url, json=body, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "POST", url, json=body, headers=headers)
         resp.raise_for_status()
         location = resp.headers.get("OData-EntityId") or resp.headers.get("location", "")
         return json.dumps({
@@ -1059,7 +1064,7 @@ async def dataverse_update_solution(params: UpdateSolutionInput, ctx: Context) -
         url = (
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions({target_solution_id})"
         )
-        resp = await app_ctx.http_client.patch(url, json=body, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "PATCH", url, json=body, headers=headers)
         resp.raise_for_status()
         return json.dumps({
             "updated": True,
@@ -1128,7 +1133,7 @@ async def dataverse_update_solution_version(
         url = (
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/solutions({target_solution_id})"
         )
-        resp = await app_ctx.http_client.patch(
+        resp = await request_with_retry(app_ctx.http_client, "PATCH",
             url,
             json={"version": params.version},
             headers=headers,
@@ -1209,7 +1214,7 @@ async def dataverse_add_component_to_solution(
             "DoNotIncludeSubcomponents": params.do_not_include_subcomponents,
         }
 
-        resp = await app_ctx.http_client.post(action_url, json=body, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "POST", action_url, json=body, headers=headers)
         resp.raise_for_status()
         return json.dumps({
             "added": True,
@@ -1290,7 +1295,7 @@ async def dataverse_remove_component_from_solution(
             "SolutionUniqueName": solution_unique_name,
         }
 
-        resp = await app_ctx.http_client.post(action_url, json=body, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "POST", action_url, json=body, headers=headers)
         resp.raise_for_status()
         return json.dumps({
             "removed": True,

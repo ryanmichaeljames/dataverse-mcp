@@ -18,10 +18,12 @@ from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
     odata_quote,
     request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     AddViewColumnInput,
@@ -103,10 +105,6 @@ _FETCH_OPERATORS: frozenset[str] = frozenset({
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_app_ctx(ctx: Context) -> AppContext:
-    return ctx.request_context.lifespan_context
 
 
 async def _fetch_view(
@@ -578,7 +576,7 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
 
     Use dataverse_get_view to inspect the full layout of a specific view.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -616,14 +614,9 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
             }
             for r in records
         ]
-        return json.dumps({"views": views, "count": len(views)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
+        return finalize_response({"views": views, "count": len(views)})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_views")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_list_views")
 
 
 # ---------------------------------------------------------------------------
@@ -651,7 +644,7 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
 
     Use dataverse_list_views to discover view IDs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -670,7 +663,7 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
         parsed_layout = _parse_layout(layoutxml)
         query_type = record.get("querytype", 0)
 
-        return json.dumps({
+        return finalize_response({
             "view_id": record.get("savedqueryid"),
             "name": record.get("name"),
             "table": record.get("returnedtypecode"),
@@ -690,13 +683,8 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
             "fetchxml_backup": fetchxml,
             "layoutxml_backup": layoutxml,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_get_view")
 
 
 # ---------------------------------------------------------------------------
@@ -728,7 +716,7 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
 
     Write tools run this validation automatically before every PATCH.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -745,7 +733,7 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
         errors = _validate_view_xml(fetchxml, layoutxml)
 
         if errors:
-            return json.dumps({
+            return finalize_response({
                 "valid": False,
                 "view_id": params.view_id,
                 "view_name": record.get("name"),
@@ -756,7 +744,7 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
 
         parsed_fetch = _parse_fetch(fetchxml)
         parsed_layout = _parse_layout(layoutxml)
-        return json.dumps({
+        return finalize_response({
             "valid": True,
             "view_id": params.view_id,
             "view_name": record.get("name"),
@@ -765,13 +753,8 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
             "columns": [c["name"] for c in parsed_layout["columns"]],
             "sort": parsed_fetch["sort"],
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_validate_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_validate_view")
 
 
 # ---------------------------------------------------------------------------
@@ -796,7 +779,7 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
     Always publishes after creating — no separate publish step needed.
     The new view's fetchxml and layoutxml are returned for reference.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -906,7 +889,7 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
-        return json.dumps({
+        return finalize_response({
             "created": True,
             "view_id": new_id,
             "name": params.name,
@@ -919,13 +902,8 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
             "fetchxml": fetchxml,
             "layoutxml": layoutxml,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_create_view")
 
 
 # ---------------------------------------------------------------------------
@@ -952,7 +930,7 @@ async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
     Always publishes after saving.
     fetchxml_backup and layoutxml_backup contain the pre-change XML for rollback.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1072,17 +1050,10 @@ async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
                 f"isquickfindfields blocks (HTTP 400 / 0x80040216). Dropped fields: "
                 f"{', '.join(qf_dropped)}. Restore them via the maker portal or solution import."
             )
-        return json.dumps(result)
+        return finalize_response(result)
 
-    except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_update_view")
 
 
 # ---------------------------------------------------------------------------
@@ -1110,7 +1081,7 @@ async def dataverse_add_view_column(params: AddViewColumnInput, ctx: Context) ->
     Quick Find filter blocks are stripped before PATCH; quick_find_warning is returned
     when this occurs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1236,17 +1207,10 @@ async def dataverse_add_view_column(params: AddViewColumnInput, ctx: Context) ->
                 f"isquickfindfields blocks (HTTP 400 / 0x80040216). Dropped fields: "
                 f"{', '.join(qf_dropped)}. Restore them via the maker portal or solution import."
             )
-        return json.dumps(result)
+        return finalize_response(result)
 
-    except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_add_view_column")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_add_view_column")
 
 
 # ---------------------------------------------------------------------------
@@ -1274,7 +1238,7 @@ async def dataverse_remove_view_column(params: RemoveViewColumnInput, ctx: Conte
     Quick Find filter blocks are stripped before PATCH; quick_find_warning is returned
     when this occurs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1380,14 +1344,7 @@ async def dataverse_remove_view_column(params: RemoveViewColumnInput, ctx: Conte
                 f"isquickfindfields blocks (HTTP 400 / 0x80040216). Dropped fields: "
                 f"{', '.join(qf_dropped)}. Restore them via the maker portal or solution import."
             )
-        return json.dumps(result)
+        return finalize_response(result)
 
-    except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_remove_view_column")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_remove_view_column")

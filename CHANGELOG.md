@@ -10,24 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.2.0] - 2026-06-12
 
 ### Security
-- `dataverse_url` is now validated against an allowlist of Dataverse hostname suffixes (`.dynamics.com`, `.dynamics-int.com`, and sovereign cloud equivalents) so requests and access tokens can no longer be directed at unknown servers; additional domains can be permitted via the new `DATAVERSE_ALLOWED_HOST_SUFFIXES` environment variable
-- `dataverse_create_view`, `dataverse_update_view`, and `dataverse_add_view_column` now escape column names when verifying they exist, preventing crafted names from altering the metadata query; the same escaping is applied consistently across all tools that build OData filters from inputs
+- `dataverse_url` is now validated against an allowlist of known Dataverse domains; permit additional domains with the `DATAVERSE_ALLOWED_HOST_SUFFIXES` environment variable
+- User-supplied values such as column names are now escaped in all OData filters
 
 ### Changed
-- Responses larger than 5 MB are now replaced with an actionable "Response too large" error suggesting `select`/`top`/`filter` narrowing, so a single call can no longer flood the client
-- `dataverse_associate_records`, `dataverse_disassociate_records`, and `dataverse_merge_records` now return the Dataverse OData error code and message on failure instead of the raw HTTP response body
-- All tools now automatically retry requests throttled by Dataverse service-protection limits (HTTP 429, honoring `Retry-After`) and transient gateway failures (HTTP 502/503/504, with exponential backoff)
-- Read-only requests that time out or fail to connect are retried, and unreachable hosts now produce a clear "Could not reach {host}" error message
-- Concurrent tool calls no longer trigger duplicate authentication round-trips when the token cache is cold
-- List tools now ask Dataverse for right-sized result pages (`odata.maxpagesize`, capped at 500) instead of always receiving full 5,000-record pages
-- Default read timeout raised from 30 to 60 seconds so larger result pages complete reliably
-- Error messages returned by tools are now capped at 2,000 characters and consistently include the Dataverse OData error code instead of echoing raw API response bodies
+- Throttled and transiently failing requests are now retried automatically
+- Responses larger than 5 MB are replaced with an error suggesting `select`/`top`/`filter` narrowing
+- Error messages are consistent across all tools, capped in length, and include the Dataverse error code
+- Large queries page more efficiently and tolerate slower responses; concurrent calls no longer repeat authentication
 
 ### Fixed
-- `dataverse_list_apps` and `dataverse_get_app` no longer fail with HTTP 400 — they selected a nonexistent `ispublished` column; publish state is now derived from `publishedon`
-- `dataverse_get_app` now returns the app's actual components — the RetrieveAppComponents response was read from the wrong property, so the component list was always empty
-- `dataverse_set_app_sitemap` no longer fails when the app already has a sitemap, and newly created sitemap unique names now respect Dataverse's 40-character letters-and-numbers-only limit (previously creation always failed)
-- `dataverse_create_multi_table_lookup` no longer fails with HTTP 400 — the action payload now matches the documented CreatePolymorphicLookupAttribute format
+- `dataverse_list_apps` and `dataverse_get_app` failed with HTTP 400 on every call
+- `dataverse_get_app` always returned an empty component list
+- `dataverse_set_app_sitemap` could never create a sitemap
+- `dataverse_create_multi_table_lookup` failed with HTTP 400 on every call
 
 ## [2.1.0] - 2026-06-02
 

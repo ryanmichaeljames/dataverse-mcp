@@ -103,6 +103,7 @@ Set these in the `env` block of your MCP server entry. This project does not use
 | `DATAVERSE_URL` | — | Fallback org URL used when a tool call omits `dataverse_url` |
 | `DATAVERSE_ALLOW_WRITE` | `false` | Set to `true` to register create, update, associate, merge, and schema mutation tools |
 | `DATAVERSE_ALLOW_DELETE` | `false` | Set to `true` to register delete and disassociate tools |
+| `DATAVERSE_ALLOWED_HOST_SUFFIXES` | — | Comma-separated extra hostname suffixes to accept for `dataverse_url` (e.g., `.contoso.internal`). Standard Dataverse domains (`.dynamics.com`, `.dynamics-int.com`, and sovereign cloud equivalents) are always allowed; all other hosts are rejected to prevent requests and tokens being directed at unknown servers |
 
 ### Authentication
 
@@ -133,6 +134,15 @@ Most write and delete tools are **not registered by default**, so they do not ap
 ```
 
 Each flag is independent — set only `DATAVERSE_ALLOW_WRITE=true` to allow creates and updates while keeping deletes disabled.
+
+### Reliability and Limits
+
+These behaviors are built in and need no configuration:
+
+- **Automatic retries** — requests throttled by Dataverse service-protection limits or hitting transient gateway errors are retried automatically; read-only requests are also retried on timeouts and connection failures.
+- **Response size cap** — responses larger than 5 MB are replaced with an error asking the agent to narrow the query with `select`, `top`, or `filter`.
+- **Consistent errors** — every tool returns JSON; failures have the shape `{"error": true, "message": "..."}` with the Dataverse error code included and the message capped in length.
+- **Server-side paging** — list tools request right-sized pages from Dataverse instead of full 5,000-record pages.
 
 ---
 

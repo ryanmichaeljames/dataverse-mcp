@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-06-12
+
+### Security
+- `dataverse_url` is now validated against an allowlist of known Dataverse domains; permit additional domains with the `DATAVERSE_ALLOWED_HOST_SUFFIXES` environment variable
+- User-supplied values such as column names are now escaped in all OData filters
+
+### Changed
+- Throttled and transiently failing requests are now retried automatically
+- Responses larger than 5 MB are replaced with an error suggesting `select`/`top`/`filter` narrowing
+- Error messages are consistent across all tools, capped in length, and include the Dataverse error code
+- Large queries page more efficiently and tolerate slower responses; concurrent calls no longer repeat authentication
+
+### Fixed
+- `dataverse_list_apps` and `dataverse_get_app` failed with HTTP 400 on every call
+- `dataverse_get_app` always returned an empty component list
+- `dataverse_set_app_sitemap` could never create a sitemap
+- `dataverse_create_multi_table_lookup` failed with HTTP 400 on every call
+
 ## [2.1.0] - 2026-06-02
 
 ### Added

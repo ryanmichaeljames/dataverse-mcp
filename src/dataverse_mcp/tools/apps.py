@@ -18,8 +18,11 @@ from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
+    request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     AddAppComponentsInput,
@@ -63,17 +66,13 @@ _GUID_RE = re.compile(
 )
 
 _APP_SELECT = (
-    "appmoduleid,appmoduleidunique,name,uniquename,description,ispublished,statecode,clienttype"
+    "appmoduleid,appmoduleidunique,name,uniquename,description,publishedon,statecode,clienttype"
 )
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_app_ctx(ctx: Context) -> AppContext:
-    return ctx.request_context.lifespan_context
 
 
 def _sanitize_id(s: str) -> str:
@@ -191,7 +190,7 @@ async def _resolve_entity_metadata_id(
     logical_name: str,
 ) -> str | None:
     enc = _url_quote(logical_name, safe="")
-    resp = await app_ctx.http_client.get(
+    resp = await request_with_retry(app_ctx.http_client, "GET",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
         f"/EntityDefinitions(LogicalName='{enc}')?$select=MetadataId",
         headers=headers,
@@ -236,7 +235,7 @@ async def _call_add_app_components(
     app_id: str,
     components: list[dict],
 ) -> None:
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/AddAppComponents",
         json={"AppId": app_id, "Components": components},
         headers={**headers, "Content-Type": "application/json"},
@@ -251,7 +250,7 @@ async def _call_remove_app_components(
     app_id: str,
     components: list[dict],
 ) -> None:
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/RemoveAppComponents",
         json={"AppId": app_id, "Components": components},
         headers={**headers, "Content-Type": "application/json"},
@@ -270,7 +269,7 @@ async def _publish_app(
         f"<appmodules><appmodule>{app_id}</appmodule></appmodules>"
         f"</importexportxml>"
     )
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
         json={"ParameterXml": xml},
         headers={**headers, "Content-Type": "application/json"},
@@ -284,7 +283,7 @@ async def _run_validate_app(
     headers: dict,
     app_id: str,
 ) -> dict:
-    resp = await app_ctx.http_client.get(
+    resp = await request_with_retry(app_ctx.http_client, "GET",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/ValidateApp(AppModuleId={app_id})",
         headers=headers,
     )
@@ -304,7 +303,7 @@ async def _upsert_sitemap(
     """Create (POST) or update (PATCH) a sitemap record. Returns sitemapid."""
     body: dict = {"sitemapxml": sitemap_xml}
     if existing_sitemap_id:
-        resp = await app_ctx.http_client.patch(
+        resp = await request_with_retry(app_ctx.http_client, "PATCH",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/sitemaps({existing_sitemap_id})",
             json=body,
             headers={**headers, "Content-Type": "application/json"},
@@ -313,7 +312,7 @@ async def _upsert_sitemap(
         return existing_sitemap_id
 
     body["sitemapnameunique"] = sitemap_unique_name
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/sitemaps",
         json=body,
         headers={**headers, "Content-Type": "application/json"},
@@ -335,21 +334,27 @@ async def _fetch_app_sitemap(
     app_id: str,
 ) -> tuple[str | None, str | None]:
     """Return (sitemap_id, sitemapxml) for the app's current sitemap, or (None, None)."""
-    resp = await app_ctx.http_client.get(
+    resp = await request_with_retry(app_ctx.http_client, "GET",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
         f"/RetrieveAppComponents(AppModuleId={app_id})",
         headers=headers,
     )
     resp.raise_for_status()
-    components = resp.json().get("AppModuleComponents", [])
+    # RetrieveAppComponents returns appmodulecomponent records in "value"
+    components = resp.json().get("value", [])
+    # objectid is a lookup attribute, so the Web API returns it as _objectid_value
     sitemap_id = next(
-        (c.get("objectid") for c in components if c.get("componenttype") == 62),
+        (
+            c.get("objectid") or c.get("_objectid_value")
+            for c in components
+            if c.get("componenttype") == 62
+        ),
         None,
     )
     if not sitemap_id:
         return None, None
 
-    sm_resp = await app_ctx.http_client.get(
+    sm_resp = await request_with_retry(app_ctx.http_client, "GET",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
         f"/sitemaps({sitemap_id})?$select=sitemapxml",
         headers=headers,
@@ -390,11 +395,11 @@ def _summarise_validation(vr: dict) -> dict:
 )
 async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
     """List model-driven apps (AppModule records) in a Dataverse environment.
-    Returns appmoduleid, name, uniquename, description, ispublished, and statecode.
+    Returns appmoduleid, name, uniquename, description, publish state, and statecode.
     Set include_unpublished=true to also return draft apps not yet published.
     Use dataverse_get_app to fetch a single app's components.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -413,7 +418,7 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
                 f"/appmodules?$select={_APP_SELECT}"
             )
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         records = resp.json().get("value", [])
         apps = [
@@ -422,20 +427,15 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
                 "name": r.get("name"),
                 "unique_name": r.get("uniquename"),
                 "description": r.get("description"),
-                "is_published": r.get("ispublished"),
+                "is_published": r.get("publishedon") is not None,
                 "state": r.get("statecode"),
                 "client_type": r.get("clienttype"),
             }
             for r in records
         ]
-        return json.dumps({"apps": apps, "count": len(apps)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
+        return finalize_response({"apps": apps, "count": len(apps)})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_apps")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_list_apps")
 
 
 # ---------------------------------------------------------------------------
@@ -459,7 +459,7 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
     sitemap, etc.) via RetrieveAppComponents. Use dataverse_list_apps to find app IDs.
     Always call this before any write to confirm current component state.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -468,7 +468,7 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
     try:
         headers = await build_headers(app_ctx, base_url)
 
-        app_resp = await app_ctx.http_client.get(
+        app_resp = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/appmodules({params.app_id})?$select={_APP_SELECT}",
             headers=headers,
@@ -478,43 +478,39 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
         app_resp.raise_for_status()
         app_data = app_resp.json()
 
-        comp_resp = await app_ctx.http_client.get(
+        comp_resp = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/RetrieveAppComponents(AppModuleId={params.app_id})",
             headers=headers,
         )
         comp_resp.raise_for_status()
-        raw_components = comp_resp.json().get("AppModuleComponents", [])
+        # RetrieveAppComponents returns appmodulecomponent records in "value"
+        raw_components = comp_resp.json().get("value", [])
 
         grouped: dict[str, list] = {}
         for c in raw_components:
             ct = c.get("componenttype", 0)
             label = _COMPONENT_TYPE_NAMES.get(ct, f"Type {ct}")
             grouped.setdefault(label, []).append({
-                "object_id": c.get("objectid"),
+                "object_id": c.get("objectid") or c.get("_objectid_value"),
                 "component_type": ct,
                 "root_component_behavior": c.get("rootcomponentbehavior"),
             })
 
-        return json.dumps({
+        return finalize_response({
             "app_id": app_data.get("appmoduleid"),
             "app_id_unique": app_data.get("appmoduleidunique"),
             "name": app_data.get("name"),
             "unique_name": app_data.get("uniquename"),
             "description": app_data.get("description"),
-            "is_published": app_data.get("ispublished"),
+            "is_published": app_data.get("publishedon") is not None,
             "state": app_data.get("statecode"),
             "client_type": app_data.get("clienttype"),
             "components": grouped,
             "component_count": len(raw_components),
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_app")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_get_app")
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +533,7 @@ async def dataverse_validate_app(params: ValidateAppInput, ctx: Context) -> str:
     Checks for required components (sitemap, etc.) and returns all errors and warnings.
     An app with validation errors cannot be published. Always run this before publishing.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -546,14 +542,9 @@ async def dataverse_validate_app(params: ValidateAppInput, ctx: Context) -> str:
     try:
         headers = await build_headers(app_ctx, base_url)
         vr = await _run_validate_app(app_ctx, base_url, headers, params.app_id)
-        return json.dumps({"app_id": params.app_id, **_summarise_validation(vr)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
+        return finalize_response({"app_id": params.app_id, **_summarise_validation(vr)})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_validate_app")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_validate_app")
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +569,7 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
     The returned unique_name includes the publisher prefix added by Dataverse.
     Always provide tables — apps without a sitemap fail validation and cannot publish.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -596,7 +587,7 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
         if params.description:
             create_body["description"] = params.description
 
-        create_resp = await app_ctx.http_client.post(
+        create_resp = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/appmodules",
             json=create_body,
             headers={**headers, "Content-Type": "application/json"},
@@ -632,7 +623,8 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
                     "message": f"Generated sitemap XML is invalid: {'; '.join(xml_errors)}",
                 })
 
-            sitemap_unique = re.sub(r"[^a-zA-Z0-9_]", "_", params.unique_name) + "_sitemap"
+            # sitemapnameunique allows only letters and numbers, max 40 chars
+            sitemap_unique = re.sub(r"[^a-zA-Z0-9]", "", params.unique_name)[:33] + "sitemap"
             sitemap_id = await _upsert_sitemap(
                 app_ctx, base_url, headers,
                 sitemap_xml=sitemap_xml,
@@ -670,7 +662,7 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
                 vr = await _run_validate_app(app_ctx, base_url, headers, app_id)
                 validation = _summarise_validation(vr)
                 if validation["error_count"] > 0 and not params.publish_anyway:
-                    return json.dumps({
+                    return finalize_response({
                         "created": True,
                         "app_id": app_id,
                         "name": params.name,
@@ -697,7 +689,7 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
             except httpx.HTTPStatusError as e:
                 logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
-        return json.dumps({
+        return finalize_response({
             "created": True,
             "app_id": app_id,
             "name": params.name,
@@ -708,13 +700,8 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
             "published": published,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_app")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_create_app")
 
 
 # ---------------------------------------------------------------------------
@@ -737,7 +724,7 @@ async def dataverse_update_app(params: UpdateAppInput, ctx: Context) -> str:
     To change components use dataverse_add_app_components / dataverse_remove_app_components.
     To update navigation use dataverse_set_app_sitemap.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -756,7 +743,7 @@ async def dataverse_update_app(params: UpdateAppInput, ctx: Context) -> str:
                 "message": "No fields to update — supply at least name or description.",
             })
 
-        resp = await app_ctx.http_client.patch(
+        resp = await request_with_retry(app_ctx.http_client, "PATCH",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/appmodules({params.app_id})",
             json=body,
             headers={**headers, "Content-Type": "application/json"},
@@ -767,13 +754,8 @@ async def dataverse_update_app(params: UpdateAppInput, ctx: Context) -> str:
         logger.info("Updated app %s", params.app_id)
         return json.dumps({"updated": True, "app_id": params.app_id, **body})
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_app")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_update_app")
 
 
 # ---------------------------------------------------------------------------
@@ -797,7 +779,7 @@ async def dataverse_add_app_components(params: AddAppComponentsInput, ctx: Conte
     Table components are automatically resolved to their MetadataId. Publishes after.
     Use dataverse_get_app first to check the current component list.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -839,13 +821,8 @@ async def dataverse_add_app_components(params: AddAppComponentsInput, ctx: Conte
             "published": True,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_add_app_components")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_add_app_components")
 
 
 # ---------------------------------------------------------------------------
@@ -868,7 +845,7 @@ async def dataverse_remove_app_components(params: RemoveAppComponentsInput, ctx:
     Same component spec format as dataverse_add_app_components.
     Use object_id values from dataverse_get_app to identify components. Publishes after.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -910,13 +887,8 @@ async def dataverse_remove_app_components(params: RemoveAppComponentsInput, ctx:
             "published": True,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_remove_app_components")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_remove_app_components")
 
 
 # ---------------------------------------------------------------------------
@@ -940,7 +912,7 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
     the generated XML before writing. Publishes after updating.
     Returns sitemapxml_backup (prior XML or null if newly created) for rollback.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -964,7 +936,9 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
 
         existing_id, backup_xml = await _fetch_app_sitemap(app_ctx, base_url, headers, params.app_id)
 
-        sitemap_unique = re.sub(r"[^a-zA-Z0-9_]", "_", params.app_id) + "_sitemap"
+        # sitemapnameunique allows only letters and numbers, max 40 chars; the
+        # GUID's 32 hex chars plus the suffix fit exactly under the limit
+        sitemap_unique = re.sub(r"[^a-zA-Z0-9]", "", params.app_id)[:33] + "sitemap"
         sitemap_id = await _upsert_sitemap(
             app_ctx, base_url, headers,
             sitemap_xml=sitemap_xml,
@@ -985,7 +959,7 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
-        return json.dumps({
+        return finalize_response({
             "updated": True,
             "app_id": params.app_id,
             "sitemap_id": sitemap_id,
@@ -994,13 +968,8 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
             "sitemapxml_backup": backup_xml,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_set_app_sitemap")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_set_app_sitemap")
 
 
 # ---------------------------------------------------------------------------
@@ -1023,7 +992,7 @@ async def dataverse_publish_app(params: PublishAppInput, ctx: Context) -> str:
     Unpublished changes are invisible until this is called. Use dataverse_validate_app
     first to catch errors before publishing.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1035,13 +1004,8 @@ async def dataverse_publish_app(params: PublishAppInput, ctx: Context) -> str:
         logger.info("Published app %s", params.app_id)
         return json.dumps({"published": True, "app_id": params.app_id})
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_publish_app")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_publish_app")
 
 
 # ---------------------------------------------------------------------------
@@ -1065,7 +1029,7 @@ async def dataverse_assign_app_role(params: AssignAppRoleInput, ctx: Context) ->
     action='remove' revokes that access.
     Use dataverse_query_table against the 'roles' entity set to find role IDs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1082,7 +1046,7 @@ async def dataverse_assign_app_role(params: AssignAppRoleInput, ctx: Context) ->
         )
 
         if params.action == "add":
-            resp = await app_ctx.http_client.post(
+            resp = await request_with_retry(app_ctx.http_client, "POST",
                 assoc_url,
                 json={"@odata.id": role_ref},
                 headers={**headers, "Content-Type": "application/json"},
@@ -1090,7 +1054,7 @@ async def dataverse_assign_app_role(params: AssignAppRoleInput, ctx: Context) ->
             resp.raise_for_status()
             logger.info("Associated role %s with app %s", params.role_id, params.app_id)
         else:
-            resp = await app_ctx.http_client.delete(
+            resp = await request_with_retry(app_ctx.http_client, "DELETE",
                 f"{assoc_url}?$id={role_ref}",
                 headers=headers,
             )
@@ -1104,10 +1068,5 @@ async def dataverse_assign_app_role(params: AssignAppRoleInput, ctx: Context) ->
             "success": True,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_assign_app_role")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_assign_app_role")

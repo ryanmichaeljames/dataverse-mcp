@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlencode
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -18,8 +18,12 @@ from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
+    odata_quote,
+    request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     AddViewColumnInput,
@@ -103,10 +107,6 @@ _FETCH_OPERATORS: frozenset[str] = frozenset({
 # ---------------------------------------------------------------------------
 
 
-def _get_app_ctx(ctx: Context) -> AppContext:
-    return ctx.request_context.lifespan_context
-
-
 async def _fetch_view(
     app_ctx: AppContext,
     base_url: str,
@@ -119,7 +119,7 @@ async def _fetch_view(
         f"/savedqueries({view_id})"
         f"?$select={_SAVEDQUERY_SELECT},fetchxml,layoutxml"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -143,7 +143,7 @@ async def _resolve_entity_view_info(
         f"/EntityDefinitions(LogicalName='{table_enc}')"
         f"?$select=ObjectTypeCode,PrimaryIdAttribute,PrimaryNameAttribute,EntitySetName"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     resp.raise_for_status()
     data = resp.json()
     return {
@@ -165,14 +165,18 @@ async def _resolve_columns(
     if not names:
         return {}
     table_enc = _url_quote(table, safe="")
-    name_filters = " or ".join(f"LogicalName eq '{n}'" for n in names)
+    name_filters = " or ".join(
+        f"LogicalName eq '{odata_quote(n)}'" for n in names
+    )
+    query = urlencode(
+        {"$filter": name_filters, "$select": "LogicalName,DisplayName"},
+        safe="$,",
+    )
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-        f"/EntityDefinitions(LogicalName='{table_enc}')/Attributes"
-        f"?$filter={name_filters}"
-        f"&$select=LogicalName,DisplayName"
+        f"/EntityDefinitions(LogicalName='{table_enc}')/Attributes?{query}"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     resp.raise_for_status()
     items = resp.json().get("value", [])
     found: dict[str, str] = {}
@@ -200,7 +204,7 @@ async def _publish_table(
         f"<optionsets /><relationships />"
         f"</importexportxml>"
     )
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
         json={"ParameterXml": xml},
         headers={**headers, "Content-Type": "application/json"},
@@ -223,7 +227,7 @@ async def _add_component_to_solution(
         "AddRequiredComponents": False,
         "DoNotIncludeSubcomponents": False,
     }
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/AddSolutionComponent",
         json=body,
         headers=headers,
@@ -540,7 +544,7 @@ async def _patch_view(
                 f"{len(errors)} error(s): " + "; ".join(errors)
             )
     patch_headers = {**headers, "Content-Type": "application/json"}
-    resp = await app_ctx.http_client.patch(
+    resp = await request_with_retry(app_ctx.http_client, "PATCH",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/savedqueries({view_id})",
         json=body,
         headers=patch_headers,
@@ -572,7 +576,7 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
 
     Use dataverse_get_view to inspect the full layout of a specific view.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -580,8 +584,7 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
 
     filters: list[str] = []
     if params.table_logical_name:
-        t = params.table_logical_name.replace("'", "''")
-        filters.append(f"returnedtypecode eq '{t}'")
+        filters.append(f"returnedtypecode eq '{odata_quote(params.table_logical_name)}'")
     if params.query_type is not None:
         filters.append(f"querytype eq {params.query_type}")
 
@@ -594,7 +597,7 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         records = resp.json().get("value", [])
         views = [
@@ -611,14 +614,9 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
             }
             for r in records
         ]
-        return json.dumps({"views": views, "count": len(views)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
+        return finalize_response({"views": views, "count": len(views)})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_views")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_list_views")
 
 
 # ---------------------------------------------------------------------------
@@ -646,7 +644,7 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
 
     Use dataverse_list_views to discover view IDs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -665,7 +663,7 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
         parsed_layout = _parse_layout(layoutxml)
         query_type = record.get("querytype", 0)
 
-        return json.dumps({
+        return finalize_response({
             "view_id": record.get("savedqueryid"),
             "name": record.get("name"),
             "table": record.get("returnedtypecode"),
@@ -685,13 +683,8 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
             "fetchxml_backup": fetchxml,
             "layoutxml_backup": layoutxml,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_get_view")
 
 
 # ---------------------------------------------------------------------------
@@ -723,7 +716,7 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
 
     Write tools run this validation automatically before every PATCH.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -740,7 +733,7 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
         errors = _validate_view_xml(fetchxml, layoutxml)
 
         if errors:
-            return json.dumps({
+            return finalize_response({
                 "valid": False,
                 "view_id": params.view_id,
                 "view_name": record.get("name"),
@@ -751,7 +744,7 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
 
         parsed_fetch = _parse_fetch(fetchxml)
         parsed_layout = _parse_layout(layoutxml)
-        return json.dumps({
+        return finalize_response({
             "valid": True,
             "view_id": params.view_id,
             "view_name": record.get("name"),
@@ -760,13 +753,8 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
             "columns": [c["name"] for c in parsed_layout["columns"]],
             "sort": parsed_fetch["sort"],
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_validate_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_validate_view")
 
 
 # ---------------------------------------------------------------------------
@@ -791,7 +779,7 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
     Always publishes after creating — no separate publish step needed.
     The new view's fetchxml and layoutxml are returned for reference.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -870,7 +858,7 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
             post_body["description"] = params.description
 
         post_headers = {**headers, "Content-Type": "application/json"}
-        resp = await app_ctx.http_client.post(
+        resp = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/savedqueries",
             json=post_body,
             headers=post_headers,
@@ -901,7 +889,7 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
-        return json.dumps({
+        return finalize_response({
             "created": True,
             "view_id": new_id,
             "name": params.name,
@@ -914,13 +902,8 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
             "fetchxml": fetchxml,
             "layoutxml": layoutxml,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_create_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_create_view")
 
 
 # ---------------------------------------------------------------------------
@@ -947,7 +930,7 @@ async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
     Always publishes after saving.
     fetchxml_backup and layoutxml_backup contain the pre-change XML for rollback.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1067,17 +1050,10 @@ async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
                 f"isquickfindfields blocks (HTTP 400 / 0x80040216). Dropped fields: "
                 f"{', '.join(qf_dropped)}. Restore them via the maker portal or solution import."
             )
-        return json.dumps(result)
+        return finalize_response(result)
 
-    except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_update_view")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_update_view")
 
 
 # ---------------------------------------------------------------------------
@@ -1105,7 +1081,7 @@ async def dataverse_add_view_column(params: AddViewColumnInput, ctx: Context) ->
     Quick Find filter blocks are stripped before PATCH; quick_find_warning is returned
     when this occurs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1231,17 +1207,10 @@ async def dataverse_add_view_column(params: AddViewColumnInput, ctx: Context) ->
                 f"isquickfindfields blocks (HTTP 400 / 0x80040216). Dropped fields: "
                 f"{', '.join(qf_dropped)}. Restore them via the maker portal or solution import."
             )
-        return json.dumps(result)
+        return finalize_response(result)
 
-    except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_add_view_column")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_add_view_column")
 
 
 # ---------------------------------------------------------------------------
@@ -1269,7 +1238,7 @@ async def dataverse_remove_view_column(params: RemoveViewColumnInput, ctx: Conte
     Quick Find filter blocks are stripped before PATCH; quick_find_warning is returned
     when this occurs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1375,14 +1344,7 @@ async def dataverse_remove_view_column(params: RemoveViewColumnInput, ctx: Conte
                 f"isquickfindfields blocks (HTTP 400 / 0x80040216). Dropped fields: "
                 f"{', '.join(qf_dropped)}. Restore them via the maker portal or solution import."
             )
-        return json.dumps(result)
+        return finalize_response(result)
 
-    except ValueError as e:
-        return json.dumps({"error": True, "message": str(e)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_remove_view_column")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_remove_view_column")

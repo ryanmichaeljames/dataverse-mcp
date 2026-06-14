@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlencode
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -19,8 +19,12 @@ from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
+    odata_quote,
+    request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     AddFormControlInput,
@@ -95,10 +99,6 @@ _SYSTEM_FORM_SELECT = (
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-
-def _get_app_ctx(ctx: Context) -> AppContext:
-    return ctx.request_context.lifespan_context
 
 
 def _new_guid() -> str:
@@ -381,7 +381,7 @@ async def _fetch_formxml(
         f"/systemforms({form_id})"
         f"?$select={_SYSTEM_FORM_SELECT},formxml"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
@@ -407,7 +407,7 @@ async def _patch_formxml(
             f"{len(errors)} error(s): " + "; ".join(errors)
         )
     patch_headers = {**headers, "Content-Type": "application/json"}
-    resp = await app_ctx.http_client.patch(
+    resp = await request_with_retry(app_ctx.http_client, "PATCH",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/systemforms({form_id})",
         json={"formxml": formxml},
         headers=patch_headers,
@@ -430,7 +430,7 @@ async def _add_form_to_solution(
         "AddRequiredComponents": False,
         "DoNotIncludeSubcomponents": False,
     }
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/AddSolutionComponent",
         json=body,
         headers=headers,
@@ -451,7 +451,7 @@ async def _publish_table(
         f"<optionsets /><relationships />"
         f"</importexportxml>"
     )
-    resp = await app_ctx.http_client.post(
+    resp = await request_with_retry(app_ctx.http_client, "POST",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/PublishXml",
         json={"ParameterXml": xml},
         headers={**headers, "Content-Type": "application/json"},
@@ -468,16 +468,18 @@ async def _resolve_column_info(
 ) -> dict | None:
     """Return {attribute_type, display_name, format_name_value} for a column, or None."""
     table_enc = _url_quote(table_logical_name, safe="")
-    field_enc = _url_quote(datafieldname, safe="")
+    field_filter = f"LogicalName eq '{odata_quote(datafieldname)}'"
 
     # Basic metadata (works for all types)
+    query = urlencode(
+        {"$filter": field_filter, "$select": "LogicalName,AttributeType,DisplayName"},
+        safe="$,",
+    )
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
-        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes"
-        f"?$filter=LogicalName eq '{field_enc}'"
-        f"&$select=LogicalName,AttributeType,DisplayName"
+        f"EntityDefinitions(LogicalName='{table_enc}')/Attributes?{query}"
     )
-    resp = await app_ctx.http_client.get(url, headers=headers)
+    resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
     resp.raise_for_status()
     items = resp.json().get("value", [])
     if not items:
@@ -492,23 +494,28 @@ async def _resolve_column_info(
     format_name_value: str | None = None
     if attribute_type == "String":
         # Hit the cast endpoint to get FormatName
+        cast_query = urlencode(
+            {"$filter": field_filter, "$select": "LogicalName,FormatName"},
+            safe="$,",
+        )
         cast_url = (
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')"
-            f"/Attributes/Microsoft.Dynamics.CRM.StringAttributeMetadata"
-            f"?$filter=LogicalName eq '{field_enc}'"
-            f"&$select=LogicalName,FormatName"
+            f"/Attributes/Microsoft.Dynamics.CRM.StringAttributeMetadata?{cast_query}"
         )
         try:
-            cast_resp = await app_ctx.http_client.get(cast_url, headers=headers)
+            cast_resp = await request_with_retry(app_ctx.http_client, "GET", cast_url, headers=headers)
             cast_resp.raise_for_status()
             cast_items = cast_resp.json().get("value", [])
             if cast_items:
                 fn = cast_items[0].get("FormatName")
                 if isinstance(fn, dict):
                     format_name_value = fn.get("Value")
-        except httpx.HTTPStatusError:
-            pass
+        except httpx.HTTPStatusError as e:
+            logger.debug(
+                "Could not resolve FormatName for %s.%s (HTTP %d); continuing without it",
+                table_logical_name, datafieldname, e.response.status_code,
+            )
 
     return {
         "attribute_type": attribute_type,
@@ -541,7 +548,7 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
 
     Use dataverse_get_form to inspect the full layout of a specific form.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -549,8 +556,7 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
 
     filters: list[str] = []
     if params.table_logical_name:
-        t = params.table_logical_name.replace("'", "''")
-        filters.append(f"objecttypecode eq '{t}'")
+        filters.append(f"objecttypecode eq '{odata_quote(params.table_logical_name)}'")
     if params.form_type is not None:
         filters.append(f"type eq {params.form_type}")
 
@@ -563,7 +569,7 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         records = resp.json().get("value", [])
         forms = [
@@ -579,14 +585,9 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
             }
             for r in records
         ]
-        return json.dumps({"forms": forms, "count": len(forms)})
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
+        return finalize_response({"forms": forms, "count": len(forms)})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_forms")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_list_forms")
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +613,7 @@ async def dataverse_get_form(params: GetFormInput, ctx: Context) -> str:
     Also returns formxml_backup (the raw XML string) for reference.
     Use dataverse_list_forms to discover form IDs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -632,7 +633,7 @@ async def dataverse_get_form(params: GetFormInput, ctx: Context) -> str:
             return json.dumps({"error": True, "message": f"Could not parse FormXml: {exc}"})
 
         form_type = record.get("type", 0)
-        return json.dumps({
+        return finalize_response({
             "form_id": record.get("formid"),
             "name": record.get("name"),
             "table": record.get("objecttypecode"),
@@ -643,13 +644,8 @@ async def dataverse_get_form(params: GetFormInput, ctx: Context) -> str:
             "layout": layout,
             "formxml_backup": formxml,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_form")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_get_form")
 
 
 # ---------------------------------------------------------------------------
@@ -688,7 +684,7 @@ async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) 
     that is invisible to subsequent reads until published).
     Use dataverse_get_form first to see the current layout and section indices.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -798,7 +794,7 @@ async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) 
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
-        return json.dumps({
+        return finalize_response({
             "added": True,
             "form_id": params.form_id,
             "datafieldname": params.datafieldname,
@@ -815,13 +811,8 @@ async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) 
             "formxml_backup": formxml,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_add_form_control")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_add_form_control")
 
 
 # ---------------------------------------------------------------------------
@@ -859,7 +850,7 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
     Returns valid=true and the control list on success, or valid=false with a full
     error list. Note: all write tools run this validation automatically before every PATCH.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -923,13 +914,8 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
             "controls": controls,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_validate_formxml")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_validate_formxml")
 
 
 # ---------------------------------------------------------------------------
@@ -957,7 +943,7 @@ async def dataverse_remove_form_control(params: RemoveFormControlInput, ctx: Con
     that is invisible to subsequent reads until published).
     The original FormXml is returned in formxml_backup for rollback if needed.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1013,7 +999,7 @@ async def dataverse_remove_form_control(params: RemoveFormControlInput, ctx: Con
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
-        return json.dumps({
+        return finalize_response({
             "removed": True,
             "form_id": params.form_id,
             "datafieldname": params.datafieldname,
@@ -1022,13 +1008,8 @@ async def dataverse_remove_form_control(params: RemoveFormControlInput, ctx: Con
             "formxml_backup": formxml,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_remove_form_control")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_remove_form_control")
 
 
 # ---------------------------------------------------------------------------
@@ -1067,7 +1048,7 @@ async def dataverse_set_formxml(params: SetFormXmlInput, ctx: Context) -> str:
 
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -1112,7 +1093,7 @@ async def dataverse_set_formxml(params: SetFormXmlInput, ctx: Context) -> str:
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
-        return json.dumps({
+        return finalize_response({
             "updated": True,
             "published": True,
             "form_id": params.form_id,
@@ -1121,10 +1102,5 @@ async def dataverse_set_formxml(params: SetFormXmlInput, ctx: Context) -> str:
             "formxml_backup": formxml_backup,
         })
 
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({"error": True, "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}"})
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_set_formxml")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_set_formxml")

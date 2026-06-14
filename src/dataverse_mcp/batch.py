@@ -153,7 +153,11 @@ def parse_batch_response(response_text: str, boundary: str) -> list[dict]:
         if body_text:
             try:
                 body_json = json.loads(body_text)
-            except Exception:
+            except Exception as e:
+                logger.debug(
+                    "Batch response part (status %d) is not JSON, keeping raw text: %s",
+                    status_code, e,
+                )
                 body_json = body_text
 
         results.append({"status_code": status_code, "body": body_json})

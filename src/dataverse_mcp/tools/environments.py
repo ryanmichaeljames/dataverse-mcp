@@ -10,11 +10,15 @@ from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import mcp
 from dataverse_mcp.client import (
-    AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
+    extract_error_message,
+    finalize_response,
+    get_app_ctx,
     get_bearer_token,
+    request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, RetrievePrincipalAccessInput, RetrieveUserPrivilegesInput, WhoAmIInput
 
@@ -72,7 +76,7 @@ async def dataverse_list_environments(
     dataverse_url. Use it to discover available environments before calling
     environment-specific Dataverse tools.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
 
     try:
         bearer_token = await asyncio.to_thread(
@@ -91,7 +95,7 @@ async def dataverse_list_environments(
         if expand_values:
             query_params["$expand"] = ",".join(expand_values)
 
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             _ENVIRONMENTS_ENDPOINT,
             params=query_params,
             headers={
@@ -106,29 +110,26 @@ async def dataverse_list_environments(
             for raw_environment in payload.get("value", [])
         ]
 
-        return json.dumps({
+        return finalize_response({
             "environments": environments,
             "count": len(environments),
         })
     except httpx.HTTPStatusError as e:
+        msg = extract_error_message(e.response)
         logger.error(
             "Power Platform admin API error: %s (status=%d)",
-            e.response.text,
+            msg,
             e.response.status_code,
         )
         return json.dumps({
             "error": True,
             "message": (
                 "Power Platform admin API returned HTTP "
-                f"{e.response.status_code}: {e.response.text}"
+                f"{e.response.status_code}: {msg}"
             ),
         })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_environments")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_list_environments")
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +155,7 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
     and to obtain the caller's system user GUID (useful for privilege checks
     or filtering records owned by the current user).
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -162,7 +163,7 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/WhoAmI",
             headers=headers,
         )
@@ -173,22 +174,8 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
             "BusinessUnitId": payload.get("BusinessUnitId"),
             "OrganizationId": payload.get("OrganizationId"),
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse WhoAmI API error: %s (status=%d)",
-            e.response.text,
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_whoami")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_whoami")
 
 
 @mcp.tool(
@@ -214,7 +201,7 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
     Use 'contains' to filter by a substring and 'top' to limit results.
     Check 'has_more' in the response to determine if additional entries exist.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -222,7 +209,7 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/",
             headers=headers,
         )
@@ -242,27 +229,13 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
             {"name": entry.get("name"), "url": entry.get("url")}
             for entry in all_entries[: params.top]
         ]
-        return json.dumps({
+        return finalize_response({
             "entity_sets": entity_sets,
             "count": len(entity_sets),
             "has_more": has_more,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse service document API error: %s (status=%d)",
-            e.response.text,
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_entity_sets")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_get_entity_sets")
 
 
 # ---------------------------------------------------------------------------
@@ -292,7 +265,7 @@ async def dataverse_retrieve_user_privileges(
     tool to verify available privileges before attempting operations that may
     fail due to missing permissions.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -300,7 +273,7 @@ async def dataverse_retrieve_user_privileges(
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/systemusers({params.user_id})"
             f"/Microsoft.Dynamics.CRM.RetrieveUserPrivileges",
@@ -309,26 +282,12 @@ async def dataverse_retrieve_user_privileges(
         response.raise_for_status()
         payload = response.json()
         privileges = payload.get("RolePrivileges", [])
-        return json.dumps({
+        return finalize_response({
             "privileges": privileges,
             "count": len(privileges),
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse RetrieveUserPrivileges error: %s (status=%d)",
-            e.response.text,
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_retrieve_user_privileges")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_retrieve_user_privileges")
 
 
 @mcp.tool(
@@ -355,7 +314,7 @@ async def dataverse_retrieve_principal_access(
     entity_set_name is the OData collection name (e.g., 'accounts', 'contacts').
     Use dataverse_get_entity_sets to discover the correct name.
     """
-    app_ctx: AppContext = ctx.request_context.lifespan_context
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -365,7 +324,7 @@ async def dataverse_retrieve_principal_access(
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        response = await app_ctx.http_client.get(
+        response = await request_with_retry(app_ctx.http_client, "GET",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/systemusers({params.user_id})"
             f"/Microsoft.Dynamics.CRM.RetrievePrincipalAccess"
@@ -391,19 +350,5 @@ async def dataverse_retrieve_principal_access(
             "entity_set_name": params.entity_set_name,
             "record_id": params.record_id,
         })
-    except httpx.HTTPStatusError as e:
-        logger.error(
-            "Dataverse RetrievePrincipalAccess error: %s (status=%d)",
-            e.response.text,
-            e.response.status_code,
-        )
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {e.response.text}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_retrieve_principal_access")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_retrieve_principal_access")

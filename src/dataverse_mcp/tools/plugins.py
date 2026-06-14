@@ -5,17 +5,19 @@ import logging
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
-import httpx
 from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import mcp, write_tool
 from dataverse_mcp.client import (
-    AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
-    extract_error_message,
+    finalize_response,
+    get_app_ctx,
+    odata_quote,
     paginate_records,
+    request_with_retry,
     resolve_base_url,
+    tool_error_response,
 )
 from dataverse_mcp.models import (
     GetPluginTraceLogSettingInput,
@@ -66,10 +68,6 @@ _SELECT = (
 _PLUGIN_TYPE_EXPAND = "plugintypeid($select=name,typename,assemblyname)"
 
 
-def _get_app_ctx(ctx: Context) -> AppContext:
-    return ctx.request_context.lifespan_context
-
-
 # ---------------------------------------------------------------------------
 # Tool: dataverse_list_plugin_type_statistics
 # ---------------------------------------------------------------------------
@@ -102,7 +100,7 @@ async def dataverse_list_plugin_type_statistics(
     Use this to identify slow, high-failure, or crash-prone plug-ins before
     investigating further with the Power Platform Admin Center analytics dashboard.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -128,24 +126,13 @@ async def dataverse_list_plugin_type_statistics(
     try:
         headers = await build_headers(app_ctx, base_url)
         records = await paginate_records(url, headers, params.top, app_ctx.http_client)
-        return json.dumps({
+        return finalize_response({
             "records": records,
             "count": len(records),
             "has_more": len(records) >= params.top,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_plugin_type_statistics")
-        return json.dumps({
-            "error": True,
-            "message": f"Unexpected error: {type(e).__name__}: {e}",
-        })
+        return tool_error_response(e, "dataverse_list_plugin_type_statistics")
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +161,7 @@ async def dataverse_get_plugin_trace_log_setting(
     the plugintracelog entity. Use dataverse_set_plugin_trace_log_setting to
     change the setting, and dataverse_list_plugin_trace_logs to read the logs.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -186,7 +173,7 @@ async def dataverse_get_plugin_trace_log_setting(
     )
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await app_ctx.http_client.get(url, headers=headers)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
         records = resp.json().get("value", [])
         if not records:
@@ -198,16 +185,8 @@ async def dataverse_get_plugin_trace_log_setting(
             "plugin_trace_log_setting": raw,
             "plugin_trace_log_setting_label": _SETTING_LABEL_MAP.get(raw, "unknown"),
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_get_plugin_trace_log_setting")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_get_plugin_trace_log_setting")
 
 
 # ---------------------------------------------------------------------------
@@ -240,7 +219,7 @@ async def dataverse_set_plugin_trace_log_setting(
     WARNING: Setting 'all' generates high log volume. Disable logging once
     debugging is complete to avoid excessive storage usage.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -254,7 +233,7 @@ async def dataverse_set_plugin_trace_log_setting(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             "/organizations?$select=organizationid&$top=1"
         )
-        org_resp = await app_ctx.http_client.get(org_url, headers=headers)
+        org_resp = await request_with_retry(app_ctx.http_client, "GET", org_url, headers=headers)
         org_resp.raise_for_status()
         records = org_resp.json().get("value", [])
         if not records:
@@ -265,7 +244,7 @@ async def dataverse_set_plugin_trace_log_setting(
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
             f"/organizations({org_id})"
         )
-        patch_resp = await app_ctx.http_client.patch(
+        patch_resp = await request_with_retry(app_ctx.http_client, "PATCH",
             patch_url,
             headers={**headers, "Content-Type": "application/json"},
             json={"plugintracelogsetting": setting_value},
@@ -277,16 +256,8 @@ async def dataverse_set_plugin_trace_log_setting(
             "plugin_trace_log_setting": setting_value,
             "plugin_trace_log_setting_label": params.setting,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_set_plugin_trace_log_setting")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_set_plugin_trace_log_setting")
 
 
 # ---------------------------------------------------------------------------
@@ -323,7 +294,7 @@ async def dataverse_list_plugin_trace_logs(
     before logs will be generated. Use dataverse_get_plugin_trace_log_setting to
     check the current setting.
     """
-    app_ctx = _get_app_ctx(ctx)
+    app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(app_ctx, params.dataverse_url)
     except ValueError as e:
@@ -331,14 +302,11 @@ async def dataverse_list_plugin_trace_logs(
 
     filters: list[str] = []
     if params.type_name:
-        escaped = params.type_name.replace("'", "''")
-        filters.append(f"contains(typename,'{escaped}')")
+        filters.append(f"contains(typename,'{odata_quote(params.type_name)}')")
     if params.message_name:
-        escaped = params.message_name.replace("'", "''")
-        filters.append(f"messagename eq '{escaped}'")
+        filters.append(f"messagename eq '{odata_quote(params.message_name)}'")
     if params.primary_entity:
-        escaped = params.primary_entity.replace("'", "''")
-        filters.append(f"primaryentity eq '{escaped}'")
+        filters.append(f"primaryentity eq '{odata_quote(params.primary_entity)}'")
     if params.operation_type is not None:
         filters.append(f"operationtype eq {params.operation_type}")
     if params.exceptions_only:
@@ -362,18 +330,10 @@ async def dataverse_list_plugin_trace_logs(
     try:
         headers = await build_headers(app_ctx, base_url)
         records = await paginate_records(url, headers, params.top, app_ctx.http_client)
-        return json.dumps({
+        return finalize_response({
             "records": records,
             "count": len(records),
             "has_more": len(records) >= params.top,
         })
-    except httpx.HTTPStatusError as e:
-        msg = extract_error_message(e.response)
-        logger.error("Dataverse HTTP %d: %s", e.response.status_code, msg)
-        return json.dumps({
-            "error": True,
-            "message": f"Dataverse returned HTTP {e.response.status_code}: {msg}",
-        })
     except Exception as e:
-        logger.exception("Unexpected error in dataverse_list_plugin_trace_logs")
-        return json.dumps({"error": True, "message": f"Unexpected error: {type(e).__name__}: {e}"})
+        return tool_error_response(e, "dataverse_list_plugin_trace_logs")

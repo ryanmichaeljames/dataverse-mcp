@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.2.0] - 2026-06-12
 
 ### Security
-- `dataverse_url` is now validated against an allowlist of known Dataverse domains; permit additional domains with the `DATAVERSE_ALLOWED_HOST_SUFFIXES` environment variable
+- Added the `DATAVERSE_WHITELIST` environment variable to restrict tool calls to an explicit list of allowed environment hostnames;
 - User-supplied values such as column names are now escaped in all OData filters
 
 ### Changed

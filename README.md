@@ -103,7 +103,10 @@ Set these in the `env` block of your MCP server entry. This project does not use
 | `DATAVERSE_URL` | — | Fallback org URL used when a tool call omits `dataverse_url` |
 | `DATAVERSE_ALLOW_WRITE` | `false` | Set to `true` to register create, update, associate, merge, and schema mutation tools |
 | `DATAVERSE_ALLOW_DELETE` | `false` | Set to `true` to register delete and disassociate tools |
-| `DATAVERSE_ALLOWED_HOST_SUFFIXES` | — | Comma-separated extra hostname suffixes to accept for `dataverse_url` (e.g., `.contoso.internal`). Standard Dataverse domains (`.dynamics.com`, `.dynamics-int.com`, and sovereign cloud equivalents) are always allowed; all other hosts are rejected to prevent requests and tokens being directed at unknown servers |
+| `DATAVERSE_WHITELIST` | — | Comma-separated list of allowed environment hostnames (e.g., `yourorg.crm.dynamics.com,yourorg-uat.crm.dynamics.com`). When set, tool calls to any environment not on the list are rejected. When empty, **all** environments are permitted — see the warning below |
+
+> [!WARNING]
+> **Leaving `DATAVERSE_WHITELIST` unset is risky.** Tools accept a `dataverse_url` per call, and the server mints a bearer token for whatever environment is supplied. Without a whitelist, a compromised or misbehaving agent can direct your credentials at *any* Dataverse environment. Set `DATAVERSE_WHITELIST` to the specific environment hostnames you intend to use so the server rejects everything else.
 
 ### Authentication
 

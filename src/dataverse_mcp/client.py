@@ -36,31 +36,44 @@ _RESPONSE_MAX_BYTES = 5_000_000
 # 500 per page to keep individual responses small.
 _MAX_PAGE_SIZE = 500
 
-# Hostname suffixes accepted for Dataverse organization URLs. Tokens are minted
-# for whatever host a tool call supplies, so unknown hosts must be rejected.
-_DEFAULT_ALLOWED_HOST_SUFFIXES = (
-    ".dynamics.com",
-    ".dynamics-int.com",
-    ".crm.dynamics.cn",
-    ".microsoftdynamics.us",
-    ".microsoftdynamics.de",
-)
+# Optional allowlist of Dataverse environment hostnames. Tokens are minted for
+# whatever host a tool call supplies, so an explicit whitelist confines requests
+# (and the bearer tokens they carry) to environments the operator has approved.
+# When empty, every environment is permitted (see the README security warning).
+def _normalize_whitelist_host(entry: str) -> str:
+    """Reduce a DATAVERSE_WHITELIST entry to a bare, lowercased hostname.
+
+    Accepts plain hosts (``org.crm.dynamics.com``); a scheme or trailing path is
+    tolerated and stripped so comparisons are always host-to-host.
+    """
+    candidate = entry.strip()
+    if "://" not in candidate:
+        candidate = f"https://{candidate}"
+    host = urlparse(candidate).hostname
+    if not host:
+        raise ValueError("could not parse a hostname")
+    return host.lower()
 
 
-def _load_allowed_host_suffixes() -> tuple[str, ...]:
-    """Combine default Dataverse host suffixes with DATAVERSE_ALLOWED_HOST_SUFFIXES."""
-    raw = os.environ.get("DATAVERSE_ALLOWED_HOST_SUFFIXES", "")
-    extra = tuple(
-        s if s.startswith(".") else f".{s}"
-        for s in (part.strip().lower() for part in raw.split(","))
-        if s
-    )
-    return _DEFAULT_ALLOWED_HOST_SUFFIXES + extra
+def _load_url_whitelist() -> frozenset[str]:
+    """Parse DATAVERSE_WHITELIST into a set of allowed environment hostnames.
 
-
-# Read once at import: normalize_dataverse_url is lru_cached, so the allowlist
-# must not vary per call.
-_ALLOWED_HOST_SUFFIXES = _load_allowed_host_suffixes()
+    Accepts a comma-separated list of hostnames (e.g.
+    ``org-one.crm.dynamics.com,org-two.crm.dynamics.com``). Invalid entries are
+    skipped with a warning rather than failing startup. An empty/unset value
+    yields an empty set, which disables whitelist enforcement.
+    """
+    raw = os.environ.get("DATAVERSE_WHITELIST", "")
+    whitelist: set[str] = set()
+    for part in raw.split(","):
+        candidate = part.strip()
+        if not candidate:
+            continue
+        try:
+            whitelist.add(_normalize_whitelist_host(candidate))
+        except ValueError as e:
+            logger.warning("Ignoring invalid DATAVERSE_WHITELIST entry %r: %s", candidate, e)
+    return frozenset(whitelist)
 
 # Common Azure CLI installation paths that may not be on the system PATH when
 # the MCP server process is launched (e.g., from VS Code without a login shell).
@@ -146,9 +159,8 @@ class AppContext:
     _token_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
 
 
-@functools.lru_cache(maxsize=64)
-def normalize_dataverse_url(url: str) -> str:
-    """Validate and normalize a Dataverse organization URL."""
+def _normalize_org_url(url: str) -> str:
+    """Validate and normalize a Dataverse organization URL (no whitelist check)."""
     normalized_input = url.strip()
     if not normalized_input:
         raise ValueError("dataverse_url must not be empty")
@@ -172,19 +184,34 @@ def normalize_dataverse_url(url: str) -> str:
             "dataverse_url must not include params, query strings, or fragments"
         )
 
-    hostname = parsed.hostname.lower()
-    if not hostname.endswith(_ALLOWED_HOST_SUFFIXES):
-        raise ValueError(
-            f"dataverse_url host '{hostname}' is not an allowed Dataverse domain. "
-            f"Allowed suffixes: {', '.join(_ALLOWED_HOST_SUFFIXES)}. "
-            "Set DATAVERSE_ALLOWED_HOST_SUFFIXES to permit additional domains."
-        )
-
-    netloc = hostname
+    netloc = parsed.hostname.lower()
     if parsed.port:
         netloc = f"{netloc}:{parsed.port}"
 
     return f"https://{netloc}"
+
+
+# Read once at import: normalize_dataverse_url is lru_cached, so the whitelist
+# must not vary per call.
+_URL_WHITELIST = _load_url_whitelist()
+
+
+@functools.lru_cache(maxsize=64)
+def normalize_dataverse_url(url: str) -> str:
+    """Validate, normalize, and authorize a Dataverse organization URL.
+
+    When DATAVERSE_WHITELIST is configured, URLs whose host is outside the
+    whitelist are rejected. When it is empty, any environment is permitted.
+    """
+    normalized = _normalize_org_url(url)
+    if _URL_WHITELIST:
+        host = urlparse(normalized).hostname
+        if host not in _URL_WHITELIST:
+            raise ValueError(
+                f"dataverse_url host '{host}' is not in the configured DATAVERSE_WHITELIST. "
+                "Add it to DATAVERSE_WHITELIST to permit access to this environment."
+            )
+    return normalized
 
 
 def resolve_base_url(app_ctx: AppContext, dataverse_url: str | None) -> str:
@@ -469,6 +496,18 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
         )
     else:
         logger.info("No DATAVERSE_URL fallback configured; tools must provide dataverse_url")
+
+    if _URL_WHITELIST:
+        logger.info(
+            "DATAVERSE_WHITELIST active: restricting tool calls to %d environment(s)",
+            len(_URL_WHITELIST),
+        )
+    else:
+        logger.warning(
+            "DATAVERSE_WHITELIST is not set; tool calls may target ANY environment URL "
+            "and bearer tokens will be minted for it. Set DATAVERSE_WHITELIST to restrict "
+            "access to approved Dataverse environments."
+        )
 
     auth_type = os.environ.get("DATAVERSE_AUTH_TYPE", "azure_cli").lower().strip()
     logger.info("Initializing Dataverse credential (auth: %s)", auth_type)

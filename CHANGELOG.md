@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `request_with_retry` no longer retries 502/503/504 responses for non-idempotent HTTP methods (POST, PATCH). A gateway error on a write request may arrive after Dataverse has already committed the operation; retrying would risk duplicate writes or associations. 429 throttle responses continue to retry for all methods because a 429 guarantees the request was rejected before processing.
+- Bumped `build-system.requires` from `setuptools>=61.0` to `setuptools>=77.0` to match the PEP 639 SPDX `license = "MIT"` string form declared in `[project]`; setuptools 77+ is required to recognise an inline SPDX expression as the license field — earlier versions would fail to build the package metadata correctly.
 
 ## [2.2.0] - 2026-06-12
 

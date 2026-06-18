@@ -954,8 +954,10 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
                 [{"sitemapid": sitemap_id, "@odata.type": "Microsoft.Dynamics.CRM.sitemap"}],
             )
 
+        published = False
         try:
             await _publish_app(app_ctx, base_url, headers, params.app_id)
+            published = True
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
@@ -964,7 +966,7 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
             "app_id": params.app_id,
             "sitemap_id": sitemap_id,
             "sitemap_created": existing_id is None,
-            "published": True,
+            "published": published,
             "sitemapxml_backup": backup_xml,
         })
 

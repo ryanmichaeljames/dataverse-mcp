@@ -884,8 +884,10 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
                 )
 
         # 7. Publish
+        published = False
         try:
             await _publish_table(app_ctx, base_url, headers, params.table_logical_name)
+            published = True
         except httpx.HTTPStatusError as e:
             logger.warning("Publish failed: %d %s", e.response.status_code, e.response.text)
 
@@ -897,7 +899,7 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
             "columns": params.columns,
             "query_type": params.query_type,
             "is_default": params.is_default,
-            "published": True,
+            "published": published,
             "solution_unique_name": params.solution_unique_name,
             "fetchxml": fetchxml,
             "layoutxml": layoutxml,

@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import uuid
 from urllib.parse import urlencode
 
 from mcp.server.fastmcp import Context
@@ -450,7 +451,7 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
                 ),
             })
 
-    batch_boundary = "batch_dataverse_mcp"
+    batch_boundary = f"batch_{uuid.uuid4().hex}"
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/$batch"
 
     try:

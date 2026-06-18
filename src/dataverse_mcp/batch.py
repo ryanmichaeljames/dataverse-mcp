@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 
 from dataverse_mcp.client import _DATAVERSE_API_VERSION
 
@@ -99,17 +100,24 @@ def parse_batch_response(response_text: str, boundary: str) -> list[dict]:
     """Parse a multipart/mixed batch response into per-operation results.
 
     Returns a list of dictionaries with ``status_code`` and ``body`` keys.
+    Tolerates both ``\\r\\n`` and bare ``\\n`` line endings in the response.
+    Parts that contain body content but no parseable HTTP status line yield
+    ``{"status_code": 0, "error": "<description>"}`` rather than being dropped.
     """
     results: list[dict] = []
     parts = response_text.split(f"--{boundary}")
 
     for part in parts:
-        part = part.strip()
+        # Strip only leading/trailing newline characters (not spaces inside headers)
+        part = part.strip("\r\n")
         if not part or part == "--":
             continue
 
-        if "\r\n\r\n" in part:
-            part_headers, part_body = part.split("\r\n\r\n", 1)
+        # Split headers from body — tolerate both \r\n\r\n and \n\n separators.
+        header_body_sep = re.search(r"\r?\n\r?\n", part)
+        if header_body_sep:
+            part_headers = part[: header_body_sep.start()]
+            part_body = part[header_body_sep.end():]
         else:
             part_headers = part
             part_body = ""
@@ -117,9 +125,9 @@ def parse_batch_response(response_text: str, boundary: str) -> list[dict]:
         if "multipart/mixed" in part_headers:
             inner_boundary_match = part_headers.find("boundary=")
             if inner_boundary_match != -1:
+                # Extract the inner boundary value; tolerate both \r\n and \n.
                 inner_boundary = (
-                    part_headers[inner_boundary_match + 9:]
-                    .split("\r\n")[0]
+                    re.split(r"\r?\n", part_headers[inner_boundary_match + 9:])[0]
                     .split(";")[0]
                     .strip()
                 )
@@ -127,7 +135,8 @@ def parse_batch_response(response_text: str, boundary: str) -> list[dict]:
                 results.extend(inner_results)
             continue
 
-        lines = part_body.split("\r\n")
+        # Split lines tolerating both \r\n and \n.
+        lines = re.split(r"\r?\n", part_body)
         http_status_line = None
         body_start = 0
         for j, line in enumerate(lines):
@@ -137,6 +146,21 @@ def parse_batch_response(response_text: str, boundary: str) -> list[dict]:
                 break
 
         if not http_status_line:
+            # Only emit an error result when the part has actual content.
+            content = part_body.strip()
+            if content:
+                logger.warning(
+                    "Batch response part has content but no HTTP status line; "
+                    "raw content (first 200 chars): %s",
+                    content[:200],
+                )
+                results.append({
+                    "status_code": 0,
+                    "error": (
+                        "Unparseable batch sub-response: no HTTP status line found. "
+                        f"Raw content (first 200 chars): {content[:200]}"
+                    ),
+                })
             continue
 
         try:
@@ -148,7 +172,7 @@ def parse_batch_response(response_text: str, boundary: str) -> list[dict]:
             body_start += 1
         body_start += 1
 
-        body_text = "\r\n".join(lines[body_start:]).strip()
+        body_text = "\n".join(lines[body_start:]).strip()
         body_json = None
         if body_text:
             try:

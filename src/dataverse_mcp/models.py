@@ -3090,3 +3090,1027 @@ class DeleteConnectionReferenceInput(DataverseEnvironmentInput):
         if not _GUID_PATTERN.match(v):
             raise ValueError("connection_reference_id must be a valid GUID.")
         return v.lower()
+
+
+# ---------------------------------------------------------------------------
+# Plugin registration tools
+# ---------------------------------------------------------------------------
+
+# --- A. Plug-in assemblies ---
+
+
+class GetPluginAssemblyInput(DataverseEnvironmentInput):
+    """Input for retrieving a single plug-in assembly by ID."""
+
+    assembly_id: str = Field(
+        ...,
+        description="GUID of the pluginassembly record to retrieve",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to pluginassemblyid, name, version, culture, "
+            "publickeytoken, isolationmode, sourcetype, description, _packageid_value. "
+            "Omit 'content' (base64 DLL) unless needed — it is large."
+        ),
+    )
+
+    @field_validator("assembly_id")
+    @classmethod
+    def validate_assembly_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListPluginAssembliesInput(DataverseEnvironmentInput):
+    """Input for listing plug-in assemblies."""
+
+    name_contains: str | None = Field(
+        default=None,
+        description="Substring filter on assembly name (OData contains)",
+    )
+    package_id: str | None = Field(
+        default=None,
+        description="GUID of a pluginpackage; return only assemblies in that package",
+    )
+    filter: str | None = Field(
+        default=None,
+        description="Raw OData $filter expression (escape hatch)",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to the standard assembly projection.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return",
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("package_id")
+    @classmethod
+    def validate_package_id(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class CreatePluginAssemblyInput(DataverseEnvironmentInput):
+    """Input for uploading a new plug-in assembly from base64 DLL bytes."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Assembly name, typically the DLL base name e.g. 'MyOrg.Plugins'",
+    )
+    content: str = Field(
+        ...,
+        min_length=1,
+        description="Base64-encoded bytes of the strong-name-signed assembly DLL",
+    )
+    isolation_mode: int = Field(
+        default=2,
+        description=(
+            "1=None (full trust; not supported online), "
+            "2=Sandbox (default/recommended), 3=External"
+        ),
+    )
+    version: str | None = Field(
+        default=None,
+        description="Assembly version e.g. '1.0.0.0'. Derived from content if omitted.",
+    )
+    culture: str | None = Field(
+        default=None,
+        description="Culture e.g. 'neutral'",
+    )
+    public_key_token: str | None = Field(
+        default=None,
+        description="Public key token from the strong-name key",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional description for the assembly",
+    )
+
+    @field_validator("isolation_mode")
+    @classmethod
+    def validate_isolation_mode(cls, v: int) -> int:
+        if v not in (1, 2, 3):
+            raise ValueError("isolation_mode must be 1 (None), 2 (Sandbox), or 3 (External)")
+        return v
+
+
+class UpdatePluginAssemblyInput(DataverseEnvironmentInput):
+    """Input for updating an existing plug-in assembly record."""
+
+    assembly_id: str = Field(
+        ...,
+        description="GUID of the pluginassembly record to update",
+    )
+    content: str | None = Field(
+        default=None,
+        description="New base64-encoded DLL bytes (re-deploys the assembly code)",
+    )
+    isolation_mode: int | None = Field(
+        default=None,
+        description="Updated isolation mode: 1=None, 2=Sandbox, 3=External",
+    )
+    version: str | None = Field(
+        default=None,
+        description="Updated assembly version string",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Updated description",
+    )
+
+    @field_validator("assembly_id")
+    @classmethod
+    def validate_assembly_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("isolation_mode")
+    @classmethod
+    def validate_isolation_mode(cls, v: int | None) -> int | None:
+        if v is not None and v not in (1, 2, 3):
+            raise ValueError("isolation_mode must be 1 (None), 2 (Sandbox), or 3 (External)")
+        return v
+
+    @model_validator(mode="after")
+    def check_has_updates(self) -> "UpdatePluginAssemblyInput":
+        if (
+            self.content is None
+            and self.isolation_mode is None
+            and self.version is None
+            and self.description is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "content, isolation_mode, version, description"
+            )
+        return self
+
+
+class DeletePluginAssemblyInput(DataverseEnvironmentInput):
+    """Input for deleting a plug-in assembly."""
+
+    assembly_id: str = Field(
+        ...,
+        description="GUID of the pluginassembly record to delete",
+    )
+
+    @field_validator("assembly_id")
+    @classmethod
+    def validate_assembly_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+# --- B. Plug-in packages ---
+
+
+class GetPluginPackageInput(DataverseEnvironmentInput):
+    """Input for retrieving a single plug-in package by ID."""
+
+    package_id: str = Field(
+        ...,
+        description="GUID of the pluginpackage record to retrieve",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to pluginpackageid, name, uniquename, version. "
+            "Omit 'content' unless needed."
+        ),
+    )
+
+    @field_validator("package_id")
+    @classmethod
+    def validate_package_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListPluginPackagesInput(DataverseEnvironmentInput):
+    """Input for listing plug-in packages."""
+
+    name_contains: str | None = Field(
+        default=None,
+        description="Substring filter on package name",
+    )
+    filter: str | None = Field(
+        default=None,
+        description="Raw OData $filter expression",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to the standard package projection.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return",
+        ge=1,
+        le=5000,
+    )
+
+
+class CreatePluginPackageInput(DataverseEnvironmentInput):
+    """Input for uploading a new NuGet-based plug-in package."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Display name for the plug-in package",
+    )
+    unique_name: str = Field(
+        ...,
+        min_length=1,
+        description="Publisher-prefixed unique name e.g. 'yourprefix_MyPackage'",
+    )
+    content: str = Field(
+        ...,
+        min_length=1,
+        description="Base64-encoded bytes of the .nupkg file",
+    )
+    version: str = Field(
+        ...,
+        min_length=1,
+        description="Package version e.g. '1.0.0'",
+    )
+
+
+class UpdatePluginPackageInput(DataverseEnvironmentInput):
+    """Input for updating a plug-in package (re-upload content / bump version)."""
+
+    package_id: str = Field(
+        ...,
+        description="GUID of the pluginpackage record to update",
+    )
+    content: str | None = Field(
+        default=None,
+        description="New base64-encoded .nupkg bytes",
+    )
+    version: str | None = Field(
+        default=None,
+        description="Updated package version string",
+    )
+
+    @field_validator("package_id")
+    @classmethod
+    def validate_package_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_has_updates(self) -> "UpdatePluginPackageInput":
+        if self.content is None and self.version is None:
+            raise ValueError(
+                "At least one updatable field must be provided: content, version"
+            )
+        return self
+
+
+class DeletePluginPackageInput(DataverseEnvironmentInput):
+    """Input for deleting a plug-in package."""
+
+    package_id: str = Field(
+        ...,
+        description="GUID of the pluginpackage record to delete",
+    )
+
+    @field_validator("package_id")
+    @classmethod
+    def validate_package_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+# --- C. Plug-in types ---
+
+
+class GetPluginTypeInput(DataverseEnvironmentInput):
+    """Input for retrieving a single plug-in type by ID."""
+
+    plugin_type_id: str = Field(
+        ...,
+        description="GUID of the plugintype record to retrieve",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to plugintypeid, typename, friendlyname, "
+            "name, assemblyname, isworkflowactivity, _pluginassemblyid_value."
+        ),
+    )
+
+    @field_validator("plugin_type_id")
+    @classmethod
+    def validate_plugin_type_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListPluginTypesInput(DataverseEnvironmentInput):
+    """Input for listing plug-in types."""
+
+    assembly_id: str | None = Field(
+        default=None,
+        description="GUID of a pluginassembly; return only types in that assembly",
+    )
+    typename_contains: str | None = Field(
+        default=None,
+        description="Substring filter on typename (fully-qualified .NET class name)",
+    )
+    is_workflow_activity: bool | None = Field(
+        default=None,
+        description="When True/False, filter to custom workflow activities only or exclude them",
+    )
+    filter: str | None = Field(
+        default=None,
+        description="Raw OData $filter expression",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to the standard type projection.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return",
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("assembly_id")
+    @classmethod
+    def validate_assembly_id(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class CreatePluginTypeInput(DataverseEnvironmentInput):
+    """Input for registering a plug-in type (class) against an assembly."""
+
+    assembly_id: str = Field(
+        ...,
+        description="GUID of the parent pluginassembly record",
+    )
+    typename: str = Field(
+        ...,
+        min_length=1,
+        description="Fully-qualified .NET type name e.g. 'MyOrg.Plugins.ContactPlugin'",
+    )
+    friendly_name: str | None = Field(
+        default=None,
+        description="User-friendly name; defaults to typename if omitted",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Display name; defaults to typename if omitted",
+    )
+    is_workflow_activity: bool = Field(
+        default=False,
+        description="Whether this type is a custom workflow activity",
+    )
+    workflow_activity_group_name: str | None = Field(
+        default=None,
+        description="Group name; only relevant for custom workflow activities",
+    )
+
+    @field_validator("assembly_id")
+    @classmethod
+    def validate_assembly_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class UpdatePluginTypeInput(DataverseEnvironmentInput):
+    """Input for updating a plug-in type record."""
+
+    plugin_type_id: str = Field(
+        ...,
+        description="GUID of the plugintype record to update",
+    )
+    friendly_name: str | None = Field(
+        default=None,
+        description="Updated user-friendly name",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Updated display name",
+    )
+    workflow_activity_group_name: str | None = Field(
+        default=None,
+        description="Updated workflow activity group name",
+    )
+
+    @field_validator("plugin_type_id")
+    @classmethod
+    def validate_plugin_type_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_has_updates(self) -> "UpdatePluginTypeInput":
+        if (
+            self.friendly_name is None
+            and self.name is None
+            and self.workflow_activity_group_name is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "friendly_name, name, workflow_activity_group_name"
+            )
+        return self
+
+
+class DeletePluginTypeInput(DataverseEnvironmentInput):
+    """Input for deleting a plug-in type."""
+
+    plugin_type_id: str = Field(
+        ...,
+        description="GUID of the plugintype record to delete",
+    )
+
+    @field_validator("plugin_type_id")
+    @classmethod
+    def validate_plugin_type_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+# --- D. SDK messages ---
+
+
+class GetSdkMessageInput(DataverseEnvironmentInput):
+    """Input for resolving an SDK message by name or ID."""
+
+    message_name: str | None = Field(
+        default=None,
+        description="Message name e.g. 'Create', 'Update', 'Delete'. Provide this OR message_id.",
+    )
+    message_id: str | None = Field(
+        default=None,
+        description="GUID of the sdkmessage record. Provide this OR message_name.",
+    )
+
+    @field_validator("message_id")
+    @classmethod
+    def validate_message_id(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_exactly_one_identifier(self) -> "GetSdkMessageInput":
+        has_name = bool(self.message_name)
+        has_id = bool(self.message_id)
+        if has_name and has_id:
+            raise ValueError("Provide either message_name or message_id, not both")
+        if not has_name and not has_id:
+            raise ValueError("Either message_name or message_id must be provided")
+        return self
+
+
+class ListSdkMessagesInput(DataverseEnvironmentInput):
+    """Input for listing/searching SDK messages."""
+
+    name_contains: str | None = Field(
+        default=None,
+        description="Substring filter on message name",
+    )
+    filter: str | None = Field(
+        default=None,
+        description="Raw OData $filter expression",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to sdkmessageid, name.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return",
+        ge=1,
+        le=5000,
+    )
+
+
+# --- E. SDK message filters ---
+
+
+class GetSdkMessageFilterInput(DataverseEnvironmentInput):
+    """Input for resolving an SDK message filter by message+entity or filter ID."""
+
+    filter_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the sdkmessagefilter record. "
+            "Provide this alone OR provide message_id + primary_entity."
+        ),
+    )
+    message_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the sdkmessage to scope the lookup. "
+            "Required when using message+entity mode."
+        ),
+    )
+    primary_entity: str | None = Field(
+        default=None,
+        description=(
+            "Lowercase logical name of the primary entity e.g. 'contact'. "
+            "Required when using message+entity mode."
+        ),
+    )
+
+    @field_validator("filter_id", "message_id")
+    @classmethod
+    def validate_guids(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_identifier_mode(self) -> "GetSdkMessageFilterInput":
+        has_filter_id = bool(self.filter_id)
+        has_message_entity = bool(self.message_id) or bool(self.primary_entity)
+        if has_filter_id and has_message_entity:
+            raise ValueError(
+                "Provide either filter_id alone, or message_id + primary_entity — not both modes"
+            )
+        if not has_filter_id and not has_message_entity:
+            raise ValueError(
+                "Provide either filter_id, or message_id + primary_entity"
+            )
+        if has_message_entity and not (self.message_id and self.primary_entity):
+            raise ValueError(
+                "Both message_id and primary_entity are required when not using filter_id"
+            )
+        return self
+
+
+class ListSdkMessageFiltersInput(DataverseEnvironmentInput):
+    """Input for listing SDK message filters."""
+
+    message_id: str | None = Field(
+        default=None,
+        description="GUID of the sdkmessage; return filters for one message only",
+    )
+    primary_entity: str | None = Field(
+        default=None,
+        description="Lowercase logical name of the primary entity e.g. 'contact'",
+    )
+    filter: str | None = Field(
+        default=None,
+        description="Raw OData $filter expression",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to sdkmessagefilterid, "
+            "primaryobjecttypecode, _sdkmessageid_value."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return",
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("message_id")
+    @classmethod
+    def validate_message_id(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+# --- F. SDK message processing steps ---
+
+
+class GetPluginStepInput(DataverseEnvironmentInput):
+    """Input for retrieving a single SDK message processing step by ID."""
+
+    step_id: str = Field(
+        ...,
+        description="GUID of the sdkmessageprocessingstep record to retrieve",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to sdkmessageprocessingstepid, name, stage, "
+            "mode, rank, filteringattributes, statecode, _sdkmessageid_value, "
+            "_sdkmessagefilterid_value, _eventhandler_value, description."
+        ),
+    )
+
+    @field_validator("step_id")
+    @classmethod
+    def validate_step_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListPluginStepsInput(DataverseEnvironmentInput):
+    """Input for listing SDK message processing steps."""
+
+    plugin_type_id: str | None = Field(
+        default=None,
+        description="GUID of a plugintype; return only steps handled by that type",
+    )
+    message_id: str | None = Field(
+        default=None,
+        description="GUID of a sdkmessage; return only steps for that message",
+    )
+    filter: str | None = Field(
+        default=None,
+        description="Raw OData $filter expression",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to the standard step projection.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return",
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("plugin_type_id", "message_id")
+    @classmethod
+    def validate_guids(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class CreatePluginStepInput(DataverseEnvironmentInput):
+    """Input for registering a plug-in step against a message."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Step name e.g. 'MyOrg.Plugins.ContactPlugin: Create of contact'"
+        ),
+    )
+    plugin_type_id: str = Field(
+        ...,
+        description="GUID of the plugintype handling this step",
+    )
+    message_id: str = Field(
+        ...,
+        description="GUID of the sdkmessage; resolve via dataverse_get_sdk_message",
+    )
+    filter_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the sdkmessagefilter to scope to one entity; "
+            "omit to register against all entities"
+        ),
+    )
+    stage: int = Field(
+        ...,
+        description="10=PreValidation, 20=PreOperation, 40=PostOperation",
+    )
+    mode: int = Field(
+        ...,
+        description="0=Synchronous, 1=Asynchronous",
+    )
+    rank: int = Field(
+        default=1,
+        ge=1,
+        description="Execution order within the stage (lower runs first)",
+    )
+    filtering_attributes: str | None = Field(
+        default=None,
+        description=(
+            "Comma-separated logical names; step fires only when one of these "
+            "attributes changes. Use for Update steps only."
+        ),
+    )
+    supported_deployment: int = Field(
+        default=0,
+        description="0=Server Only, 1=Outlook Client Only, 2=Both",
+    )
+    async_auto_delete: bool = Field(
+        default=False,
+        description=(
+            "When True, automatically deletes completed async operations. "
+            "Only relevant for asynchronous steps (mode=1)."
+        ),
+    )
+    configuration: str | None = Field(
+        default=None,
+        description="Unsecure configuration string passed to the plug-in constructor",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional step description",
+    )
+
+    @field_validator("plugin_type_id", "message_id")
+    @classmethod
+    def validate_required_guids(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("filter_id")
+    @classmethod
+    def validate_filter_id(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("stage")
+    @classmethod
+    def validate_stage(cls, v: int) -> int:
+        if v not in (10, 20, 40):
+            raise ValueError("stage must be 10 (PreValidation), 20 (PreOperation), or 40 (PostOperation)")
+        return v
+
+    @field_validator("mode")
+    @classmethod
+    def validate_mode(cls, v: int) -> int:
+        if v not in (0, 1):
+            raise ValueError("mode must be 0 (Synchronous) or 1 (Asynchronous)")
+        return v
+
+    @field_validator("supported_deployment")
+    @classmethod
+    def validate_supported_deployment(cls, v: int) -> int:
+        if v not in (0, 1, 2):
+            raise ValueError("supported_deployment must be 0 (Server Only), 1 (Outlook Client Only), or 2 (Both)")
+        return v
+
+
+class UpdatePluginStepInput(DataverseEnvironmentInput):
+    """Input for updating an SDK message processing step."""
+
+    step_id: str = Field(
+        ...,
+        description="GUID of the sdkmessageprocessingstep record to update",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Updated step name",
+    )
+    rank: int | None = Field(
+        default=None,
+        ge=1,
+        description="Updated execution order within the stage",
+    )
+    filtering_attributes: str | None = Field(
+        default=None,
+        description="Updated comma-separated attribute filter",
+    )
+    state: str | None = Field(
+        default=None,
+        description="'enabled' or 'disabled' — use to enable/disable the step without deleting",
+    )
+    configuration: str | None = Field(
+        default=None,
+        description="Updated unsecure configuration string",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Updated step description",
+    )
+
+    @field_validator("step_id")
+    @classmethod
+    def validate_step_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("state")
+    @classmethod
+    def validate_state(cls, v: str | None) -> str | None:
+        if v is not None and v not in ("enabled", "disabled"):
+            raise ValueError("state must be 'enabled' or 'disabled'")
+        return v
+
+    @model_validator(mode="after")
+    def check_has_updates(self) -> "UpdatePluginStepInput":
+        if (
+            self.name is None
+            and self.rank is None
+            and self.filtering_attributes is None
+            and self.state is None
+            and self.configuration is None
+            and self.description is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "name, rank, filtering_attributes, state, configuration, description"
+            )
+        return self
+
+
+class DeletePluginStepInput(DataverseEnvironmentInput):
+    """Input for deleting an SDK message processing step."""
+
+    step_id: str = Field(
+        ...,
+        description="GUID of the sdkmessageprocessingstep record to delete",
+    )
+
+    @field_validator("step_id")
+    @classmethod
+    def validate_step_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+# --- G. SDK message processing step images ---
+
+
+class GetPluginStepImageInput(DataverseEnvironmentInput):
+    """Input for retrieving a single step image by ID."""
+
+    image_id: str = Field(
+        ...,
+        description="GUID of the sdkmessageprocessingstepimage record to retrieve",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to sdkmessageprocessingstepimageid, name, "
+            "imagetype, entityalias, messagepropertyname, attributes, "
+            "_sdkmessageprocessingstepid_value."
+        ),
+    )
+
+    @field_validator("image_id")
+    @classmethod
+    def validate_image_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListPluginStepImagesInput(DataverseEnvironmentInput):
+    """Input for listing step images, optionally scoped to one step."""
+
+    step_id: str | None = Field(
+        default=None,
+        description="GUID of a sdkmessageprocessingstep; return images for that step only",
+    )
+    filter: str | None = Field(
+        default=None,
+        description="Raw OData $filter expression",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description="Columns to return. Defaults to the standard image projection.",
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return",
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("step_id")
+    @classmethod
+    def validate_step_id(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class CreatePluginStepImageInput(DataverseEnvironmentInput):
+    """Input for registering a pre/post image on a step."""
+
+    step_id: str = Field(
+        ...,
+        description="GUID of the parent sdkmessageprocessingstep record",
+    )
+    image_type: int = Field(
+        ...,
+        description="0=PreImage, 1=PostImage, 2=Both",
+    )
+    entity_alias: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Key used to access the image in the plug-in property bag e.g. 'PreImage'"
+        ),
+    )
+    message_property_name: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Request message property the image is taken from, "
+            "e.g. 'Target' for Create/Update"
+        ),
+    )
+    name: str | None = Field(
+        default=None,
+        description="Image name; defaults to entity_alias if omitted",
+    )
+    attributes: str | None = Field(
+        default=None,
+        description=(
+            "Comma-separated logical names to include in the image; "
+            "omit for all attributes"
+        ),
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional image description",
+    )
+
+    @field_validator("step_id")
+    @classmethod
+    def validate_step_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("image_type")
+    @classmethod
+    def validate_image_type(cls, v: int) -> int:
+        if v not in (0, 1, 2):
+            raise ValueError("image_type must be 0 (PreImage), 1 (PostImage), or 2 (Both)")
+        return v
+
+
+class UpdatePluginStepImageInput(DataverseEnvironmentInput):
+    """Input for updating a step image record."""
+
+    image_id: str = Field(
+        ...,
+        description="GUID of the sdkmessageprocessingstepimage record to update",
+    )
+    entity_alias: str | None = Field(
+        default=None,
+        description="Updated property bag key",
+    )
+    message_property_name: str | None = Field(
+        default=None,
+        description="Updated request message property name",
+    )
+    attributes: str | None = Field(
+        default=None,
+        description="Updated comma-separated attribute list",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Updated image name",
+    )
+
+    @field_validator("image_id")
+    @classmethod
+    def validate_image_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_has_updates(self) -> "UpdatePluginStepImageInput":
+        if (
+            self.entity_alias is None
+            and self.message_property_name is None
+            and self.attributes is None
+            and self.name is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "entity_alias, message_property_name, attributes, name"
+            )
+        return self
+
+
+class DeletePluginStepImageInput(DataverseEnvironmentInput):
+    """Input for deleting a step image."""
+
+    image_id: str = Field(
+        ...,
+        description="GUID of the sdkmessageprocessingstepimage record to delete",
+    )
+
+    @field_validator("image_id")
+    @classmethod
+    def validate_image_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v

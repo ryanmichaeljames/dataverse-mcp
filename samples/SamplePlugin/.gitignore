@@ -1,0 +1,8 @@
+# Strong-name key — generated at build time, never committed.
+# See the GenerateSnk MSBuild target in ContactPlugin.csproj.
+# WARNING: Do NOT add a real/production .snk here.
+ContactPlugin.snk
+
+# Build outputs
+bin/
+obj/

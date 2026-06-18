@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- CI quality gate: `uv run pytest tests/ -q` and `uv run ruff check .` now pass locally and in CI without any live credentials. `pyproject.toml` declares `ruff` as a dev dependency, registers an `integration` pytest marker, and sets `asyncio_mode = "auto"` for async tests.
+- Targeted unit tests for `odata_quote` (`tests/test_odata_utils.py`) covering no-quote passthrough, single-quote doubling, multiple quotes, and empty string.
+- Targeted unit tests for `_parse_retry_after_seconds` (`tests/test_odata_utils.py`) covering numeric header, missing header default, unparseable header default, and negative-value clamp to 0.0.
+- Targeted unit tests for `build_inner_request`, `build_batch_body`, and `parse_batch_response` (`tests/test_batch.py`) asserting structural invariants: GET/DELETE carry no body or content headers; POST/PUT/PATCH include `Content-Type` and `Content-Length`; batch body contains correct boundary markers; change-set parts carry `Content-ID`; parse round-trip returns correct status codes and JSON bodies.
+- Integration test scaffold (`tests/integration/`) with a secret-free gate: tests run only when `DATAVERSE_INTEGRATION_URL` and `DATAVERSE_INTEGRATION_TOKEN` are set; otherwise every integration test is skipped automatically. Includes a read-only WhoAmI test and write/delete scaffolds gated additionally on `DATAVERSE_ALLOW_WRITE`/`DATAVERSE_ALLOW_DELETE`.
+
 ### Security
 - Hardened `DATAVERSE_WHITELIST` host matching: all URL hostnames and allowlist entries are now canonicalized through a shared `_canonicalize_host` helper before comparison, preventing representation-sensitive bypass via trailing dots (absolute DNS form), Unicode/IDN vs punycode drift, and inconsistent casing.
 - Non-standard ports (anything other than the default HTTPS port 443) are now hard-rejected in `_normalize_org_url`; supplying a port such as `:8443` raises `ValueError` rather than silently including it in the normalized URL, closing the port-bypass vector against allowlist matching.
@@ -15,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - `request_with_retry` no longer retries 502/503/504 responses for non-idempotent HTTP methods (POST, PATCH). A gateway error on a write request may arrive after Dataverse has already committed the operation; retrying would risk duplicate writes or associations. 429 throttle responses continue to retry for all methods because a 429 guarantees the request was rejected before processing.
 - `dataverse_create_view` and `dataverse_set_app_sitemap` previously returned `"published": true` unconditionally, even when the publish HTTP call failed with an `HTTPStatusError`. The `published` flag now accurately reflects publish outcome: `true` only when the publish call succeeds, `false` when it raises an error (the created/updated record is unaffected).
+- Bumped `build-system.requires` from `setuptools>=61.0` to `setuptools>=77.0` to match the PEP 639 SPDX `license = "MIT"` string form declared in `[project]`; setuptools 77+ is required to recognise an inline SPDX expression as the license field — earlier versions would fail to build the package metadata correctly.
 
 ## [2.2.0] - 2026-06-12
 

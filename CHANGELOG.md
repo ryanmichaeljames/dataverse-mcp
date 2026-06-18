@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- New `DATAVERSE_AUTH_TIMEOUT_SECONDS` environment variable (default `30`) that caps how long a cold-cache credential acquisition is allowed to block before the call is abandoned with an actionable auth error. Invalid or non-positive values fall back to the default with a logged warning.
 - CI quality gate: `uv run pytest tests/ -q` and `uv run ruff check .` now pass locally and in CI without any live credentials. `pyproject.toml` declares `ruff` as a dev dependency, registers an `integration` pytest marker, and sets `asyncio_mode = "auto"` for async tests.
 - Targeted unit tests for `odata_quote` (`tests/test_odata_utils.py`) covering no-quote passthrough, single-quote doubling, multiple quotes, and empty string.
 - Targeted unit tests for `_parse_retry_after_seconds` (`tests/test_odata_utils.py`) covering numeric header, missing header default, unparseable header default, and negative-value clamp to 0.0.
@@ -20,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The startup audit log now records the actual canonical allowed host forms (not just the count) when `DATAVERSE_WHITELIST` is active, making the active allowlist observable in server logs.
 
 ### Fixed
+- `azure.core.exceptions.ClientAuthenticationError` (e.g., expired `az login` session, misconfigured `DATAVERSE_AUTH_TYPE`) now surfaces as `{"error": true, "message": "Authentication failed. Run az login …"}` instead of the generic "Unexpected error: …" fallback. The actionable message mentions both `az login` and `DATAVERSE_AUTH_TYPE`; credential detail is only written to the server log (stderr).
+- Credential acquisition under the per-scope lock in `build_headers` is now bounded by `DATAVERSE_AUTH_TIMEOUT_SECONDS` (default 30 s). A hung or slow credential acquisition no longer serializes every concurrent caller for that scope indefinitely; after the timeout the lock is released and subsequent callers can proceed. A timed-out acquisition raises `ClientAuthenticationError` and does not poison the token cache.
 - `request_with_retry` no longer retries 502/503/504 responses for non-idempotent HTTP methods (POST, PATCH). A gateway error on a write request may arrive after Dataverse has already committed the operation; retrying would risk duplicate writes or associations. 429 throttle responses continue to retry for all methods because a 429 guarantees the request was rejected before processing.
 - Bumped `build-system.requires` from `setuptools>=61.0` to `setuptools>=77.0` to match the PEP 639 SPDX `license = "MIT"` string form declared in `[project]`; setuptools 77+ is required to recognise an inline SPDX expression as the license field — earlier versions would fail to build the package metadata correctly.
 

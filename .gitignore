@@ -30,3 +30,9 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# .NET build outputs (samples/SamplePlugin)
+samples/SamplePlugin/bin/
+samples/SamplePlugin/obj/
+# Strong-name key generated at build time - never commit
+samples/SamplePlugin/ContactPlugin.snk

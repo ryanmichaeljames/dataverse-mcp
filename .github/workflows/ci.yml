@@ -35,3 +35,32 @@ jobs:
 
       - name: Lint
         run: uv run ruff check .
+
+  build-sample-plugin:
+    # Compiles the ContactPlugin sample to catch C# regressions early.
+    # No secrets required — the GenerateSnk step creates a throwaway dev key.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.x"
+
+      - name: Generate dev strong-name key
+        # Creates samples/SamplePlugin/ContactPlugin.snk (gitignored).
+        # Uses PowerShell Core (pwsh), available on ubuntu-latest.
+        # The GenerateSnk MSBuild target also generates the key if absent,
+        # but running the script first keeps the build output clean.
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass \
+            -File samples/SamplePlugin/generate-snk.ps1 \
+            -OutFile samples/SamplePlugin/ContactPlugin.snk
+
+      - name: Build ContactPlugin
+        run: dotnet build samples/SamplePlugin/ContactPlugin.csproj -c Release
+
+      - name: Verify DLL produced
+        run: test -f samples/SamplePlugin/bin/Release/ContactPlugin.dll && echo "ContactPlugin.dll OK"

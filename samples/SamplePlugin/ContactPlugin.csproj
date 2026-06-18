@@ -1,0 +1,75 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Dataverse sandbox runtime requires .NET Framework 4.6.2 -->
+    <TargetFramework>net462</TargetFramework>
+    <AssemblyName>ContactPlugin</AssemblyName>
+    <RootNamespace>MyOrg.Plugins</RootNamespace>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+
+    <!--
+      Strong-name signing (required by Dataverse for assembly registration).
+      The .snk is generated at build time by the GenerateSnk target below —
+      it is NEVER committed (see .gitignore).  This key is intentionally
+      throwaway / dev-only.  Do NOT replace with a production key in source
+      control.
+    -->
+    <SignAssembly>true</SignAssembly>
+    <AssemblyOriginatorKeyFile>ContactPlugin.snk</AssemblyOriginatorKeyFile>
+
+    <!-- net462 targets C# 7.3; disable nullable/implicit-usings (unavailable) -->
+    <LangVersion>7.3</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+
+    <!-- Suppress XML-doc warning (CS1591) — not required for a sample -->
+    <NoWarn>1591</NoWarn>
+
+    <!-- Flat output — no net462 sub-folder — so callers find ContactPlugin.dll here -->
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      Microsoft.NETFramework.ReferenceAssemblies.net462:
+        Provides net462 reference assemblies for cross-compilation on any OS
+        without a local .NET Framework SDK install.
+        PrivateAssets="all" — build-time only, never copied to output.
+    -->
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies.net462"
+                      Version="1.0.3"
+                      PrivateAssets="all" />
+
+    <!--
+      Microsoft.CrmSdk.CoreAssemblies:
+        IPlugin, IPluginExecutionContext, ITracingService, IOrganizationService.
+        PrivateAssets="all" + ExcludeAssets="runtime" — reference-only; the
+        Dataverse sandbox environment supplies the runtime copies.
+    -->
+    <PackageReference Include="Microsoft.CrmSdk.CoreAssemblies"
+                      Version="9.0.2.59"
+                      PrivateAssets="all"
+                      ExcludeAssets="runtime" />
+  </ItemGroup>
+
+  <!--
+    GenerateSnk: creates a throwaway dev strong-name key if absent.
+    Delegates to generate-snk.ps1, which works on Windows PowerShell and
+    PowerShell Core (pwsh) on Linux/macOS.
+
+    On Windows: cmd.exe invokes `powershell`.
+    On Linux/macOS (GitHub Actions ubuntu-latest): the CI workflow calls
+    `pwsh -File generate-snk.ps1` directly before `dotnet build`, so this
+    target's Condition guards against double-generation but is also skipped
+    in CI because the script pre-runs.
+  -->
+  <Target Name="GenerateSnk" BeforeTargets="BeforeBuild"
+          Condition="!Exists('$(AssemblyOriginatorKeyFile)')">
+    <Message Text="GenerateSnk: ContactPlugin.snk not found — generating dev key."
+             Importance="high" />
+    <Exec Command="powershell -NoProfile -ExecutionPolicy Bypass -File &quot;$(MSBuildThisFileDirectory)generate-snk.ps1&quot; -OutFile &quot;$(MSBuildThisFileDirectory)ContactPlugin.snk&quot;"
+          IgnoreExitCode="false" />
+  </Target>
+
+</Project>

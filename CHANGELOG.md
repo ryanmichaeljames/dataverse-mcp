@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- 29 new plug-in registration MCP tools (`src/dataverse_mcp/tools/plugin_registration.py`) covering the full Dataverse plug-in registration model end-to-end: plug-in assemblies (5 tools), plug-in packages (5 tools), plug-in types (5 tools), SDK messages (2 read-only tools), SDK message filters (2 read-only tools), SDK message processing steps (5 tools), and step images (5 tools). Split: 14 read (`@mcp.tool`), 10 write (`@write_tool`), 5 delete (`@delete_tool`). All 26 input models added to `src/dataverse_mcp/models.py`.
 - New `DATAVERSE_AUTH_TIMEOUT_SECONDS` environment variable (default `30`) that caps how long a cold-cache credential acquisition is allowed to block before the call is abandoned with an actionable auth error. Invalid or non-positive values fall back to the default with a logged warning.
 - CI quality gate: `uv run pytest tests/ -q` and `uv run ruff check .` now pass locally and in CI without any live credentials. `pyproject.toml` declares `ruff` as a dev dependency, registers an `integration` pytest marker, and sets `asyncio_mode = "auto"` for async tests.
 - Targeted unit tests for `odata_quote` (`tests/test_odata_utils.py`) covering no-quote passthrough, single-quote doubling, multiple quotes, and empty string.

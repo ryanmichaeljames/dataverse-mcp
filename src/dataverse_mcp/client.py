@@ -26,6 +26,9 @@ _MAX_ERROR_MESSAGE_LENGTH = 2000
 # Dataverse service-protection limits return 429; 502/503/504 are transient
 # gateway failures. Anything else is returned to the caller untouched.
 _RETRYABLE_STATUS_CODES = (429, 502, 503, 504)
+# Only safe-to-repeat methods are retried on 5xx. POST/PATCH are excluded
+# because a 5xx may arrive after the server already committed the write.
+_IDEMPOTENT_METHODS = frozenset({"GET", "PUT", "DELETE"})
 _MAX_RETRY_AFTER_SECONDS = 30.0
 _DEFAULT_RETRY_AFTER_SECONDS = 2.0
 # Tool responses above the warn threshold are logged; above the cap they are
@@ -305,7 +308,11 @@ async def request_with_retry(
     """Issue a Dataverse request, retrying throttled and transient failures.
 
     - 429 sleeps for Retry-After (capped at 30s; 2s when absent) and retries
-    - 502/503/504 retry with exponential backoff (1s, 2s, 4s)
+      for ALL HTTP methods (the request was rejected before processing)
+    - 502/503/504 retry with exponential backoff (1s, 2s, 4s) ONLY for
+      idempotent methods (GET, PUT, DELETE); POST, PATCH, and other
+      non-idempotent methods return the 5xx immediately because the server may
+      have already committed the write before the gateway error was returned
     - Timeouts and connection failures retry for GET requests only; timeouts
       re-raise unchanged (callers have specific handlers), connection failures
       raise DataverseConnectionError
@@ -343,6 +350,11 @@ async def request_with_retry(
             await asyncio.sleep(delay)
             continue
         if response.status_code not in _RETRYABLE_STATUS_CODES or attempt == max_attempts:
+            return response
+        # 5xx gateway errors are only safe to retry for idempotent methods.
+        # POST/PATCH may have already been committed by the server before the
+        # error was returned; returning the response lets the caller decide.
+        if response.status_code != 429 and method_upper not in _IDEMPOTENT_METHODS:
             return response
         if response.status_code == 429:
             delay = min(_parse_retry_after_seconds(response), _MAX_RETRY_AFTER_SECONDS)

@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `request_with_retry` no longer retries 502/503/504 responses for non-idempotent HTTP methods (POST, PATCH). A gateway error on a write request may arrive after Dataverse has already committed the operation; retrying would risk duplicate writes or associations. 429 throttle responses continue to retry for all methods because a 429 guarantees the request was rejected before processing.
+- `dataverse_create_view` and `dataverse_set_app_sitemap` previously returned `"published": true` unconditionally, even when the publish HTTP call failed with an `HTTPStatusError`. The `published` flag now accurately reflects publish outcome: `true` only when the publish call succeeds, `false` when it raises an error (the created/updated record is unaffected).
 
 ## [2.2.0] - 2026-06-12
 

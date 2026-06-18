@@ -14,6 +14,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+from azure.core.exceptions import ClientAuthenticationError
 from azure.identity import AzureCliCredential, InteractiveBrowserCredential
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,10 @@ _RESPONSE_MAX_BYTES = 5_000_000
 # Dataverse pages are capped server-side at 5,000; we never ask for more than
 # 500 per page to keep individual responses small.
 _MAX_PAGE_SIZE = 500
+# Default timeout (seconds) for blocking credential acquisition in get_bearer_token.
+# Overridden via DATAVERSE_AUTH_TIMEOUT_SECONDS. Must be positive; non-positive or
+# non-numeric values fall back to this default with a warning.
+_DEFAULT_AUTH_TIMEOUT_SECONDS = 30.0
 
 # Optional allowlist of Dataverse environment hostnames. Tokens are minted for
 # whatever host a tool call supplies, so an explicit whitelist confines requests
@@ -120,6 +125,36 @@ def _load_url_whitelist() -> frozenset[str]:
         except ValueError as e:
             logger.warning("Ignoring invalid DATAVERSE_WHITELIST entry %r: %s", candidate, e)
     return frozenset(whitelist)
+
+
+def _get_auth_timeout_seconds() -> float:
+    """Return the credential-acquisition timeout from DATAVERSE_AUTH_TIMEOUT_SECONDS.
+
+    Falls back to _DEFAULT_AUTH_TIMEOUT_SECONDS and logs a warning when the env
+    var is present but non-numeric or non-positive, mirroring the defensive
+    parsing pattern used for _parse_retry_after_seconds.
+    """
+    raw = os.environ.get("DATAVERSE_AUTH_TIMEOUT_SECONDS", "").strip()
+    if raw:
+        try:
+            value = float(raw)
+            if value > 0:
+                return value
+            logger.warning(
+                "DATAVERSE_AUTH_TIMEOUT_SECONDS=%r is non-positive; "
+                "using default %.1fs",
+                raw,
+                _DEFAULT_AUTH_TIMEOUT_SECONDS,
+            )
+        except ValueError:
+            logger.warning(
+                "DATAVERSE_AUTH_TIMEOUT_SECONDS=%r is not a valid number; "
+                "using default %.1fs",
+                raw,
+                _DEFAULT_AUTH_TIMEOUT_SECONDS,
+            )
+    return _DEFAULT_AUTH_TIMEOUT_SECONDS
+
 
 # Common Azure CLI installation paths that may not be on the system PATH when
 # the MCP server process is launched (e.g., from VS Code without a login shell).
@@ -330,9 +365,31 @@ async def build_headers(
         # Lazy lock creation is race-free on a single-threaded event loop.
         lock = app_ctx._token_locks.setdefault(scope, asyncio.Lock())
         async with lock:
+            # Re-check after acquiring lock: a concurrent caller may have already
+            # populated the cache while we were waiting.
             token = _get_cached_bearer_token(app_ctx, scope)
             if token is None:
-                token = await asyncio.to_thread(get_bearer_token, app_ctx, scope)
+                auth_timeout = _get_auth_timeout_seconds()
+                try:
+                    # NOTE: asyncio.to_thread cannot be cancelled — the underlying
+                    # worker thread (running get_bearer_token / credential.get_token)
+                    # may outlive this timeout. The timeout's purpose is to stop
+                    # serializing OTHER callers waiting on this per-scope lock, not
+                    # to kill the worker thread itself. The lock is released on any
+                    # exception (including asyncio.TimeoutError) because we are
+                    # inside `async with lock`, so subsequent callers are unblocked.
+                    token = await asyncio.wait_for(
+                        asyncio.to_thread(get_bearer_token, app_ctx, scope),
+                        timeout=auth_timeout,
+                    )
+                except asyncio.TimeoutError as exc:
+                    raise ClientAuthenticationError(
+                        message=(
+                            f"Credential acquisition timed out after {auth_timeout:.0f}s. "
+                            "Check your Azure CLI session (`az login`) or the "
+                            "DATAVERSE_AUTH_TYPE / credential configuration."
+                        )
+                    ) from exc
     headers = {
         "Authorization": f"Bearer {token}",
         "Accept": "application/json",
@@ -533,6 +590,18 @@ def tool_error_response(e: Exception, tool_name: str) -> str:
         return json.dumps({"error": True, "message": str(e) or f"Network error: {type(e).__name__}"})
     if isinstance(e, ValueError):
         return json.dumps({"error": True, "message": str(e)})
+    if isinstance(e, ClientAuthenticationError):
+        # Log the detail to stderr (may contain provider-specific diagnostics)
+        # but keep the user-facing message free of token/cred data.
+        logger.error("Authentication error in %s: %s", tool_name, e)
+        return json.dumps({
+            "error": True,
+            "message": (
+                "Authentication failed. Run `az login` to refresh your Azure CLI "
+                "session, or check DATAVERSE_AUTH_TYPE and your credential "
+                "configuration."
+            ),
+        })
     logger.exception("Unexpected error in %s", tool_name)
     return json.dumps({
         "error": True,

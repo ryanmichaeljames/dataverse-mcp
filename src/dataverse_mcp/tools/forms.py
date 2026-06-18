@@ -11,6 +11,8 @@ import uuid
 import xml.etree.ElementTree as ET
 from urllib.parse import quote as _url_quote, urlencode
 
+import defusedxml.ElementTree as DET
+from defusedxml.common import DefusedXmlException
 import httpx
 from mcp.server.fastmcp import Context
 
@@ -148,7 +150,9 @@ def _validate_formxml(formxml: str) -> list[str]:
 
     # Well-formed XML
     try:
-        root = ET.fromstring(formxml)
+        root = DET.fromstring(formxml)
+    except DefusedXmlException:
+        return ["XML contains forbidden constructs (entities/DTD) and was rejected."]
     except ET.ParseError as exc:
         return [f"XML is not well-formed: {exc}"]
 

@@ -43,11 +43,54 @@ _MAX_PAGE_SIZE = 500
 # whatever host a tool call supplies, so an explicit whitelist confines requests
 # (and the bearer tokens they carry) to environments the operator has approved.
 # When empty, every environment is permitted (see the README security warning).
+
+
+def _canonicalize_host(host: str) -> str:
+    """Return a canonical, comparable form of *host*.
+
+    Steps applied in order:
+    1. Strip exactly one trailing dot (DNS absolute form -> relative form).
+    2. Lowercase before IDNA encoding (the ``idna`` codec is case-sensitive on
+       already-encoded labels; lowercasing first ensures deterministic results).
+    3. IDNA-encode so that Unicode / punycode forms of the same hostname are
+       equal after canonicalization.
+    4. Lowercase the ASCII result defensively (punycode labels are already
+       lower, but belt-and-suspenders).
+
+    Raises:
+        ValueError: When the host cannot be IDNA-encoded (e.g., labels that are
+            too long, contain invalid characters, or are otherwise malformed).
+            Callers must not catch ``UnicodeError`` directly; this helper always
+            re-raises as ``ValueError`` with an actionable message.
+    """
+    # Strip a single trailing dot (absolute DNS notation -> bare hostname).
+    if host.endswith("."):
+        host = host[:-1]
+
+    # Lowercase first: the idna codec is case-sensitive on already-encoded
+    # punycode labels, so normalise case before encoding.
+    host = host.lower()
+
+    try:
+        host = host.encode("idna").decode("ascii")
+    except UnicodeError as exc:
+        raise ValueError(
+            f"Invalid hostname {host!r}: cannot IDNA-encode — {exc}. "
+            "Ensure the hostname contains only valid DNS label characters."
+        ) from exc
+
+    # Defensive final lowercase (punycode output is already lowercase, but
+    # keeps the contract explicit and stable across Python versions).
+    return host.lower()
+
+
 def _normalize_whitelist_host(entry: str) -> str:
-    """Reduce a DATAVERSE_WHITELIST entry to a bare, lowercased hostname.
+    """Reduce a DATAVERSE_WHITELIST entry to a canonical hostname.
 
     Accepts plain hosts (``org.crm.dynamics.com``); a scheme or trailing path is
-    tolerated and stripped so comparisons are always host-to-host.
+    tolerated and stripped so comparisons are always host-to-host.  The result
+    is passed through :func:`_canonicalize_host` so trailing dots, Unicode, and
+    punycode forms all reduce to the same canonical value.
     """
     candidate = entry.strip()
     if "://" not in candidate:
@@ -55,7 +98,7 @@ def _normalize_whitelist_host(entry: str) -> str:
     host = urlparse(candidate).hostname
     if not host:
         raise ValueError("could not parse a hostname")
-    return host.lower()
+    return _canonicalize_host(host)
 
 
 def _load_url_whitelist() -> frozenset[str]:
@@ -163,7 +206,15 @@ class AppContext:
 
 
 def _normalize_org_url(url: str) -> str:
-    """Validate and normalize a Dataverse organization URL (no whitelist check)."""
+    """Validate and normalize a Dataverse organization URL (no whitelist check).
+
+    Only port 443 (or no explicit port) is accepted; any other port causes a
+    hard ``ValueError`` so that non-standard ports cannot be used to bypass
+    allowlist matching.  The hostname is canonicalized via
+    :func:`_canonicalize_host` (trailing-dot stripping, IDNA encoding,
+    consistent lowercasing).  The returned URL never contains an explicit port
+    component.
+    """
     normalized_input = url.strip()
     if not normalized_input:
         raise ValueError("dataverse_url must not be empty")
@@ -180,6 +231,11 @@ def _normalize_org_url(url: str) -> str:
             "dataverse_url must include a hostname "
             "(e.g., 'https://yourorg.crm.dynamics.com')"
         )
+    if parsed.port is not None and parsed.port != 443:
+        raise ValueError(
+            f"dataverse_url must not specify a non-standard port (got :{parsed.port}). "
+            "Only the default HTTPS port (443) is permitted."
+        )
     if parsed.path not in ("", "/"):
         raise ValueError("dataverse_url must not include a path")
     if parsed.params or parsed.query or parsed.fragment:
@@ -187,11 +243,8 @@ def _normalize_org_url(url: str) -> str:
             "dataverse_url must not include params, query strings, or fragments"
         )
 
-    netloc = parsed.hostname.lower()
-    if parsed.port:
-        netloc = f"{netloc}:{parsed.port}"
-
-    return f"https://{netloc}"
+    canonical_host = _canonicalize_host(parsed.hostname)
+    return f"https://{canonical_host}"
 
 
 # Read once at import: normalize_dataverse_url is lru_cached, so the whitelist
@@ -205,10 +258,18 @@ def normalize_dataverse_url(url: str) -> str:
 
     When DATAVERSE_WHITELIST is configured, URLs whose host is outside the
     whitelist are rejected. When it is empty, any environment is permitted.
+
+    The host extracted from the already-canonical normalized URL is compared
+    against the canonical allowlist set.  Both sides went through
+    :func:`_canonicalize_host`, so trailing-dot and IDN forms match correctly.
     """
     normalized = _normalize_org_url(url)
     if _URL_WHITELIST:
-        host = urlparse(normalized).hostname
+        # _normalize_org_url already canonicalizes the host and drops the port,
+        # so urlparse(normalized).hostname is already canonical.  Pass it
+        # through _canonicalize_host once more to keep the comparison provably
+        # consistent without relying on implementation ordering.
+        host = _canonicalize_host(urlparse(normalized).hostname or "")
         if host not in _URL_WHITELIST:
             raise ValueError(
                 f"dataverse_url host '{host}' is not in the configured DATAVERSE_WHITELIST. "
@@ -511,8 +572,9 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
 
     if _URL_WHITELIST:
         logger.info(
-            "DATAVERSE_WHITELIST active: restricting tool calls to %d environment(s)",
+            "DATAVERSE_WHITELIST active: restricting tool calls to %d environment(s): %s",
             len(_URL_WHITELIST),
+            ", ".join(sorted(_URL_WHITELIST)),
         )
     else:
         logger.warning(

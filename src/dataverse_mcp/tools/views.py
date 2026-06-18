@@ -10,6 +10,8 @@ import re
 import xml.etree.ElementTree as ET
 from urllib.parse import quote as _url_quote, urlencode
 
+import defusedxml.ElementTree as DET
+from defusedxml.common import DefusedXmlException
 import httpx
 from mcp.server.fastmcp import Context
 
@@ -811,8 +813,13 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
         filter_elems: list[ET.Element] = []
         if params.filter_fetchxml:
             try:
-                fe = ET.fromstring(params.filter_fetchxml)
+                fe = DET.fromstring(params.filter_fetchxml)
                 filter_elems = [fe]
+            except DefusedXmlException:
+                return json.dumps({
+                    "error": True,
+                    "message": "filter_fetchxml contains forbidden XML constructs (entities/DTD) and was rejected.",
+                })
             except ET.ParseError as exc:
                 return json.dumps({
                     "error": True,
@@ -963,8 +970,13 @@ async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
         # 5. Determine preserved or replaced filters
         if params.filter_fetchxml is not None:
             try:
-                new_fe = ET.fromstring(params.filter_fetchxml)
+                new_fe = DET.fromstring(params.filter_fetchxml)
                 preserved_filters = [new_fe]
+            except DefusedXmlException:
+                return json.dumps({
+                    "error": True,
+                    "message": "filter_fetchxml contains forbidden XML constructs (entities/DTD) and was rejected.",
+                })
             except ET.ParseError as exc:
                 return json.dumps({
                     "error": True,

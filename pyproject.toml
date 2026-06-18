@@ -28,6 +28,7 @@ classifiers = [
 ]
 dependencies = [
     "azure-identity>=1.25.3",
+    "defusedxml>=0.7.1",
     "httpx>=0.20.0,<1.0",
     "mcp[cli]>=1.27.0",
 ]

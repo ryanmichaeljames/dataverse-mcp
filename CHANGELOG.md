@@ -24,6 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `request_with_retry` no longer retries 502/503/504 responses for non-idempotent HTTP methods (POST, PATCH). A gateway error on a write request may arrive after Dataverse has already committed the operation; retrying would risk duplicate writes or associations. 429 throttle responses continue to retry for all methods because a 429 guarantees the request was rejected before processing.
 - `dataverse_create_view` and `dataverse_set_app_sitemap` previously returned `"published": true` unconditionally, even when the publish HTTP call failed with an `HTTPStatusError`. The `published` flag now accurately reflects publish outcome: `true` only when the publish call succeeds, `false` when it raises an error (the created/updated record is unaffected).
 - Bumped `build-system.requires` from `setuptools>=61.0` to `setuptools>=77.0` to match the PEP 639 SPDX `license = "MIT"` string form declared in `[project]`; setuptools 77+ is required to recognise an inline SPDX expression as the license field — earlier versions would fail to build the package metadata correctly.
+- `dataverse_execute_batch` now generates a unique UUID-based multipart boundary per request (e.g. `batch_<32-hex-chars>`) instead of reusing the hardcoded literal `batch_dataverse_mcp`, eliminating any risk of boundary collision with response body content.
+- `parse_batch_response` now tolerates both `\r\n` and bare `\n` line endings throughout the multipart response, including header/body separators and inner `multipart/mixed` boundary extraction.
+- `parse_batch_response` no longer silently drops batch sub-responses that contain body content but no parseable `HTTP/1.1` status line; those parts now surface as `{"status_code": 0, "error": "<description>"}` entries in the results list so callers can detect and handle failures.
 
 ## [2.2.0] - 2026-06-12
 

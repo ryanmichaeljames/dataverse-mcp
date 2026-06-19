@@ -125,6 +125,64 @@ Set these in the `env` block of your MCP server entry. This project does not use
 > [!NOTE]
 > **Running multiple tenants/accounts at once.** The default cache and sidecar filenames are shared per host, so two `interactive` sessions signed in to different tenants/accounts would overwrite each other's pinned account. Give each session a distinct `DATAVERSE_TOKEN_CACHE_PROFILE` (e.g., `prod`, `dev`) to keep their caches and `AuthenticationRecord` sidecars separate.
 
+#### Example: two tenants side by side
+
+Register two server entries, each with its own `DATAVERSE_TOKEN_CACHE_PROFILE`. The profile is a *tenant-wide* cache key — each entry signs in once (its own browser prompt) and then restarts silently as its own account, while tools still receive the specific `dataverse_url` per call. The profiles never collide.
+
+**Claude** (`claude_desktop_config.json` or `.claude/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "dataverse-prod": {
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "interactive",
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "prod"
+      }
+    },
+    "dataverse-dev": {
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "interactive",
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "dev"
+      }
+    }
+  }
+}
+```
+
+**GitHub Copilot** (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "dataverse-prod": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "interactive",
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "prod"
+      }
+    },
+    "dataverse-dev": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["dataverse-mcp"],
+      "env": {
+        "DATAVERSE_AUTH_TYPE": "interactive",
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "dev"
+      }
+    }
+  }
+}
+```
+
+Each profile maps to one tenant/account sign-in; agents pass the target `dataverse_url` on each tool call. Omit `DATAVERSE_TOKEN_CACHE_PROFILE` (or leave it empty) for a single-tenant setup — the original shared cache filenames are used.
+
 ### Safety Guards
 
 Most write and delete tools are **not registered by default**, so they do not appear to the agent until explicitly enabled. One exception is `dataverse_execute_batch`, which is always visible but only allows GET requests unless `DATAVERSE_ALLOW_WRITE=true`. This prevents accidental mutations when you only need to read or inspect data while still allowing safe batch reads by default.

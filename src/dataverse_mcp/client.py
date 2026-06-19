@@ -5,6 +5,7 @@ import functools
 import json
 import logging
 import os
+import pathlib
 import shutil
 import time
 from collections.abc import AsyncIterator
@@ -15,7 +16,12 @@ from urllib.parse import urlparse
 
 import httpx
 from azure.core.exceptions import ClientAuthenticationError
-from azure.identity import AzureCliCredential, InteractiveBrowserCredential
+from azure.identity import (
+    AuthenticationRecord,
+    AzureCliCredential,
+    InteractiveBrowserCredential,
+    TokenCachePersistenceOptions,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +162,146 @@ def _get_auth_timeout_seconds() -> float:
     return _DEFAULT_AUTH_TIMEOUT_SECONDS
 
 
+def _get_token_cache_persist() -> bool:
+    """Return whether interactive token cache persistence is enabled.
+
+    Reads DATAVERSE_TOKEN_CACHE_PERSIST (default: true).  Accepts 'true' or
+    'false' case-insensitively; any other non-empty value is rejected with a
+    logged warning and falls back to the default (true), matching the defensive
+    idiom used by _get_auth_timeout_seconds.
+    """
+    raw = os.environ.get("DATAVERSE_TOKEN_CACHE_PERSIST", "").strip().lower()
+    if not raw:
+        return True
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    logger.warning(
+        "DATAVERSE_TOKEN_CACHE_PERSIST=%r is not 'true' or 'false'; "
+        "using default (true)",
+        os.environ.get("DATAVERSE_TOKEN_CACHE_PERSIST", ""),
+    )
+    return True
+
+
+def _get_token_cache_allow_unencrypted() -> bool:
+    """Return whether unencrypted token cache storage is permitted.
+
+    Reads DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED (default: false).  Accepts
+    'true' or 'false' case-insensitively; any other non-empty value is rejected
+    with a logged warning and falls back to the default (false).  When true, a
+    startup warning is emitted by the caller because tokens may be written to
+    disk without OS-level encryption.
+    """
+    raw = os.environ.get("DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED", "").strip().lower()
+    if not raw:
+        return False
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    logger.warning(
+        "DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED=%r is not 'true' or 'false'; "
+        "using default (false)",
+        os.environ.get("DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED", ""),
+    )
+    return False
+
+
+def _get_token_cache_profile() -> str:
+    """Return a filename-safe profile suffix for the token cache and sidecar.
+
+    Reads DATAVERSE_TOKEN_CACHE_PROFILE (default: empty).  When set, the value
+    is appended to both the MSAL cache name and the AuthenticationRecord sidecar
+    filename so that two server processes connecting to different
+    tenants/accounts on the same host do not share (and overwrite) each other's
+    cache and pinned account.  An empty/unset value preserves the original
+    single-profile filenames for backwards compatibility.
+
+    Only ``[A-Za-z0-9_-]`` are permitted.  Any other character raises
+    ``ValueError`` rather than being silently dropped: sanitizing would let two
+    distinct profiles (e.g. ``a/b`` and ``a.b``) collapse to the same value and
+    secretly share one cache — the exact cross-tenant collision this option
+    exists to prevent.  Failing fast at startup forces the operator to pick an
+    unambiguous, filesystem-safe name.
+    """
+    raw = os.environ.get("DATAVERSE_TOKEN_CACHE_PROFILE", "").strip()
+    if not raw:
+        return ""
+    allowed = (
+        "abcdefghijklmnopqrstuvwxyz"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789-_"
+    )
+    if any(c not in allowed for c in raw):
+        raise ValueError(
+            f"DATAVERSE_TOKEN_CACHE_PROFILE={raw!r} contains characters outside "
+            "[A-Za-z0-9_-]. Choose a profile name using only letters, digits, "
+            "dashes, or underscores so it is an unambiguous, filesystem-safe "
+            "cache identifier."
+        )
+    return raw
+
+
+def _get_user_config_dir() -> pathlib.Path:
+    """Return a per-user config directory for dataverse-mcp.
+
+    Uses LOCALAPPDATA on Windows, XDG_CONFIG_HOME (or ~/.config) elsewhere,
+    mirroring the convention used by most CLI tools.  Does not create the
+    directory — callers must mkdir(parents=True, exist_ok=True) before writing.
+    """
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or str(pathlib.Path.home() / "AppData" / "Local")
+    else:
+        base = os.environ.get("XDG_CONFIG_HOME") or str(pathlib.Path.home() / ".config")
+    return pathlib.Path(base) / "dataverse-mcp"
+
+
+def _load_auth_record(record_path: pathlib.Path) -> AuthenticationRecord | None:
+    """Load a serialized AuthenticationRecord from *record_path*, or return None.
+
+    Returns None on any read/parse error and logs a warning so the caller falls
+    back to a fresh interactive prompt rather than crashing.
+    """
+    if not record_path.exists():
+        return None
+    try:
+        data = record_path.read_text(encoding="utf-8")
+        record = AuthenticationRecord.deserialize(data)
+        logger.debug("Loaded AuthenticationRecord from %s", record_path)
+        return record
+    except Exception as exc:
+        logger.warning(
+            "Could not load AuthenticationRecord from %s (%s); "
+            "a fresh interactive sign-in will be required",
+            record_path, exc,
+        )
+        return None
+
+
+def _save_auth_record(record: AuthenticationRecord, record_path: pathlib.Path) -> None:
+    """Serialize *record* to *record_path* (mode 0o600), creating parent dirs.
+
+    Errors are logged as warnings and swallowed — failure to persist the record
+    is non-fatal; the user will just be re-prompted on the next restart.
+    """
+    try:
+        record_path.parent.mkdir(parents=True, exist_ok=True)
+        record_path.write_text(record.serialize(), encoding="utf-8")
+        # Restrict to owner read/write on POSIX; Windows ACLs are per-user by
+        # default for LOCALAPPDATA so no chmod needed.
+        if os.name != "nt":
+            record_path.chmod(0o600)
+        logger.debug("Saved AuthenticationRecord to %s", record_path)
+    except Exception as exc:
+        logger.warning(
+            "Could not save AuthenticationRecord to %s (%s); "
+            "a fresh interactive sign-in will be required on the next restart",
+            record_path, exc,
+        )
+
+
 # Common Azure CLI installation paths that may not be on the system PATH when
 # the MCP server process is launched (e.g., from VS Code without a login shell).
 _AZ_CLI_CANDIDATE_PATHS = [
@@ -211,7 +357,97 @@ def _build_credential(auth_type: str):
     """
     if auth_type == "interactive":
         logger.info("Using InteractiveBrowserCredential for authentication")
-        return InteractiveBrowserCredential()
+        persist = _get_token_cache_persist()
+        if not persist:
+            logger.info(
+                "DATAVERSE_TOKEN_CACHE_PERSIST=false: "
+                "interactive credential uses in-memory token cache only"
+            )
+            return InteractiveBrowserCredential()
+
+        allow_unencrypted = _get_token_cache_allow_unencrypted()
+        if allow_unencrypted:
+            logger.warning(
+                "DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED=true: "
+                "the MSAL token cache may be written to disk without OS-level encryption. "
+                "Refresh tokens are long-lived credentials; only enable this on trusted, "
+                "access-controlled hosts where an OS secret store is unavailable."
+            )
+
+        # Optional profile suffix isolates the cache + sidecar per
+        # tenant/account so concurrent sessions on one host do not collide.
+        profile = _get_token_cache_profile()
+        cache_name = "dataverse-mcp.cache" if not profile else f"dataverse-mcp.{profile}.cache"
+        record_filename = (
+            "dataverse-mcp.authrecord.json"
+            if not profile
+            else f"dataverse-mcp.{profile}.authrecord.json"
+        )
+        if profile:
+            logger.info("Token cache profile active: %r (cache name=%s)", profile, cache_name)
+
+        cache_opts = TokenCachePersistenceOptions(
+            name=cache_name,
+            allow_unencrypted_storage=allow_unencrypted,
+        )
+        logger.info(
+            "Interactive token cache persistence enabled (encrypted=%s)",
+            not allow_unencrypted,
+        )
+
+        # Load a previously serialized AuthenticationRecord (secret-free JSON).
+        # This anchors silent account selection on restart so MSAL can silently
+        # mint a new access token from the persisted refresh token without
+        # re-prompting.  Corruption or absence degrades to a fresh prompt.
+        config_dir = _get_user_config_dir()
+        record_path = config_dir / record_filename
+        auth_record = _load_auth_record(record_path)
+
+        credential = InteractiveBrowserCredential(
+            cache_persistence_options=cache_opts,
+            authentication_record=auth_record,
+        )
+
+        if auth_record is None:
+            # No prior record: after the first interactive sign-in, serialize
+            # the returned record so subsequent restarts can reuse it silently.
+            # We do this by replacing get_token with a one-shot wrapper that
+            # calls authenticate() on the underlying credential after the first
+            # successful token acquisition, then removes itself.
+            #
+            # Note: when a sidecar record IS loaded (auth_record is not None),
+            # no wrapper is installed.  A stale record for a *different* user
+            # signing in interactively would therefore never be refreshed — this
+            # edge case is accepted; normal use is single-user per host.
+            _original_get_token = credential.get_token
+
+            def _get_token_and_record(*args, **kwargs):
+                # NOTE: this wrapper only handles *args (positional scopes);
+                # **kwargs are not forwarded to authenticate().  This is safe
+                # because the sole caller (get_bearer_token) passes exactly one
+                # positional scope string and no kwargs.
+                token = _original_get_token(*args, **kwargs)
+                # Restore BEFORE calling authenticate() so that authenticate()'s
+                # internal self.get_token() call hits the real method and does
+                # not re-enter this wrapper (which would cause unbounded
+                # recursion swallowed by the broad except below).
+                credential.get_token = _original_get_token  # type: ignore[method-assign]
+                try:
+                    # authenticate() returns the AuthenticationRecord; scopes
+                    # come from the first get_token call args.
+                    record = credential.authenticate(scopes=list(args))
+                    _save_auth_record(record, record_path)
+                except Exception as exc:
+                    logger.warning(
+                        "Could not obtain AuthenticationRecord after sign-in (%s); "
+                        "restart re-prompts will still occur",
+                        exc,
+                    )
+                return token
+
+            credential.get_token = _get_token_and_record  # type: ignore[method-assign]
+
+        return credential
 
     if auth_type == "azure_cli":
         _ensure_az_cli_on_path()

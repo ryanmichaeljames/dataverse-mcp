@@ -1,6 +1,7 @@
 """Pydantic input models for all Dataverse MCP tools."""
 
 import re
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -1891,6 +1892,101 @@ class DisassociateRecordsInput(DataverseEnvironmentInput):
     def validate_guids(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
             raise ValueError("must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Record CRUD write tools
+# ---------------------------------------------------------------------------
+
+
+class CreateRecordInput(DataverseEnvironmentInput):
+    """Input for creating a single record in a Dataverse table."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    data: dict[str, Any] = Field(
+        ...,
+        description=(
+            "Column name/value pairs for the new record. "
+            "Use logical (lowercase) column names "
+            "(e.g., {'name': 'Contoso', 'telephone1': '555-0100'}). "
+            "Use dataverse_list_columns to discover available columns. "
+            "Must contain at least one column."
+        ),
+        min_length=1,
+    )
+
+
+class UpdateRecordInput(DataverseEnvironmentInput):
+    """Input for partially updating a single record in a Dataverse table."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    record_id: str = Field(
+        ...,
+        description="The GUID of the record to update.",
+        min_length=1,
+    )
+    data: dict[str, Any] = Field(
+        ...,
+        description=(
+            "Partial column name/value pairs to update — only the provided columns "
+            "are changed, all others are left untouched. Use logical (lowercase) "
+            "column names (e.g., {'name': 'New Name', 'telephone1': '555-0200'}). "
+            "Must contain at least one column."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("record_id")
+    @classmethod
+    def validate_record_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class DeleteRecordInput(DataverseEnvironmentInput):
+    """Input for deleting a single record from a Dataverse table."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    record_id: str = Field(
+        ...,
+        description="The GUID of the record to delete.",
+        min_length=1,
+    )
+
+    @field_validator("record_id")
+    @classmethod
+    def validate_record_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
         return v
 
 

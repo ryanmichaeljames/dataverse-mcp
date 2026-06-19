@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Three dedicated single-record CRUD tools in `src/dataverse_mcp/tools/tables.py`:
+  `dataverse_create_record` (POST, `@write_tool`, returns the new record `id`),
+  `dataverse_update_record` (PATCH partial update, `@write_tool`),
+  `dataverse_delete_record` (DELETE, `@delete_tool`). Create and update require
+  `DATAVERSE_ALLOW_WRITE=true`; delete requires `DATAVERSE_ALLOW_DELETE=true`. All three
+  reuse existing `build_headers` / `request_with_retry` / `finalize_response` helpers and
+  follow the same error-JSON contract as the rest of the server. Three matching input
+  models (`CreateRecordInput`, `UpdateRecordInput`, `DeleteRecordInput`) added to
+  `src/dataverse_mcp/models.py`.
+
 ### Removed
 - **BREAKING** — Removed the `DATAVERSE_URL` environment-variable fallback entirely. `dataverse_url` is now a **required** field on every tool input model; tool calls that omit it will be rejected by Pydantic validation before reaching any tool logic. The `AppContext.fallback_dataverse_url` field and the startup env-read in `dataverse_lifespan` have been removed. `resolve_base_url` no longer accepts an `AppContext` argument. Use `dataverse_list_environments` to discover environment URLs if needed.
 

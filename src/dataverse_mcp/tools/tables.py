@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 import uuid
 from urllib.parse import urlencode
 
@@ -24,16 +25,23 @@ from dataverse_mcp.models import (
     AggregateTableInput,
     AssociateRecordsInput,
     CountRecordsInput,
+    CreateRecordInput,
+    DeleteRecordInput,
     DisassociateRecordsInput,
     ExecuteBatchInput,
     GetRecordInput,
     MergeRecordsInput,
     QueryTableInput,
+    UpdateRecordInput,
 )
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_RECORD_SELECT = ["createdon", "modifiedon"]
+
+_GUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 # $batch requests bundle many operations and need longer than the client default.
 _BATCH_TIMEOUT = 120.0
@@ -160,6 +168,145 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
         return finalize_response({"record": record})
     except Exception as e:
         return tool_error_response(e, "dataverse_get_record")
+
+
+# ---------------------------------------------------------------------------
+# Record CRUD write tools
+# ---------------------------------------------------------------------------
+
+
+@write_tool(
+    name="dataverse_create_record",
+    annotations={
+        "title": "Create Record",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_record(params: CreateRecordInput, ctx: Context) -> str:
+    """Create a single record in any Dataverse table.
+    POSTs the supplied column/value pairs and returns the new record's id.
+    Use dataverse_get_record to read the created record back if you need its
+    fields. Use dataverse_get_entity_sets to resolve entity_set_name; use
+    dataverse_list_columns for column names.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{params.entity_set_name}"
+
+    try:
+        # A plain create returns 204 + the OData-EntityId header (the new record
+        # URI). We do NOT request return=representation: Dataverse omits the
+        # OData-EntityId header when the entity body is returned, which would
+        # leave us without a reliable, entity-agnostic source for the new id.
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client, "POST", url, headers=headers, json=params.data
+        )
+        resp.raise_for_status()
+
+        # Extract the new record GUID from the OData-EntityId header.
+        entity_id_header = resp.headers.get("OData-EntityId", "")
+        m = _GUID_RE.search(entity_id_header)
+        if not m:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "Record created but the new id could not be read from the "
+                    "OData-EntityId response header."
+                ),
+            })
+        new_id = m.group(0)
+        logger.info("Created record in %s: id=%s", params.entity_set_name, new_id)
+        return finalize_response({"created": True, "id": new_id})
+    except Exception as e:
+        return tool_error_response(e, "dataverse_create_record")
+
+
+@write_tool(
+    name="dataverse_update_record",
+    annotations={
+        "title": "Update Record",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_update_record(params: UpdateRecordInput, ctx: Context) -> str:
+    """Partially update a single record in any Dataverse table via PATCH.
+    Only the columns supplied in data are changed; all other columns are
+    left untouched. This is a PATCH partial update — unlike metadata tools
+    that require a full PUT definition.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/{params.entity_set_name}({params.record_id})"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client, "PATCH", url, headers=headers, json=params.data
+        )
+        resp.raise_for_status()
+        logger.info(
+            "Updated record %s in %s", params.record_id, params.entity_set_name
+        )
+        return finalize_response({"updated": True, "id": params.record_id})
+    except Exception as e:
+        return tool_error_response(e, "dataverse_update_record")
+
+
+@delete_tool(
+    name="dataverse_delete_record",
+    annotations={
+        "title": "Delete Record",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_record(params: DeleteRecordInput, ctx: Context) -> str:
+    """Permanently delete a single record from any Dataverse table.
+    Sends DELETE to the record URL. This action cannot be undone.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/{params.entity_set_name}({params.record_id})"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        resp = await request_with_retry(
+            app_ctx.http_client, "DELETE", url, headers=headers
+        )
+        resp.raise_for_status()
+        logger.info(
+            "Deleted record %s from %s", params.record_id, params.entity_set_name
+        )
+        return finalize_response({"deleted": True, "id": params.record_id})
+    except Exception as e:
+        return tool_error_response(e, "dataverse_delete_record")
 
 
 @mcp.tool(

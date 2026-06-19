@@ -402,7 +402,7 @@ async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> 
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -452,7 +452,7 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -518,7 +518,7 @@ async def dataverse_list_solution_components(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -562,7 +562,7 @@ async def dataverse_get_cloud_flows(params: ListCloudFlowsInput, ctx: Context) -
     """Get cloud flows by query and optionally scoped to a solution."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -654,7 +654,7 @@ async def dataverse_enable_cloud_flow(
     """Enable a cloud flow."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
         headers = await build_headers(app_ctx, base_url)
         result = await _set_cloud_flow_state(
             app_ctx,
@@ -691,7 +691,7 @@ async def dataverse_disable_cloud_flow(
     """Disable a cloud flow."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
         headers = await build_headers(app_ctx, base_url)
         result = await _set_cloud_flow_state(
             app_ctx,
@@ -728,7 +728,7 @@ async def dataverse_batch_enable_cloud_flows(
     """Enable cloud flows in batch for improved performance."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
         result = await _execute_cloud_flow_state_batch(
             app_ctx,
             base_url,
@@ -764,7 +764,7 @@ async def dataverse_batch_disable_cloud_flows(
     """Disable cloud flows in batch for improved performance."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
         result = await _execute_cloud_flow_state_batch(
             app_ctx,
             base_url,
@@ -798,7 +798,7 @@ async def dataverse_create_publisher(params: CreatePublisherInput, ctx: Context)
     """Create a Dataverse publisher."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -840,7 +840,7 @@ async def dataverse_update_publisher(params: UpdatePublisherInput, ctx: Context)
     """Update mutable publisher fields."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -877,7 +877,7 @@ async def dataverse_create_solution(params: CreateSolutionInput, ctx: Context) -
     """Create a Dataverse solution."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -921,7 +921,7 @@ async def dataverse_update_solution(params: UpdateSolutionInput, ctx: Context) -
     """Update mutable solution fields."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -987,7 +987,7 @@ async def dataverse_update_solution_version(
     """Update solution version only."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -1050,7 +1050,7 @@ async def dataverse_add_component_to_solution(
     """Add a component to a solution via AddSolutionComponent action."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -1117,7 +1117,7 @@ async def dataverse_remove_component_from_solution(
     """Remove a component from a solution via RemoveSolutionComponent action."""
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 

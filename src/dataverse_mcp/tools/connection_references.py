@@ -78,7 +78,7 @@ async def dataverse_list_connection_references(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -141,7 +141,7 @@ async def dataverse_get_connection_reference(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -225,7 +225,7 @@ async def dataverse_create_connection_reference(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -295,7 +295,7 @@ async def dataverse_update_connection_reference(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -360,7 +360,7 @@ async def dataverse_delete_connection_reference(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 

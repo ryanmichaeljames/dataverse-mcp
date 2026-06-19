@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **BREAKING** — Removed the `DATAVERSE_URL` environment-variable fallback entirely. `dataverse_url` is now a **required** field on every tool input model; tool calls that omit it will be rejected by Pydantic validation before reaching any tool logic. The `AppContext.fallback_dataverse_url` field and the startup env-read in `dataverse_lifespan` have been removed. `resolve_base_url` no longer accepts an `AppContext` argument. Use `dataverse_list_environments` to discover environment URLs if needed.
+
 ### Added
 - Interactive auth now persists the MSAL token cache to disk (OS-encrypted by default) so server restarts no longer force a browser re-prompt while a refresh token is valid. After the first interactive sign-in a secret-free `AuthenticationRecord` sidecar is saved alongside the cache to anchor silent account selection on subsequent startups. Two new env vars control the behaviour: `DATAVERSE_TOKEN_CACHE_PERSIST` (default `true`; set `false` to revert to in-memory-only) and `DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED` (default `false`; opt-in plaintext cache for headless Linux without libsecret). Has no effect on `azure_cli` auth. Resolves #63.
 - New `DATAVERSE_TOKEN_CACHE_PROFILE` env var (default empty) that isolates the interactive token cache and its `AuthenticationRecord` sidecar per profile. Set a distinct value in each session to run concurrent servers signed in to different tenants/accounts on the same host without them overwriting each other's cache and pinned account. Must use only `[A-Za-z0-9_-]`; any other character fails fast at startup with an actionable error (silently sanitizing could collapse two distinct profiles onto one cache and defeat the isolation). Empty/unset preserves the previous shared default filenames.

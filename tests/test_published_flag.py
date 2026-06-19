@@ -45,7 +45,6 @@ def _make_app_ctx() -> AppContext:
     return AppContext(
         credential=None,
         auth_type="azure_cli",
-        fallback_dataverse_url=_BASE_URL,
         http_client=MagicMock(spec=httpx.AsyncClient),
     )
 

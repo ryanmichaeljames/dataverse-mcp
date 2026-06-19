@@ -401,7 +401,7 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -461,7 +461,7 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -535,7 +535,7 @@ async def dataverse_validate_app(params: ValidateAppInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -571,7 +571,7 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -726,7 +726,7 @@ async def dataverse_update_app(params: UpdateAppInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -781,7 +781,7 @@ async def dataverse_add_app_components(params: AddAppComponentsInput, ctx: Conte
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -847,7 +847,7 @@ async def dataverse_remove_app_components(params: RemoveAppComponentsInput, ctx:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -914,7 +914,7 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -996,7 +996,7 @@ async def dataverse_publish_app(params: PublishAppInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -1033,7 +1033,7 @@ async def dataverse_assign_app_role(params: AssignAppRoleInput, ctx: Context) ->
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 

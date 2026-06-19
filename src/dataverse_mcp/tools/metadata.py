@@ -144,7 +144,7 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -190,7 +190,7 @@ async def dataverse_get_table_metadata(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -246,7 +246,7 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -298,7 +298,7 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -415,7 +415,7 @@ async def dataverse_list_choice_column_options(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     try:
@@ -546,7 +546,7 @@ async def dataverse_list_relationships(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     try:
@@ -619,7 +619,7 @@ async def dataverse_get_relationship(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     schema_enc = _url_quote(params.schema_name, safe="")
@@ -675,7 +675,7 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     # Strip 'Options' — not selectable on the polymorphic collection type
@@ -730,7 +730,7 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
     if params.name:
@@ -784,7 +784,7 @@ async def dataverse_check_relationship_eligibility(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
     check_type_to_action = {
@@ -887,7 +887,7 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     try:
@@ -953,7 +953,7 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     table_enc = _url_quote(params.table_logical_name, safe="")
@@ -1025,7 +1025,7 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
     table_enc = _url_quote(params.table_logical_name, safe="")
@@ -1160,7 +1160,7 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1225,7 +1225,7 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1280,7 +1280,7 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1402,7 +1402,7 @@ async def dataverse_create_one_to_many_relationship(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1472,7 +1472,7 @@ async def dataverse_create_many_to_many_relationship(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1557,7 +1557,7 @@ async def dataverse_create_multi_table_lookup(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1621,7 +1621,7 @@ async def dataverse_update_relationship(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1669,7 +1669,7 @@ async def dataverse_delete_relationship(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1798,7 +1798,7 @@ async def dataverse_create_choice(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1843,7 +1843,7 @@ async def dataverse_update_choice(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1888,7 +1888,7 @@ async def dataverse_delete_choice(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1939,7 +1939,7 @@ async def dataverse_add_choice_option(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -1992,7 +1992,7 @@ async def dataverse_update_choice_option(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -2042,7 +2042,7 @@ async def dataverse_delete_choice_option(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -2091,7 +2091,7 @@ async def dataverse_reorder_choice_options(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
@@ -2143,7 +2143,7 @@ async def dataverse_publish_customizations(
     if params.publish_all:
         app_ctx = get_app_ctx(ctx)
         try:
-            base_url = resolve_base_url(app_ctx, params.dataverse_url)
+            base_url = resolve_base_url(params.dataverse_url)
         except ValueError as e:
             return json.dumps({'error': True, 'message': str(e)})
 
@@ -2197,7 +2197,7 @@ async def dataverse_publish_customizations(
 
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 

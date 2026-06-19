@@ -42,7 +42,6 @@ def _make_app_ctx(credential: Any | None = None) -> AppContext:
     return AppContext(
         credential=credential or MagicMock(),
         auth_type="azure_cli",
-        fallback_dataverse_url=None,
         http_client=http_client,
         _token_cache={},
         _token_locks={},

@@ -157,7 +157,7 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -203,7 +203,7 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -267,7 +267,7 @@ async def dataverse_retrieve_user_privileges(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
@@ -316,7 +316,7 @@ async def dataverse_retrieve_principal_access(
     """
     app_ctx = get_app_ctx(ctx)
     try:
-        base_url = resolve_base_url(app_ctx, params.dataverse_url)
+        base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 

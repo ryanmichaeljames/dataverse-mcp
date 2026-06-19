@@ -470,7 +470,6 @@ class AppContext:
 
     credential: Any
     auth_type: str
-    fallback_dataverse_url: str | None
     http_client: httpx.AsyncClient
     _token_cache: dict[str, tuple[str, float]] = field(default_factory=dict)
     _token_locks: dict[str, asyncio.Lock] = field(default_factory=dict)
@@ -549,15 +548,18 @@ def normalize_dataverse_url(url: str) -> str:
     return normalized
 
 
-def resolve_base_url(app_ctx: AppContext, dataverse_url: str | None) -> str:
-    """Resolve the effective base URL, raising ValueError if none configured."""
-    url = dataverse_url or app_ctx.fallback_dataverse_url
-    if not url:
+def resolve_base_url(dataverse_url: str) -> str:
+    """Normalize and return the per-call Dataverse base URL.
+
+    Pydantic validates ``dataverse_url`` on every input model before this
+    function is reached, so a falsy value here indicates a programming error
+    rather than a normal user omission.
+    """
+    if not dataverse_url:
         raise ValueError(
-            "No Dataverse environment URL was provided. Supply dataverse_url on the "
-            "tool input, or set DATAVERSE_URL as a legacy fallback."
+            "dataverse_url is required; supply it on the tool input."
         )
-    return normalize_dataverse_url(url)
+    return normalize_dataverse_url(dataverse_url)
 
 
 def get_bearer_token(app_ctx: AppContext, scope: str) -> str:
@@ -866,15 +868,6 @@ def finalize_response(payload: dict, *, max_bytes: int = _RESPONSE_MAX_BYTES) ->
 @asynccontextmanager
 async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
     """FastMCP lifespan that initializes shared auth state."""
-    fallback_dataverse_url = os.environ.get("DATAVERSE_URL")
-    if fallback_dataverse_url:
-        fallback_dataverse_url = normalize_dataverse_url(fallback_dataverse_url)
-        logger.info(
-            "Configured legacy DATAVERSE_URL fallback for %s", fallback_dataverse_url
-        )
-    else:
-        logger.info("No DATAVERSE_URL fallback configured; tools must provide dataverse_url")
-
     if _URL_WHITELIST:
         logger.info(
             "DATAVERSE_WHITELIST active: restricting tool calls to %d environment(s): %s",
@@ -899,7 +892,6 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
         app_ctx = AppContext(
             credential=credential,
             auth_type=auth_type,
-            fallback_dataverse_url=fallback_dataverse_url,
             http_client=http_client,
         )
         try:

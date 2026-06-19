@@ -21,20 +21,17 @@ class DataverseEnvironmentInput(BaseModel):
 
     model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
 
-    dataverse_url: str | None = Field(
-        default=None,
+    dataverse_url: str = Field(
+        ...,
         description=(
-            "Preferred explicit Dataverse organization URL for this request "
-            "(e.g., 'https://yourorg.crm.dynamics.com'). If omitted, the "
-            "server falls back to DATAVERSE_URL for backward compatibility."
+            "Required Dataverse organization URL for this request "
+            "(e.g., 'https://yourorg.crm.dynamics.com')."
         ),
     )
 
     @field_validator("dataverse_url")
     @classmethod
-    def validate_dataverse_url(cls, v: str | None) -> str | None:
-        if v is None:
-            return None
+    def validate_dataverse_url(cls, v: str) -> str:
         return normalize_dataverse_url(v)
 
 

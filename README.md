@@ -100,7 +100,6 @@ Set these in the `env` block of your MCP server entry. This project does not use
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `DATAVERSE_AUTH_TYPE` | `azure_cli` | Authentication method: `azure_cli` or `interactive` |
-| `DATAVERSE_URL` | — | Fallback org URL used when a tool call omits `dataverse_url` |
 | `DATAVERSE_ALLOW_WRITE` | `false` | Set to `true` to register create, update, associate, merge, and schema mutation tools |
 | `DATAVERSE_ALLOW_DELETE` | `false` | Set to `true` to register delete and disassociate tools |
 | `DATAVERSE_WHITELIST` | — | Comma-separated list of allowed environment hostnames (e.g., `yourorg.crm.dynamics.com,yourorg-uat.crm.dynamics.com`). When set, tool calls to any environment not on the list are rejected. When empty, **all** environments are permitted — see the warning below |
@@ -338,7 +337,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 }
 ```
 
-When `dataverse_url` is omitted, the server falls back to `DATAVERSE_URL` if configured. Use `dataverse_list_environments` to discover available environments first.
+`dataverse_url` is required on every tool call. Use `dataverse_list_environments` to discover available environments if you do not yet know the URL.
 
 ---
 

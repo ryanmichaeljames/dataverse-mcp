@@ -60,6 +60,7 @@ from dataverse_mcp.tools.plugin_registration import (
 _VALID_GUID = "12345678-1234-1234-1234-123456789abc"
 _VALID_GUID_2 = "abcdef01-abcd-abcd-abcd-abcdef012345"
 _VALID_GUID_3 = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+_VALID_URL = "https://yourorg.crm.dynamics.com"
 
 
 def _mock_response(
@@ -82,7 +83,6 @@ def _make_app_ctx(responses: list) -> MagicMock:
     http_client.request = AsyncMock(side_effect=responses)
     app_ctx = MagicMock()
     app_ctx.http_client = http_client
-    app_ctx.fallback_dataverse_url = "https://yourorg.crm.dynamics.com"
     app_ctx._token_cache = {}
     app_ctx._token_locks = {}
     return app_ctx
@@ -104,15 +104,15 @@ class TestGuidValidation:
 
     def test_get_plugin_assembly_rejects_bad_guid(self):
         with pytest.raises(ValidationError, match="Invalid GUID"):
-            GetPluginAssemblyInput(assembly_id="not-a-guid")
+            GetPluginAssemblyInput(assembly_id="not-a-guid", dataverse_url=_VALID_URL)
 
     def test_delete_plugin_assembly_rejects_bad_guid(self):
         with pytest.raises(ValidationError, match="Invalid GUID"):
-            DeletePluginAssemblyInput(assembly_id="12345678-bad")
+            DeletePluginAssemblyInput(assembly_id="12345678-bad", dataverse_url=_VALID_URL)
 
     def test_list_plugin_assemblies_rejects_bad_package_guid(self):
         with pytest.raises(ValidationError, match="Invalid GUID"):
-            ListPluginAssembliesInput(package_id="not-a-guid")
+            ListPluginAssembliesInput(package_id="not-a-guid", dataverse_url=_VALID_URL)
 
     def test_create_plugin_step_rejects_bad_plugin_type_guid(self):
         with pytest.raises(ValidationError, match="Invalid GUID"):
@@ -122,6 +122,7 @@ class TestGuidValidation:
                 message_id=_VALID_GUID,
                 stage=40,
                 mode=0,
+                dataverse_url=_VALID_URL,
             )
 
     def test_create_plugin_step_rejects_bad_filter_id(self):
@@ -133,14 +134,15 @@ class TestGuidValidation:
                 stage=40,
                 mode=0,
                 filter_id="not-a-guid",
+                dataverse_url=_VALID_URL,
             )
 
     def test_get_sdk_message_rejects_bad_message_id(self):
         with pytest.raises(ValidationError, match="Invalid GUID"):
-            GetSdkMessageInput(message_id="bad-guid")
+            GetSdkMessageInput(message_id="bad-guid", dataverse_url=_VALID_URL)
 
     def test_valid_guid_accepted(self):
-        m = GetPluginAssemblyInput(assembly_id=_VALID_GUID)
+        m = GetPluginAssemblyInput(assembly_id=_VALID_GUID, dataverse_url=_VALID_URL)
         assert m.assembly_id == _VALID_GUID
 
 
@@ -149,11 +151,11 @@ class TestOptionSetValidation:
 
     def test_isolation_mode_rejects_invalid(self):
         with pytest.raises(ValidationError, match="isolation_mode"):
-            CreatePluginAssemblyInput(name="x", content="abc123", isolation_mode=99)
+            CreatePluginAssemblyInput(name="x", content="abc123", isolation_mode=99, dataverse_url=_VALID_URL)
 
     def test_isolation_mode_accepts_valid_values(self):
         for v in (1, 2, 3):
-            m = CreatePluginAssemblyInput(name="x", content="abc123", isolation_mode=v)
+            m = CreatePluginAssemblyInput(name="x", content="abc123", isolation_mode=v, dataverse_url=_VALID_URL)
             assert m.isolation_mode == v
 
     def test_stage_rejects_invalid(self):
@@ -164,6 +166,7 @@ class TestOptionSetValidation:
                 message_id=_VALID_GUID_2,
                 stage=99,
                 mode=0,
+                dataverse_url=_VALID_URL,
             )
 
     def test_stage_accepts_valid_values(self):
@@ -174,6 +177,7 @@ class TestOptionSetValidation:
                 message_id=_VALID_GUID_2,
                 stage=v,
                 mode=0,
+                dataverse_url=_VALID_URL,
             )
             assert m.stage == v
 
@@ -185,6 +189,7 @@ class TestOptionSetValidation:
                 message_id=_VALID_GUID_2,
                 stage=40,
                 mode=5,
+                dataverse_url=_VALID_URL,
             )
 
     def test_supported_deployment_rejects_invalid(self):
@@ -196,6 +201,7 @@ class TestOptionSetValidation:
                 stage=40,
                 mode=0,
                 supported_deployment=9,
+                dataverse_url=_VALID_URL,
             )
 
     def test_image_type_rejects_invalid(self):
@@ -205,6 +211,7 @@ class TestOptionSetValidation:
                 image_type=5,
                 entity_alias="PreImage",
                 message_property_name="Target",
+                dataverse_url=_VALID_URL,
             )
 
     def test_image_type_accepts_valid_values(self):
@@ -214,12 +221,13 @@ class TestOptionSetValidation:
                 image_type=v,
                 entity_alias="PreImage",
                 message_property_name="Target",
+                dataverse_url=_VALID_URL,
             )
             assert m.image_type == v
 
     def test_update_step_state_rejects_invalid(self):
         with pytest.raises(ValidationError, match="state"):
-            UpdatePluginStepInput(step_id=_VALID_GUID, state="active")
+            UpdatePluginStepInput(step_id=_VALID_GUID, state="active", dataverse_url=_VALID_URL)
 
 
 class TestAtLeastOneFieldValidators:
@@ -227,30 +235,30 @@ class TestAtLeastOneFieldValidators:
 
     def test_update_assembly_requires_at_least_one_field(self):
         with pytest.raises(ValidationError, match="At least one updatable field"):
-            UpdatePluginAssemblyInput(assembly_id=_VALID_GUID)
+            UpdatePluginAssemblyInput(assembly_id=_VALID_GUID, dataverse_url=_VALID_URL)
 
     def test_update_assembly_accepts_single_field(self):
-        m = UpdatePluginAssemblyInput(assembly_id=_VALID_GUID, description="new")
+        m = UpdatePluginAssemblyInput(assembly_id=_VALID_GUID, description="new", dataverse_url=_VALID_URL)
         assert m.description == "new"
 
     def test_update_package_requires_at_least_one_field(self):
         with pytest.raises(ValidationError, match="At least one updatable field"):
-            UpdatePluginPackageInput(package_id=_VALID_GUID)
+            UpdatePluginPackageInput(package_id=_VALID_GUID, dataverse_url=_VALID_URL)
 
     def test_update_type_requires_at_least_one_field(self):
         with pytest.raises(ValidationError, match="At least one updatable field"):
-            UpdatePluginTypeInput(plugin_type_id=_VALID_GUID)
+            UpdatePluginTypeInput(plugin_type_id=_VALID_GUID, dataverse_url=_VALID_URL)
 
     def test_update_step_requires_at_least_one_field(self):
         with pytest.raises(ValidationError, match="At least one updatable field"):
-            UpdatePluginStepInput(step_id=_VALID_GUID)
+            UpdatePluginStepInput(step_id=_VALID_GUID, dataverse_url=_VALID_URL)
 
     def test_update_step_image_requires_at_least_one_field(self):
         with pytest.raises(ValidationError, match="At least one updatable field"):
-            UpdatePluginStepImageInput(image_id=_VALID_GUID)
+            UpdatePluginStepImageInput(image_id=_VALID_GUID, dataverse_url=_VALID_URL)
 
     def test_update_step_accepts_state_only(self):
-        m = UpdatePluginStepInput(step_id=_VALID_GUID, state="disabled")
+        m = UpdatePluginStepInput(step_id=_VALID_GUID, state="disabled", dataverse_url=_VALID_URL)
         assert m.state == "disabled"
 
 
@@ -260,24 +268,24 @@ class TestIdentifierValidators:
     # GetSdkMessageInput
     def test_sdk_message_requires_exactly_one_identifier(self):
         with pytest.raises(ValidationError, match="Either message_name or message_id"):
-            GetSdkMessageInput()
+            GetSdkMessageInput(dataverse_url=_VALID_URL)
 
     def test_sdk_message_rejects_both_identifiers(self):
         with pytest.raises(ValidationError, match="not both"):
-            GetSdkMessageInput(message_name="Create", message_id=_VALID_GUID)
+            GetSdkMessageInput(message_name="Create", message_id=_VALID_GUID, dataverse_url=_VALID_URL)
 
     def test_sdk_message_accepts_name_only(self):
-        m = GetSdkMessageInput(message_name="Create")
+        m = GetSdkMessageInput(message_name="Create", dataverse_url=_VALID_URL)
         assert m.message_name == "Create"
 
     def test_sdk_message_accepts_id_only(self):
-        m = GetSdkMessageInput(message_id=_VALID_GUID)
+        m = GetSdkMessageInput(message_id=_VALID_GUID, dataverse_url=_VALID_URL)
         assert m.message_id == _VALID_GUID
 
     # GetSdkMessageFilterInput
     def test_filter_requires_identifier(self):
         with pytest.raises(ValidationError, match="Provide either filter_id"):
-            GetSdkMessageFilterInput()
+            GetSdkMessageFilterInput(dataverse_url=_VALID_URL)
 
     def test_filter_rejects_both_modes(self):
         with pytest.raises(ValidationError, match="not both modes"):
@@ -285,24 +293,25 @@ class TestIdentifierValidators:
                 filter_id=_VALID_GUID,
                 message_id=_VALID_GUID_2,
                 primary_entity="contact",
+                dataverse_url=_VALID_URL,
             )
 
     def test_filter_accepts_filter_id_alone(self):
-        m = GetSdkMessageFilterInput(filter_id=_VALID_GUID)
+        m = GetSdkMessageFilterInput(filter_id=_VALID_GUID, dataverse_url=_VALID_URL)
         assert m.filter_id == _VALID_GUID
 
     def test_filter_accepts_message_plus_entity(self):
-        m = GetSdkMessageFilterInput(message_id=_VALID_GUID, primary_entity="contact")
+        m = GetSdkMessageFilterInput(message_id=_VALID_GUID, primary_entity="contact", dataverse_url=_VALID_URL)
         assert m.message_id == _VALID_GUID
         assert m.primary_entity == "contact"
 
     def test_filter_rejects_message_id_without_primary_entity(self):
         with pytest.raises(ValidationError, match="Both message_id and primary_entity"):
-            GetSdkMessageFilterInput(message_id=_VALID_GUID)
+            GetSdkMessageFilterInput(message_id=_VALID_GUID, dataverse_url=_VALID_URL)
 
     def test_filter_rejects_primary_entity_without_message_id(self):
         with pytest.raises(ValidationError, match="Both message_id and primary_entity"):
-            GetSdkMessageFilterInput(primary_entity="contact")
+            GetSdkMessageFilterInput(primary_entity="contact", dataverse_url=_VALID_URL)
 
 
 # ===========================================================================

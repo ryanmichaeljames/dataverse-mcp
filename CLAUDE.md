@@ -44,7 +44,7 @@ This repository is a Python FastMCP server for Microsoft Dataverse (Web API v9.2
 - Default paging should remain conservative (`top=50` unless tool-specific needs differ)
 - Navigation properties in `expand` are case-sensitive
 - Use lowercase logical names where Dataverse expects logical names
-- Resolve Dataverse base URL from per-call input first, then configured fallback
+- The Dataverse base URL must be supplied per call via `dataverse_url`; there is no server-side fallback
 
 ## Security and Config Hygiene
 

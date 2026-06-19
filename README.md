@@ -122,7 +122,7 @@ Set these in the `env` block of your MCP server entry. This project does not use
 > **Interactive auth persistence.** When `DATAVERSE_TOKEN_CACHE_PERSIST=true` (the default), the MSAL token cache is stored on disk using your OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret). On headless Linux without libsecret, the first token acquisition will fail fast with an error. Set `DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED=true` to permit a plaintext cache on those hosts, and see the security warning for that variable above.
 
 > [!NOTE]
-> **Running multiple tenants/accounts at once.** The default cache and sidecar filenames are shared per host, so two `interactive` sessions signed in to different tenants/accounts would overwrite each other's pinned account. Give each session a distinct `DATAVERSE_TOKEN_CACHE_PROFILE` (e.g., `prod`, `dev`) to keep their caches and `AuthenticationRecord` sidecars separate.
+> **Running multiple tenants/accounts at once.** The default cache and sidecar filenames are shared per host, so two `interactive` sessions signed in to different tenants/accounts would overwrite each other's pinned account. Give each session a distinct `DATAVERSE_TOKEN_CACHE_PROFILE` (e.g., `tenant-a`, `tenant-b`) to keep their caches and `AuthenticationRecord` sidecars separate.
 
 #### Example: two tenants side by side
 
@@ -133,20 +133,20 @@ Register two server entries, each with its own `DATAVERSE_TOKEN_CACHE_PROFILE`. 
 ```json
 {
   "mcpServers": {
-    "dataverse-prod": {
+    "dataverse-tenant-a": {
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
         "DATAVERSE_AUTH_TYPE": "interactive",
-        "DATAVERSE_TOKEN_CACHE_PROFILE": "prod"
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "tenant-a"
       }
     },
-    "dataverse-dev": {
+    "dataverse-tenant-b": {
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
         "DATAVERSE_AUTH_TYPE": "interactive",
-        "DATAVERSE_TOKEN_CACHE_PROFILE": "dev"
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "tenant-b"
       }
     }
   }
@@ -158,22 +158,22 @@ Register two server entries, each with its own `DATAVERSE_TOKEN_CACHE_PROFILE`. 
 ```json
 {
   "servers": {
-    "dataverse-prod": {
+    "dataverse-tenant-a": {
       "type": "stdio",
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
         "DATAVERSE_AUTH_TYPE": "interactive",
-        "DATAVERSE_TOKEN_CACHE_PROFILE": "prod"
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "tenant-a"
       }
     },
-    "dataverse-dev": {
+    "dataverse-tenant-b": {
       "type": "stdio",
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
         "DATAVERSE_AUTH_TYPE": "interactive",
-        "DATAVERSE_TOKEN_CACHE_PROFILE": "dev"
+        "DATAVERSE_TOKEN_CACHE_PROFILE": "tenant-b"
       }
     }
   }

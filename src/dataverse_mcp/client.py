@@ -881,7 +881,7 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
             "access to approved Dataverse environments."
         )
 
-    auth_type = os.environ.get("DATAVERSE_AUTH_TYPE", "azure_cli").lower().strip()
+    auth_type = os.environ.get("DATAVERSE_AUTH_TYPE", "interactive").lower().strip()
     logger.info("Initializing Dataverse credential (auth: %s)", auth_type)
 
     credential = _build_credential(auth_type)

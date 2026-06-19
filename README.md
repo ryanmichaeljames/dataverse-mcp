@@ -29,7 +29,7 @@ pip install uv
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
+        "DATAVERSE_AUTH_TYPE": "interactive"
       }
     }
   }
@@ -46,7 +46,7 @@ pip install uv
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
+        "DATAVERSE_AUTH_TYPE": "interactive"
       }
     }
   }
@@ -55,11 +55,11 @@ pip install uv
 
 **3. Sign in**
 
-```bash
-az login
-```
+On first use the server opens a browser for interactive sign-in. The session is cached and reused across restarts (see `DATAVERSE_TOKEN_CACHE_PERSIST`), so you are not prompted again while the token is valid.
 
 That's it. Your AI agent can now query your Dataverse environments.
+
+> Prefer your existing Azure CLI session instead? Set `DATAVERSE_AUTH_TYPE` to `azure_cli` and run `az login`.
 
 ---
 
@@ -99,7 +99,7 @@ Set these in the `env` block of your MCP server entry. This project does not use
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATAVERSE_AUTH_TYPE` | `azure_cli` | Authentication method: `azure_cli` or `interactive` |
+| `DATAVERSE_AUTH_TYPE` | `interactive` | Authentication method: `interactive` (recommended) or `azure_cli` |
 | `DATAVERSE_ALLOW_WRITE` | `false` | Set to `true` to register create, update, associate, merge, and schema mutation tools |
 | `DATAVERSE_ALLOW_DELETE` | `false` | Set to `true` to register delete and disassociate tools |
 | `DATAVERSE_WHITELIST` | — | Comma-separated list of allowed environment hostnames (e.g., `yourorg.crm.dynamics.com,yourorg-uat.crm.dynamics.com`). When set, tool calls to any environment not on the list are rejected. When empty, **all** environments are permitted — see the warning below |
@@ -115,8 +115,8 @@ Set these in the `env` block of your MCP server entry. This project does not use
 
 | Method | Description |
 |--------|-------------|
-| `azure_cli` (default) | Uses your active `az login` session. Best for local development. |
-| `interactive` | Opens a browser window for interactive sign-in. The sign-in session persists across server restarts by default (see `DATAVERSE_TOKEN_CACHE_PERSIST`). The first launch always opens a browser; subsequent restarts reuse the cached refresh token silently while it remains valid. |
+| `interactive` (default, recommended) | Opens a browser for interactive sign-in. Supports MFA and per-account isolation, and needs no separate CLI login. The session persists across server restarts (see `DATAVERSE_TOKEN_CACHE_PERSIST`): the first launch opens a browser; subsequent restarts reuse the cached refresh token silently while it remains valid. |
+| `azure_cli` | Uses your active `az login` session. Useful in CI or where a browser is unavailable and an Azure CLI session already exists. Requires the Azure CLI installed and signed in. |
 
 > [!NOTE]
 > **Interactive auth persistence.** When `DATAVERSE_TOKEN_CACHE_PERSIST=true` (the default), the MSAL token cache is stored on disk using your OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret). On headless Linux without libsecret, the first token acquisition will fail fast with an error. Set `DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED=true` to permit a plaintext cache on those hosts, and see the security warning for that variable above.
@@ -194,7 +194,7 @@ Most write and delete tools are **not registered by default**, so they do not ap
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
-        "DATAVERSE_AUTH_TYPE": "azure_cli",
+        "DATAVERSE_AUTH_TYPE": "interactive",
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true"
       }
@@ -233,7 +233,7 @@ Add to `claude_desktop_config.json`:
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
+        "DATAVERSE_AUTH_TYPE": "interactive"
       }
     }
   }
@@ -245,7 +245,7 @@ Add to `claude_desktop_config.json`:
 Add via the CLI:
 
 ```bash
-claude mcp add dataverse-mcp --env DATAVERSE_AUTH_TYPE=azure_cli uvx dataverse-mcp
+claude mcp add dataverse-mcp --env DATAVERSE_AUTH_TYPE=interactive uvx dataverse-mcp
 ```
 
 Or add directly to `.claude/settings.json` (project) or `~/.claude/settings.json` (user):
@@ -257,7 +257,7 @@ Or add directly to `.claude/settings.json` (project) or `~/.claude/settings.json
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
+        "DATAVERSE_AUTH_TYPE": "interactive"
       }
     }
   }
@@ -274,7 +274,7 @@ Or add directly to `.claude/settings.json` (project) or `~/.claude/settings.json
       "args": ["-m", "dataverse_mcp.server"],
       "env": {
         "PYTHONPATH": "C:\\path\\to\\dataverse-mcp\\src",
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
+        "DATAVERSE_AUTH_TYPE": "interactive"
       }
     }
   }
@@ -297,7 +297,7 @@ Add to `.vscode/mcp.json` in your project root.
       "command": "uvx",
       "args": ["dataverse-mcp"],
       "env": {
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
+        "DATAVERSE_AUTH_TYPE": "interactive"
       }
     }
   }
@@ -315,7 +315,7 @@ Add to `.vscode/mcp.json` in your project root.
       "args": ["-m", "dataverse_mcp.server"],
       "env": {
         "PYTHONPATH": "C:\\path\\to\\dataverse-mcp\\src",
-        "DATAVERSE_AUTH_TYPE": "azure_cli"
+        "DATAVERSE_AUTH_TYPE": "interactive"
       }
     }
   }

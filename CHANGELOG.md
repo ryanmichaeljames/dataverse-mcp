@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   models (`CreateRecordInput`, `UpdateRecordInput`, `DeleteRecordInput`) added to
   `src/dataverse_mcp/models.py`.
 
+### Changed
+- **BREAKING** — The default `DATAVERSE_AUTH_TYPE` is now `interactive` (was `azure_cli`). With the persistent token cache the browser prompt only appears on first sign-in, making interactive the recommended default. Setups relying on the implicit `azure_cli` default (e.g. CI or headless hosts using an existing `az login` session) must now set `DATAVERSE_AUTH_TYPE=azure_cli` explicitly.
+
 ### Removed
 - **BREAKING** — Removed the `DATAVERSE_URL` environment-variable fallback entirely. `dataverse_url` is now a **required** field on every tool input model; tool calls that omit it will be rejected by Pydantic validation before reaching any tool logic. The `AppContext.fallback_dataverse_url` field and the startup env-read in `dataverse_lifespan` have been removed. `resolve_base_url` no longer accepts an `AppContext` argument. Use `dataverse_list_environments` to discover environment URLs if needed.
 

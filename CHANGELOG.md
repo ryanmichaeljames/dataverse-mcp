@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-06-19
+
 ### Added
 - Three dedicated single-record CRUD tools in `src/dataverse_mcp/tools/tables.py`:
   `dataverse_create_record` (POST, `@write_tool`, returns the new record `id`),
@@ -17,18 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follow the same error-JSON contract as the rest of the server. Three matching input
   models (`CreateRecordInput`, `UpdateRecordInput`, `DeleteRecordInput`) added to
   `src/dataverse_mcp/models.py`.
-
-### Changed
-- **BREAKING** — The default `DATAVERSE_AUTH_TYPE` is now `interactive` (was `azure_cli`). With the persistent token cache the browser prompt only appears on first sign-in, making interactive the recommended default. Setups relying on the implicit `azure_cli` default (e.g. CI or headless hosts using an existing `az login` session) must now set `DATAVERSE_AUTH_TYPE=azure_cli` explicitly.
-
-### Removed
-- **BREAKING** — Removed the `DATAVERSE_URL` environment-variable fallback entirely. `dataverse_url` is now a **required** field on every tool input model; tool calls that omit it will be rejected by Pydantic validation before reaching any tool logic. The `AppContext.fallback_dataverse_url` field and the startup env-read in `dataverse_lifespan` have been removed. `resolve_base_url` no longer accepts an `AppContext` argument. Use `dataverse_list_environments` to discover environment URLs if needed.
-
-### Documentation
-- Revised tool docstrings and `Field(description=...)` text across the tool corpus (`tools/tables.py`, `tools/metadata.py`, `tools/plugin_registration.py`, `tools/forms.py`, `tools/views.py`, `tools/solutions.py`, `tools/environments.py`, `tools/apps.py`, `models.py`; `tools/connection_references.py` and `tools/plugins.py` already conformed) to follow a consistent style guide: verb-first first line, disambiguating when-to-use context, unified "Publishes automatically — no separate publish needed" wording, explicit `Requires DATAVERSE_ALLOW_WRITE/DELETE=true` gates, and prerequisite-chain guidance for plug-in registration tools. Stripped ~1,500-token corpus of `Required:/Optional:` schema-echo blocks from `plugin_registration.py`. Moved enum meanings (stage 10/20/40, mode 0/1) from docstrings into `Field(description=...)` in `models.py`. Updated README Tools section total to 121 and added `dataverse_create_record`, `dataverse_update_record`, `dataverse_delete_record` rows.
-- Rewrote the README **Tools** section: all 118 tools are now grouped by domain (environment & identity, records & data, tables & columns, relationships, choices, solutions & publishers, cloud flows, forms, views, model-driven apps, connection references, plug-in registration, plug-in tracing & statistics) with a per-row `Gate` column (`default` / `write` / `delete`). Adds the 29 plug-in registration tools that were missing from the previous list and corrects stale tool counts.
-
-### Added
 - `dataverse_list_views`, `dataverse_list_forms`, `dataverse_list_apps`, and `dataverse_list_tables` now accept a `top` parameter (default 50, range 1–5000) and return `has_more: true` when the result set is at or above the requested limit. All four tools route through the shared `paginate_records` helper, matching the conservative-paging invariant already in place for connection references and plug-in trace logs. Resolves #60.
 - Interactive auth now persists the MSAL token cache to disk (OS-encrypted by default) so server restarts no longer force a browser re-prompt while a refresh token is valid. After the first interactive sign-in a secret-free `AuthenticationRecord` sidecar is saved alongside the cache to anchor silent account selection on subsequent startups. Two new env vars control the behaviour: `DATAVERSE_TOKEN_CACHE_PERSIST` (default `true`; set `false` to revert to in-memory-only) and `DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED` (default `false`; opt-in plaintext cache for headless Linux without libsecret). Has no effect on `azure_cli` auth. Resolves #63.
 - New `DATAVERSE_TOKEN_CACHE_PROFILE` env var (default empty) that isolates the interactive token cache and its `AuthenticationRecord` sidecar per profile. Set a distinct value in each session to run concurrent servers signed in to different tenants/accounts on the same host without them overwriting each other's cache and pinned account. Must use only `[A-Za-z0-9_-]`; any other character fails fast at startup with an actionable error (silently sanitizing could collapse two distinct profiles onto one cache and defeat the isolation). Empty/unset preserves the previous shared default filenames.
@@ -39,6 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Targeted unit tests for `_parse_retry_after_seconds` (`tests/test_odata_utils.py`) covering numeric header, missing header default, unparseable header default, and negative-value clamp to 0.0.
 - Targeted unit tests for `build_inner_request`, `build_batch_body`, and `parse_batch_response` (`tests/test_batch.py`) asserting structural invariants: GET/DELETE carry no body or content headers; POST/PUT/PATCH include `Content-Type` and `Content-Length`; batch body contains correct boundary markers; change-set parts carry `Content-ID`; parse round-trip returns correct status codes and JSON bodies.
 - Integration test scaffold (`tests/integration/`) with a secret-free gate: tests run only when `DATAVERSE_INTEGRATION_URL` and `DATAVERSE_INTEGRATION_TOKEN` are set; otherwise every integration test is skipped automatically. Includes a read-only WhoAmI test and write/delete scaffolds gated additionally on `DATAVERSE_ALLOW_WRITE`/`DATAVERSE_ALLOW_DELETE`.
+
+### Changed
+- **BREAKING** — The default `DATAVERSE_AUTH_TYPE` is now `interactive` (was `azure_cli`). With the persistent token cache the browser prompt only appears on first sign-in, making interactive the recommended default. Setups relying on the implicit `azure_cli` default (e.g. CI or headless hosts using an existing `az login` session) must now set `DATAVERSE_AUTH_TYPE=azure_cli` explicitly.
+
+### Removed
+- **BREAKING** — Removed the `DATAVERSE_URL` environment-variable fallback entirely. `dataverse_url` is now a **required** field on every tool input model; tool calls that omit it will be rejected by Pydantic validation before reaching any tool logic. The `AppContext.fallback_dataverse_url` field and the startup env-read in `dataverse_lifespan` have been removed. `resolve_base_url` no longer accepts an `AppContext` argument. Use `dataverse_list_environments` to discover environment URLs if needed.
 
 ### Security
 - Interactive token cache is encrypted at rest by default using the OS secret store (Windows DPAPI / macOS Keychain / Linux libsecret). Plaintext storage is never chosen silently — it requires explicit `DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED=true` and logs a startup warning. A persisted refresh token is a long-lived credential; writing it in plaintext to a shared or backed-up host would be a real exposure.
@@ -56,6 +52,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_execute_batch` now generates a unique UUID-based multipart boundary per request (e.g. `batch_<32-hex-chars>`) instead of reusing the hardcoded literal `batch_dataverse_mcp`, eliminating any risk of boundary collision with response body content.
 - `parse_batch_response` now tolerates both `\r\n` and bare `\n` line endings throughout the multipart response, including header/body separators and inner `multipart/mixed` boundary extraction.
 - `parse_batch_response` no longer silently drops batch sub-responses that contain body content but no parseable `HTTP/1.1` status line; those parts now surface as `{"status_code": 0, "error": "<description>"}` entries in the results list so callers can detect and handle failures.
+
+### Documentation
+- Rewrote the README **Tools** section: tools are grouped by domain (environment & identity, records & data, tables & columns, relationships, choices, solutions & publishers, cloud flows, forms, views, model-driven apps, connection references, plug-in registration, plug-in tracing & statistics) with a per-row `Gate` column (`default` / `write` / `delete`), and the 29 plug-in registration tools that were missing from the previous list were added.
+- Revised tool docstrings and `Field(description=...)` text across the tool corpus to follow a consistent style guide: verb-first first line, disambiguating when-to-use context, unified "Publishes automatically — no separate publish needed" wording, explicit `Requires DATAVERSE_ALLOW_WRITE/DELETE=true` gates, and prerequisite-chain guidance for plug-in registration tools. Stripped the `Required:/Optional:` schema-echo blocks from `plugin_registration.py` (~1,500 tokens) and moved enum meanings (stage 10/20/40, mode 0/1) into `Field(description=...)` in `models.py`.
 
 ## [2.2.0] - 2026-06-12
 
@@ -323,7 +323,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.2.0...v3.0.0
 [2.2.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.1.0...v2.2.0
 [2.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0...v2.1.0
 [2.0.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.0.0b3...v2.0.0

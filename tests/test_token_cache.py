@@ -18,6 +18,7 @@ import pytest
 from dataverse_mcp.client import (
     _get_token_cache_allow_unencrypted,
     _get_token_cache_persist,
+    _get_token_cache_profile,
 )
 
 # ---------------------------------------------------------------------------
@@ -294,3 +295,116 @@ def test_get_token_wrapper_no_recursion_on_reentering_authenticate(
     assert authenticate_call_count == 1, (
         "authenticate() must NOT be called again on a second get_token call after unwrap"
     )
+
+
+# ---------------------------------------------------------------------------
+# _get_token_cache_profile
+# ---------------------------------------------------------------------------
+
+
+def test_token_cache_profile_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset profile returns empty string (shared default filenames)."""
+    monkeypatch.delenv("DATAVERSE_TOKEN_CACHE_PROFILE", raising=False)
+    assert _get_token_cache_profile() == ""
+
+
+def test_token_cache_profile_blank_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whitespace-only profile is treated as unset."""
+    monkeypatch.setenv("DATAVERSE_TOKEN_CACHE_PROFILE", "   ")
+    assert _get_token_cache_profile() == ""
+
+
+def test_token_cache_profile_valid_passthrough(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A clean value is returned unchanged."""
+    monkeypatch.setenv("DATAVERSE_TOKEN_CACHE_PROFILE", "prod-tenant_1")
+    assert _get_token_cache_profile() == "prod-tenant_1"
+
+
+@pytest.mark.parametrize(
+    "bad_value",
+    ["prod/../tenant", "a.b", "a/b", "../../etc", "name with space", "drive:\\x"],
+)
+def test_token_cache_profile_rejects_invalid_chars(
+    monkeypatch: pytest.MonkeyPatch, bad_value: str
+) -> None:
+    """Any character outside [A-Za-z0-9_-] fails fast with ValueError rather
+    than being silently sanitized (which could collide two distinct profiles
+    and defeat isolation, or enable path traversal)."""
+    monkeypatch.setenv("DATAVERSE_TOKEN_CACHE_PROFILE", bad_value)
+    with pytest.raises(ValueError, match="DATAVERSE_TOKEN_CACHE_PROFILE"):
+        _get_token_cache_profile()
+
+
+# ---------------------------------------------------------------------------
+# _build_credential: profile threads into cache name AND sidecar filename
+# ---------------------------------------------------------------------------
+
+
+def test_build_credential_profile_isolates_cache_and_sidecar(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With a profile set, the MSAL cache name and the AuthenticationRecord
+    sidecar path are both suffixed with the profile, so two sessions on
+    different tenants/accounts do not collide."""
+    monkeypatch.setenv("DATAVERSE_TOKEN_CACHE_PERSIST", "true")
+    monkeypatch.delenv("DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED", raising=False)
+    monkeypatch.setenv("DATAVERSE_TOKEN_CACHE_PROFILE", "dev")
+
+    captured_kwargs: dict = {}
+    load_paths: list = []
+
+    def fake_credential(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        cred = MagicMock()
+        cred.get_token = MagicMock(return_value=MagicMock(token="tok", expires_on=9999999999.0))
+        return cred
+
+    def fake_load(record_path):
+        load_paths.append(record_path)
+        return None
+
+    with (
+        patch("dataverse_mcp.client.InteractiveBrowserCredential", side_effect=fake_credential),
+        patch("dataverse_mcp.client._load_auth_record", side_effect=fake_load),
+    ):
+        from dataverse_mcp.client import _build_credential
+        _build_credential("interactive")
+
+    # Cache name carries the profile.
+    assert captured_kwargs["cache_persistence_options"].name == "dataverse-mcp.dev.cache"
+    # Sidecar filename carries the profile.
+    assert len(load_paths) == 1
+    assert load_paths[0].name == "dataverse-mcp.dev.authrecord.json"
+
+
+def test_build_credential_no_profile_uses_default_names(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without a profile, the original shared filenames are preserved (backwards
+    compatible)."""
+    monkeypatch.setenv("DATAVERSE_TOKEN_CACHE_PERSIST", "true")
+    monkeypatch.delenv("DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED", raising=False)
+    monkeypatch.delenv("DATAVERSE_TOKEN_CACHE_PROFILE", raising=False)
+
+    captured_kwargs: dict = {}
+    load_paths: list = []
+
+    def fake_credential(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        cred = MagicMock()
+        cred.get_token = MagicMock(return_value=MagicMock(token="tok", expires_on=9999999999.0))
+        return cred
+
+    def fake_load(record_path):
+        load_paths.append(record_path)
+        return None
+
+    with (
+        patch("dataverse_mcp.client.InteractiveBrowserCredential", side_effect=fake_credential),
+        patch("dataverse_mcp.client._load_auth_record", side_effect=fake_load),
+    ):
+        from dataverse_mcp.client import _build_credential
+        _build_credential("interactive")
+
+    assert captured_kwargs["cache_persistence_options"].name == "dataverse-mcp.cache"
+    assert load_paths[0].name == "dataverse-mcp.authrecord.json"

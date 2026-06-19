@@ -209,6 +209,41 @@ def _get_token_cache_allow_unencrypted() -> bool:
     return False
 
 
+def _get_token_cache_profile() -> str:
+    """Return a filename-safe profile suffix for the token cache and sidecar.
+
+    Reads DATAVERSE_TOKEN_CACHE_PROFILE (default: empty).  When set, the value
+    is appended to both the MSAL cache name and the AuthenticationRecord sidecar
+    filename so that two server processes connecting to different
+    tenants/accounts on the same host do not share (and overwrite) each other's
+    cache and pinned account.  An empty/unset value preserves the original
+    single-profile filenames for backwards compatibility.
+
+    Only ``[A-Za-z0-9_-]`` are permitted.  Any other character raises
+    ``ValueError`` rather than being silently dropped: sanitizing would let two
+    distinct profiles (e.g. ``a/b`` and ``a.b``) collapse to the same value and
+    secretly share one cache — the exact cross-tenant collision this option
+    exists to prevent.  Failing fast at startup forces the operator to pick an
+    unambiguous, filesystem-safe name.
+    """
+    raw = os.environ.get("DATAVERSE_TOKEN_CACHE_PROFILE", "").strip()
+    if not raw:
+        return ""
+    allowed = (
+        "abcdefghijklmnopqrstuvwxyz"
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        "0123456789-_"
+    )
+    if any(c not in allowed for c in raw):
+        raise ValueError(
+            f"DATAVERSE_TOKEN_CACHE_PROFILE={raw!r} contains characters outside "
+            "[A-Za-z0-9_-]. Choose a profile name using only letters, digits, "
+            "dashes, or underscores so it is an unambiguous, filesystem-safe "
+            "cache identifier."
+        )
+    return raw
+
+
 def _get_user_config_dir() -> pathlib.Path:
     """Return a per-user config directory for dataverse-mcp.
 
@@ -339,8 +374,20 @@ def _build_credential(auth_type: str):
                 "access-controlled hosts where an OS secret store is unavailable."
             )
 
+        # Optional profile suffix isolates the cache + sidecar per
+        # tenant/account so concurrent sessions on one host do not collide.
+        profile = _get_token_cache_profile()
+        cache_name = "dataverse-mcp.cache" if not profile else f"dataverse-mcp.{profile}.cache"
+        record_filename = (
+            "dataverse-mcp.authrecord.json"
+            if not profile
+            else f"dataverse-mcp.{profile}.authrecord.json"
+        )
+        if profile:
+            logger.info("Token cache profile active: %r (cache name=%s)", profile, cache_name)
+
         cache_opts = TokenCachePersistenceOptions(
-            name="dataverse-mcp.cache",
+            name=cache_name,
             allow_unencrypted_storage=allow_unencrypted,
         )
         logger.info(
@@ -353,7 +400,7 @@ def _build_credential(auth_type: str):
         # mint a new access token from the persisted refresh token without
         # re-prompting.  Corruption or absence degrades to a fresh prompt.
         config_dir = _get_user_config_dir()
-        record_path = config_dir / "dataverse-mcp.authrecord.json"
+        record_path = config_dir / record_filename
         auth_record = _load_auth_record(record_path)
 
         credential = InteractiveBrowserCredential(

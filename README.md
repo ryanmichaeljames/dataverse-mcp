@@ -107,6 +107,7 @@ Set these in the `env` block of your MCP server entry. This project does not use
 | `DATAVERSE_AUTH_TIMEOUT_SECONDS` | `30` | Maximum seconds to wait for a credential acquisition (e.g., `az login` token fetch) before failing with an actionable auth error. Increase when operating in slow-network or MFA-heavy environments. Invalid or non-positive values fall back to `30` |
 | `DATAVERSE_TOKEN_CACHE_PERSIST` | `true` | Controls whether `interactive` auth persists its MSAL token cache to disk so the server survives restarts without a new browser prompt (while a refresh token is valid). Set to `false` to disable and revert to in-memory-only behaviour. Invalid values fall back to `true` with a logged warning. Has no effect on `azure_cli` auth. |
 | `DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED` | `false` | When `true`, permits writing the MSAL token cache to disk without OS-level encryption. Only needed on headless Linux hosts that lack a Secret Service (e.g., GNOME Keyring / libsecret). **Refresh tokens are long-lived credentials — only enable this on trusted, access-controlled hosts.** A startup warning is logged when this flag is active. Invalid values fall back to `false`. |
+| `DATAVERSE_TOKEN_CACHE_PROFILE` | — | Optional name that isolates the `interactive` token cache and its `AuthenticationRecord` sidecar per profile. Set a distinct value in each session to run concurrent servers signed in to **different tenants/accounts** on the same host without them overwriting each other's cache. Must use only `[A-Za-z0-9_-]`; any other character fails fast at startup (silently sanitizing could collide two profiles and defeat isolation). Empty/unset uses the shared default filenames. Has no effect on `azure_cli` auth. |
 
 > [!WARNING]
 > **Leaving `DATAVERSE_WHITELIST` unset is risky.** Tools accept a `dataverse_url` per call, and the server mints a bearer token for whatever environment is supplied. Without a whitelist, a compromised or misbehaving agent can direct your credentials at *any* Dataverse environment. Set `DATAVERSE_WHITELIST` to the specific environment hostnames you intend to use so the server rejects everything else.
@@ -120,6 +121,9 @@ Set these in the `env` block of your MCP server entry. This project does not use
 
 > [!NOTE]
 > **Interactive auth persistence.** When `DATAVERSE_TOKEN_CACHE_PERSIST=true` (the default), the MSAL token cache is stored on disk using your OS secret store (Windows DPAPI, macOS Keychain, Linux libsecret). On headless Linux without libsecret, the first token acquisition will fail fast with an error. Set `DATAVERSE_TOKEN_CACHE_ALLOW_UNENCRYPTED=true` to permit a plaintext cache on those hosts, and see the security warning for that variable above.
+
+> [!NOTE]
+> **Running multiple tenants/accounts at once.** The default cache and sidecar filenames are shared per host, so two `interactive` sessions signed in to different tenants/accounts would overwrite each other's pinned account. Give each session a distinct `DATAVERSE_TOKEN_CACHE_PROFILE` (e.g., `prod`, `dev`) to keep their caches and `AuthenticationRecord` sidecars separate.
 
 ### Safety Guards
 

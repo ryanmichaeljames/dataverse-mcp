@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 - **BREAKING** — Removed the `DATAVERSE_URL` environment-variable fallback entirely. `dataverse_url` is now a **required** field on every tool input model; tool calls that omit it will be rejected by Pydantic validation before reaching any tool logic. The `AppContext.fallback_dataverse_url` field and the startup env-read in `dataverse_lifespan` have been removed. `resolve_base_url` no longer accepts an `AppContext` argument. Use `dataverse_list_environments` to discover environment URLs if needed.
 
+### Changed
+- **BREAKING** — The default `DATAVERSE_AUTH_TYPE` is now `interactive` (was `azure_cli`). With persistent token cache (#63) the browser prompt only appears on first sign-in, making interactive the recommended default. Setups that relied on the implicit `azure_cli` default must now set `DATAVERSE_AUTH_TYPE=azure_cli` explicitly (e.g. CI or headless hosts using an existing `az login` session).
+
 ### Documentation
 - Rewrote the README **Tools** section: all 118 tools are now grouped by domain (environment & identity, records & data, tables & columns, relationships, choices, solutions & publishers, cloud flows, forms, views, model-driven apps, connection references, plug-in registration, plug-in tracing & statistics) with a per-row `Gate` column (`default` / `write` / `delete`). Adds the 29 plug-in registration tools that were missing from the previous list and corrects stale tool counts.
 

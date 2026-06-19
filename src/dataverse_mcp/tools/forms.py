@@ -24,6 +24,7 @@ from dataverse_mcp.client import (
     finalize_response,
     get_app_ctx,
     odata_quote,
+    paginate_records,
     request_with_retry,
     resolve_base_url,
     tool_error_response,
@@ -564,18 +565,21 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
     if params.form_type is not None:
         filters.append(f"type eq {params.form_type}")
 
+    query: dict[str, str] = {
+        "$select": _SYSTEM_FORM_SELECT,
+        "$top": str(params.top),
+    }
+    if filters:
+        query["$filter"] = " and ".join(filters)
+
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-        f"/systemforms?$select={_SYSTEM_FORM_SELECT}"
+        f"/systemforms?{urlencode(query, safe='$,')}"
     )
-    if filters:
-        url += f"&$filter={' and '.join(filters)}"
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
-        resp.raise_for_status()
-        records = resp.json().get("value", [])
+        records = await paginate_records(url, headers, params.top, app_ctx.http_client)
         forms = [
             {
                 "form_id": r.get("formid"),
@@ -589,7 +593,11 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
             }
             for r in records
         ]
-        return finalize_response({"forms": forms, "count": len(forms)})
+        return finalize_response({
+            "forms": forms,
+            "count": len(forms),
+            "has_more": len(records) >= params.top,
+        })
     except Exception as e:
         return tool_error_response(e, "dataverse_list_forms")
 

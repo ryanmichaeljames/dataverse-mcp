@@ -711,6 +711,12 @@ class ListTablesInput(MetadataReadInput):
             "IsCustomEntity, IsManaged"
         ),
     )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
+    )
 
 
 class GetTableMetadataInput(MetadataReadInput):
@@ -2078,6 +2084,12 @@ class ListViewsInput(DataverseEnvironmentInput):
             "2 = associated, 4 = quick find, 64 = lookup. Omit for all."
         ),
     )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
+    )
 
 
 class GetViewInput(DataverseEnvironmentInput):
@@ -2339,6 +2351,12 @@ class ListFormsInput(DataverseEnvironmentInput):
             "Omit to return all types."
         ),
     )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
+    )
 
 
 class GetFormInput(DataverseEnvironmentInput):
@@ -2481,6 +2499,12 @@ class ListAppsInput(DataverseEnvironmentInput):
             "When true, uses RetrieveUnpublishedMultiple to include apps that have not "
             "yet been published. Defaults to false (published apps only)."
         ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
     )
 
 

@@ -23,6 +23,7 @@ from dataverse_mcp.client import (
     finalize_response,
     get_app_ctx,
     odata_quote,
+    paginate_records,
     request_with_retry,
     resolve_base_url,
     tool_error_response,
@@ -590,18 +591,21 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
     if params.query_type is not None:
         filters.append(f"querytype eq {params.query_type}")
 
+    query: dict[str, str] = {
+        "$select": _SAVEDQUERY_SELECT,
+        "$top": str(params.top),
+    }
+    if filters:
+        query["$filter"] = " and ".join(filters)
+
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-        f"/savedqueries?$select={_SAVEDQUERY_SELECT}"
+        f"/savedqueries?{urlencode(query, safe='$,')}"
     )
-    if filters:
-        url += f"&$filter={' and '.join(filters)}"
 
     try:
         headers = await build_headers(app_ctx, base_url)
-        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
-        resp.raise_for_status()
-        records = resp.json().get("value", [])
+        records = await paginate_records(url, headers, params.top, app_ctx.http_client)
         views = [
             {
                 "view_id": r.get("savedqueryid"),
@@ -616,7 +620,11 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
             }
             for r in records
         ]
-        return finalize_response({"views": views, "count": len(views)})
+        return finalize_response({
+            "views": views,
+            "count": len(views),
+            "has_more": len(records) >= params.top,
+        })
     except Exception as e:
         return tool_error_response(e, "dataverse_list_views")
 

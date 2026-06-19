@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote
+from urllib.parse import quote as _url_quote, urlencode
 
 import httpx
 from mcp.server.fastmcp import Context
@@ -20,6 +20,7 @@ from dataverse_mcp.client import (
     build_headers,
     finalize_response,
     get_app_ctx,
+    paginate_records,
     request_with_retry,
     resolve_base_url,
     tool_error_response,
@@ -407,20 +408,22 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
 
     try:
         headers = await build_headers(app_ctx, base_url)
+        query: dict[str, str] = {
+            "$select": _APP_SELECT,
+            "$top": str(params.top),
+        }
         if params.include_unpublished:
             url = (
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
                 f"/appmodules/Microsoft.Dynamics.CRM.RetrieveUnpublishedMultiple()"
-                f"?$select={_APP_SELECT}"
+                f"?{urlencode(query, safe='$,')}"
             )
         else:
             url = (
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-                f"/appmodules?$select={_APP_SELECT}"
+                f"/appmodules?{urlencode(query, safe='$,')}"
             )
-        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
-        resp.raise_for_status()
-        records = resp.json().get("value", [])
+        records = await paginate_records(url, headers, params.top, app_ctx.http_client)
         apps = [
             {
                 "app_id": r.get("appmoduleid"),
@@ -433,7 +436,11 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
             }
             for r in records
         ]
-        return finalize_response({"apps": apps, "count": len(apps)})
+        return finalize_response({
+            "apps": apps,
+            "count": len(apps),
+            "has_more": len(records) >= params.top,
+        })
     except Exception as e:
         return tool_error_response(e, "dataverse_list_apps")
 

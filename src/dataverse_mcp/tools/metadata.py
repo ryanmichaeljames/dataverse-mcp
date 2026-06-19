@@ -160,10 +160,11 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
             app_ctx, base_url,
             extra=_build_extra_headers(consistency_strong=params.consistency_strong),
         )
-        tables = await paginate_records(url, headers, None, app_ctx.http_client)
+        tables = await paginate_records(url, headers, params.top, app_ctx.http_client)
         return finalize_response({
             "tables": tables,
             "count": len(tables),
+            "has_more": len(tables) >= params.top,
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_list_tables")

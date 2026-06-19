@@ -230,13 +230,13 @@ async def test_create_record_extracts_guid_from_header() -> None:
         data={"name": "Contoso"},
     )
 
+    # A plain create returns 204 + the OData-EntityId header (no body).
     mock_resp = MagicMock(spec=httpx.Response)
-    mock_resp.status_code = 201
+    mock_resp.status_code = 204
     mock_resp.headers = httpx.Headers({
         "OData-EntityId": f"{_BASE_URL}/api/data/v9.2/accounts({_RECORD_ID})",
     })
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.return_value = {"accountid": _RECORD_ID, "name": "Contoso"}
 
     with (
         patch(
@@ -252,12 +252,13 @@ async def test_create_record_extracts_guid_from_header() -> None:
 
     result = json.loads(result_str)
     assert result.get("id") == _RECORD_ID, f"Expected id={_RECORD_ID!r}, got {result.get('id')!r}"
-    assert "record" in result
+    assert result.get("created") is True
 
 
 @pytest.mark.asyncio
-async def test_create_record_handles_missing_entity_id_header() -> None:
-    """dataverse_create_record returns empty id string when OData-EntityId is absent."""
+async def test_create_record_errors_when_entity_id_header_absent() -> None:
+    """dataverse_create_record returns an error (not an empty id) when the
+    OData-EntityId header is missing, so a caller never gets a silent empty id."""
     app_ctx = _make_app_ctx()
     ctx = _make_ctx(app_ctx)
 
@@ -271,7 +272,6 @@ async def test_create_record_handles_missing_entity_id_header() -> None:
     mock_resp.status_code = 204
     mock_resp.headers = httpx.Headers({})
     mock_resp.raise_for_status = MagicMock()
-    mock_resp.json.side_effect = Exception("no body")
 
     with (
         patch(
@@ -286,8 +286,8 @@ async def test_create_record_handles_missing_entity_id_header() -> None:
         result_str = await dataverse_create_record(params, ctx)
 
     result = json.loads(result_str)
-    assert result.get("id") == ""
-    assert result.get("record") == {}
+    assert result.get("error") is True
+    assert "id" in result.get("message", "").lower()
 
 
 # ---------------------------------------------------------------------------

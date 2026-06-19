@@ -187,9 +187,10 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
 )
 async def dataverse_create_record(params: CreateRecordInput, ctx: Context) -> str:
     """Create a single record in any Dataverse table.
-    POSTs the supplied column/value pairs and returns the new record's
-    id plus the created record body. Use dataverse_get_entity_sets to
-    resolve entity_set_name; use dataverse_list_columns for column names.
+    POSTs the supplied column/value pairs and returns the new record's id.
+    Use dataverse_get_record to read the created record back if you need its
+    fields. Use dataverse_get_entity_sets to resolve entity_set_name; use
+    dataverse_list_columns for column names.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -200,31 +201,30 @@ async def dataverse_create_record(params: CreateRecordInput, ctx: Context) -> st
     url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{params.entity_set_name}"
 
     try:
+        # A plain create returns 204 + the OData-EntityId header (the new record
+        # URI). We do NOT request return=representation: Dataverse omits the
+        # OData-EntityId header when the entity body is returned, which would
+        # leave us without a reliable, entity-agnostic source for the new id.
         headers = await build_headers(app_ctx, base_url, include_content_type=True)
-        headers = {**headers, "Prefer": "return=representation"}
         resp = await request_with_retry(
             app_ctx.http_client, "POST", url, headers=headers, json=params.data
         )
         resp.raise_for_status()
 
-        # Extract the new record GUID from OData-EntityId header.
+        # Extract the new record GUID from the OData-EntityId header.
         entity_id_header = resp.headers.get("OData-EntityId", "")
         m = _GUID_RE.search(entity_id_header)
-        new_id = m.group(0) if m else ""
-        logger.info(
-            "Created record in %s: id=%s", params.entity_set_name, new_id
-        )
-
-        # 201 Created returns the record body; 204 does not.
-        record: dict = {}
-        if resp.status_code == 201:
-            try:
-                record = resp.json()
-                record.pop("@odata.context", None)
-            except Exception:
-                pass
-
-        return finalize_response({"id": new_id, "record": record})
+        if not m:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "Record created but the new id could not be read from the "
+                    "OData-EntityId response header."
+                ),
+            })
+        new_id = m.group(0)
+        logger.info("Created record in %s: id=%s", params.entity_set_name, new_id)
+        return finalize_response({"created": True, "id": new_id})
     except Exception as e:
         return tool_error_response(e, "dataverse_create_record")
 

@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Three dedicated single-record CRUD tools in `src/dataverse_mcp/tools/tables.py`:
-  `dataverse_create_record` (POST, `@write_tool`, returns `id` + created record body),
+  `dataverse_create_record` (POST, `@write_tool`, returns the new record `id`),
   `dataverse_update_record` (PATCH partial update, `@write_tool`),
   `dataverse_delete_record` (DELETE, `@delete_tool`). Create and update require
   `DATAVERSE_ALLOW_WRITE=true`; delete requires `DATAVERSE_ALLOW_DELETE=true`. All three

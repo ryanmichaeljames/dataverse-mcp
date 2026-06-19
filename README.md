@@ -343,115 +343,200 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-### Always available
+**118 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
-These 38 tools are registered regardless of safety guard settings.
+The **Gate** column shows when a tool is registered:
 
-| Tool | Description |
-|------|-------------|
-| `dataverse_list_environments` | List Power Platform environments accessible to the authenticated user |
-| `dataverse_whoami` | Return the authenticated user's `UserId`, `BusinessUnitId`, and `OrganizationId` |
-| `dataverse_get_entity_sets` | List OData EntitySet names from the service document |
-| `dataverse_retrieve_user_privileges` | List all security privileges assigned to a system user |
-| `dataverse_retrieve_principal_access` | Check access rights a user has to a specific record |
-| `dataverse_list_solutions` | List solutions with optional OData filter and pagination |
-| `dataverse_get_solution` | Get a single solution by unique name or GUID |
-| `dataverse_list_solution_components` | List components in a solution with optional type filter |
-| `dataverse_get_cloud_flows` | Get cloud flows by query, and optionally scope to a solution by ID or unique name |
-| `dataverse_query_table` | Query records from any table with filter, select, orderby, expand, and top |
-| `dataverse_get_record` | Get a single record by entity set name and GUID |
-| `dataverse_count_records` | Count table rows with optional filter support |
-| `dataverse_aggregate_table` | Execute aggregate queries (sum, avg, min, max, countdistinct) with optional grouping |
-| `dataverse_execute_batch` | Execute up to 1,000 OData operations in a single `$batch` request; GET-only unless `DATAVERSE_ALLOW_WRITE=true` |
-| `dataverse_list_tables` | List available tables with optional metadata filter |
-| `dataverse_get_table_metadata` | Get full schema details for a specific table |
-| `dataverse_list_columns` | List column definitions for a table with optional type filter |
-| `dataverse_get_column` | Get full metadata for a single column including type-specific properties |
-| `dataverse_list_choice_column_options` | Get all option values for a Picklist or MultiSelectPicklist column |
-| `dataverse_list_relationships` | List relationship definitions for a table or the entire environment |
-| `dataverse_get_relationship` | Get full metadata for a single relationship by schema name |
-| `dataverse_check_relationship_eligibility` | Check whether a table can participate in a relationship before creating one |
-| `dataverse_list_choices` | List all global choice (option set) definitions in the environment |
-| `dataverse_get_choice` | Get a specific global choice by name or MetadataId, including all option values |
-| `dataverse_list_plugin_type_statistics` | List runtime performance statistics (execution count, failure rate, crash metrics) for plug-in types |
-| `dataverse_get_plugin_trace_log_setting` | Get the current organization-wide plug-in trace log verbosity (off / exception / all) |
-| `dataverse_list_plugin_trace_logs` | List plug-in trace log records with filters for class name, message, entity, operation type, exceptions-only, and time window |
-| `dataverse_list_connection_references` | List connection references with optional filters for connector ID, status, and OData expression |
-| `dataverse_get_connection_reference` | Get a single connection reference by GUID or logical name |
-| `dataverse_list_forms` | List model-driven app forms for a table with optional form type filter |
-| `dataverse_get_form` | Get a form's layout as a structured tabs → sections → controls tree |
-| `dataverse_validate_formxml` | Validate FormXml against structural XSD rules; pass `formxml` for a dry-run on a proposed string without fetching from Dataverse |
-| `dataverse_list_views` | List saved views (savedquery records) for a table with optional query type filter |
-| `dataverse_get_view` | Get a view's FetchXml, LayoutXml, and column list |
-| `dataverse_validate_view` | Validate a view's FetchXml and LayoutXml against structural rules |
-| `dataverse_list_apps` | List model-driven apps; set `include_unpublished=true` to include drafts |
-| `dataverse_get_app` | Get a model-driven app's properties and component list grouped by type |
-| `dataverse_validate_app` | Validate a model-driven app using ValidateApp — surfaces missing sitemap and other errors |
+| Gate | Meaning |
+|------|---------|
+| `default` | Always registered (reads and safe queries). |
+| `write` | Registered only when `DATAVERSE_ALLOW_WRITE=true`. |
+| `delete` | Registered only when `DATAVERSE_ALLOW_DELETE=true`. |
 
-### Requires `DATAVERSE_ALLOW_WRITE=true`
+> `dataverse_execute_batch` is `default` but rejects non-GET operations unless `DATAVERSE_ALLOW_WRITE=true`.
 
-These 43 tools are only registered when `DATAVERSE_ALLOW_WRITE=true` is set.
+### Environment & identity
 
-| Tool | Description |
-|------|-------------|
-| `dataverse_associate_records` | Associate two records via a collection-valued navigation property |
-| `dataverse_merge_records` | Merge a subordinate record into a target record (account, contact, lead, incident) |
-| `dataverse_create_publisher` | Create a Dataverse publisher with unique name and customization prefixes |
-| `dataverse_update_publisher` | Update mutable publisher fields by publisher GUID |
-| `dataverse_create_solution` | Create a solution with display name, version, and publisher binding |
-| `dataverse_update_solution` | Update mutable solution fields by solution GUID or unique name |
-| `dataverse_update_solution_version` | Update only the version of an existing solution |
-| `dataverse_add_component_to_solution` | Add a component to a solution via the `AddSolutionComponent` action |
-| `dataverse_enable_cloud_flow` | Enable a single cloud flow by workflow ID |
-| `dataverse_batch_enable_cloud_flows` | Enable multiple cloud flows in one `$batch` request with per-item results |
-| `dataverse_disable_cloud_flow` | Disable a single cloud flow by workflow ID |
-| `dataverse_batch_disable_cloud_flows` | Disable multiple cloud flows in one `$batch` request with per-item results |
-| `dataverse_create_table` | Create a new custom table with display names, ownership type, and primary name attribute |
-| `dataverse_update_table` | Update an existing table's display name or description |
-| `dataverse_create_column` | Add a new typed column to a table |
-| `dataverse_update_column` | Update an existing column via full PUT — fetch current definition with `dataverse_get_column` first |
-| `dataverse_create_one_to_many_relationship` | Create a 1:N relationship and its lookup column |
-| `dataverse_create_many_to_many_relationship` | Create an N:N relationship and its intersect table |
-| `dataverse_create_multi_table_lookup` | Create a polymorphic lookup column referencing multiple tables |
-| `dataverse_update_relationship` | Update an existing relationship via full PUT — fetch current definition with `dataverse_get_relationship` first |
-| `dataverse_create_choice` | Create a new global choice with initial options |
-| `dataverse_update_choice` | Update an existing global choice via full PUT — fetch current definition with `dataverse_get_choice` first |
-| `dataverse_add_choice_option` | Add a new option to a global or local choice |
-| `dataverse_update_choice_option` | Update the display label of an existing choice option |
-| `dataverse_reorder_choice_options` | Reorder all options in a global or local choice |
-| `dataverse_publish_customizations` | Publish schema changes via `PublishXml` (targeted) or `PublishAllXml` (environment-wide) |
-| `dataverse_set_plugin_trace_log_setting` | Set the organization-wide plug-in trace log verbosity: `off`, `exception`, or `all` |
-| `dataverse_create_connection_reference` | Create a connection reference with optional immediate connection assignment and optional solution association |
-| `dataverse_update_connection_reference` | Assign or clear a connection on a reference, update display name/description, or associate with a solution |
-| `dataverse_set_formxml` | Replace a form's FormXml directly and publish; validates before writing, returns `formxml_backup` for revert |
-| `dataverse_add_form_control` | Add a column control to a form — resolves classid from column metadata automatically |
-| `dataverse_remove_form_control` | Remove a column control from a form by logical name |
-| `dataverse_create_view` | Create a new saved view with FetchXml and LayoutXml |
-| `dataverse_update_view` | Update an existing view's FetchXml, LayoutXml, name, or description |
-| `dataverse_add_view_column` | Add a column to a view's LayoutXml |
-| `dataverse_remove_view_column` | Remove a column from a view's LayoutXml |
-| `dataverse_create_app` | Create a model-driven app with auto-generated sitemap, entity components, validation, and publish |
-| `dataverse_update_app` | Update a model-driven app's name or description |
-| `dataverse_add_app_components` | Add tables, forms, views, charts, or BPFs to a model-driven app |
-| `dataverse_remove_app_components` | Remove components from a model-driven app |
-| `dataverse_set_app_sitemap` | Create or replace a model-driven app's navigation sitemap from a table list or structured areas |
-| `dataverse_publish_app` | Publish a model-driven app to make it visible to users |
-| `dataverse_assign_app_role` | Associate or disassociate a security role with a model-driven app |
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_environments` | default | List Power Platform environments accessible to the caller |
+| `dataverse_whoami` | default | Return the caller's `UserId`, `BusinessUnitId`, `OrganizationId` |
+| `dataverse_get_entity_sets` | default | List OData EntitySet names from the service document |
+| `dataverse_retrieve_user_privileges` | default | List security privileges assigned to a user |
+| `dataverse_retrieve_principal_access` | default | Check a user's access rights to a specific record |
 
-### Requires `DATAVERSE_ALLOW_DELETE=true`
+### Records & data
 
-These 8 tools are only registered when `DATAVERSE_ALLOW_DELETE=true` is set.
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_query_table` | default | Query records with filter, select, orderby, expand, top |
+| `dataverse_get_record` | default | Get one record by entity set name and GUID |
+| `dataverse_count_records` | default | Count rows in a table, optional filter |
+| `dataverse_aggregate_table` | default | Aggregate (sum, avg, min, max, countdistinct) with optional grouping |
+| `dataverse_execute_batch` | default | Run up to 1,000 OData operations in one `$batch` (GET-only unless write enabled) |
+| `dataverse_associate_records` | write | Associate two records via a collection-valued navigation property |
+| `dataverse_merge_records` | write | Merge a subordinate record into a target (account, contact, lead, incident) |
+| `dataverse_disassociate_records` | delete | Remove an association between two records |
 
-| Tool | Description |
-|------|-------------|
-| `dataverse_delete_connection_reference` | Delete an unmanaged connection reference (managed ones must be removed via their solution) |
-| `dataverse_disassociate_records` | Remove an association between two records |
-| `dataverse_remove_component_from_solution` | Remove a component from a solution via the `RemoveSolutionComponent` action |
-| `dataverse_delete_table` | Permanently delete a custom table and all its data |
-| `dataverse_delete_column` | Permanently delete a custom column and all its data |
-| `dataverse_delete_relationship` | Delete a custom relationship by MetadataId |
-| `dataverse_delete_choice` | Delete a global choice by logical name |
-| `dataverse_delete_choice_option` | Remove a specific option value from a global or local choice |
+### Tables & columns
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_tables` | default | List tables, optional metadata filter |
+| `dataverse_get_table_metadata` | default | Get full schema details for a table |
+| `dataverse_list_columns` | default | List columns for a table, optional type filter |
+| `dataverse_get_column` | default | Get full metadata for one column, including type-specific properties |
+| `dataverse_create_table` | write | Create a custom table (ownership type, primary name attribute) |
+| `dataverse_update_table` | write | Update a table's display name or description |
+| `dataverse_create_column` | write | Add a typed column to a table |
+| `dataverse_update_column` | write | Replace a column via full PUT (fetch with `dataverse_get_column` first) |
+| `dataverse_publish_customizations` | write | Publish schema changes via `PublishXml` (targeted) or `PublishAllXml` |
+| `dataverse_delete_table` | delete | Permanently delete a custom table and all its data |
+| `dataverse_delete_column` | delete | Permanently delete a custom column and all its data |
+
+### Relationships
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_relationships` | default | List relationships for a table or the whole environment |
+| `dataverse_get_relationship` | default | Get full metadata for one relationship by schema name |
+| `dataverse_check_relationship_eligibility` | default | Check whether a table can participate in a relationship |
+| `dataverse_create_one_to_many_relationship` | write | Create a 1:N relationship and its lookup column |
+| `dataverse_create_many_to_many_relationship` | write | Create an N:N relationship and its intersect table |
+| `dataverse_create_multi_table_lookup` | write | Create a polymorphic lookup referencing multiple tables |
+| `dataverse_update_relationship` | write | Replace a relationship via full PUT (fetch with `dataverse_get_relationship` first) |
+| `dataverse_delete_relationship` | delete | Delete a custom relationship by MetadataId |
+
+### Choices (option sets)
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_choices` | default | List global choices (option sets) |
+| `dataverse_get_choice` | default | Get a global choice and its options by name or MetadataId |
+| `dataverse_list_choice_column_options` | default | Get options for a Picklist or MultiSelectPicklist column |
+| `dataverse_create_choice` | write | Create a global choice with initial options |
+| `dataverse_update_choice` | write | Replace a global choice via full PUT (fetch with `dataverse_get_choice` first) |
+| `dataverse_add_choice_option` | write | Add an option to a global or local choice |
+| `dataverse_update_choice_option` | write | Update the display label of an option |
+| `dataverse_reorder_choice_options` | write | Reorder all options in a choice |
+| `dataverse_delete_choice` | delete | Delete a global choice by logical name |
+| `dataverse_delete_choice_option` | delete | Remove one option from a global or local choice |
+
+### Solutions & publishers
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_solutions` | default | List solutions, optional filter and pagination |
+| `dataverse_get_solution` | default | Get a solution by unique name or GUID |
+| `dataverse_list_solution_components` | default | List components in a solution, optional type filter |
+| `dataverse_create_publisher` | write | Create a publisher with customization prefixes |
+| `dataverse_update_publisher` | write | Update publisher fields by GUID |
+| `dataverse_create_solution` | write | Create a solution (publisher binding, version) |
+| `dataverse_update_solution` | write | Update solution fields by GUID or unique name |
+| `dataverse_update_solution_version` | write | Update only a solution's version |
+| `dataverse_add_component_to_solution` | write | Add a component via `AddSolutionComponent` |
+| `dataverse_remove_component_from_solution` | delete | Remove a component via `RemoveSolutionComponent` |
+
+### Cloud flows
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_get_cloud_flows` | default | Query cloud flows, optionally scoped to a solution |
+| `dataverse_enable_cloud_flow` | write | Enable one flow by workflow ID |
+| `dataverse_batch_enable_cloud_flows` | write | Enable many flows in one `$batch`, per-item results |
+| `dataverse_disable_cloud_flow` | write | Disable one flow by workflow ID |
+| `dataverse_batch_disable_cloud_flows` | write | Disable many flows in one `$batch`, per-item results |
+
+### Forms
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_forms` | default | List forms for a table, optional form type filter |
+| `dataverse_get_form` | default | Get a form's layout as a tabs → sections → controls tree |
+| `dataverse_validate_formxml` | default | Validate FormXml against XSD; pass `formxml` for a dry-run |
+| `dataverse_set_formxml` | write | Replace and publish a form's FormXml; returns `formxml_backup` for revert |
+| `dataverse_add_form_control` | write | Add a column control to a form (auto-resolves classid) |
+| `dataverse_remove_form_control` | write | Remove a column control by logical name |
+
+### Views
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_views` | default | List saved views (savedquery) for a table, optional query type filter |
+| `dataverse_get_view` | default | Get a view's FetchXml, LayoutXml, and column list |
+| `dataverse_validate_view` | default | Validate a view's FetchXml and LayoutXml |
+| `dataverse_create_view` | write | Create a saved view with FetchXml and LayoutXml |
+| `dataverse_update_view` | write | Update a view's FetchXml, LayoutXml, name, or description |
+| `dataverse_add_view_column` | write | Add a column to a view's LayoutXml |
+| `dataverse_remove_view_column` | write | Remove a column from a view's LayoutXml |
+
+### Model-driven apps
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_apps` | default | List apps; `include_unpublished=true` includes drafts |
+| `dataverse_get_app` | default | Get an app's properties and components grouped by type |
+| `dataverse_validate_app` | default | Validate an app via `ValidateApp` (surfaces missing sitemap, etc.) |
+| `dataverse_create_app` | write | Create an app (sitemap, components, validation, publish) |
+| `dataverse_update_app` | write | Update an app's name or description |
+| `dataverse_add_app_components` | write | Add tables, forms, views, charts, or BPFs to an app |
+| `dataverse_remove_app_components` | write | Remove components from an app |
+| `dataverse_set_app_sitemap` | write | Create or replace an app's navigation sitemap |
+| `dataverse_publish_app` | write | Publish an app to make it visible to users |
+| `dataverse_assign_app_role` | write | Associate or disassociate a security role with an app |
+
+### Connection references
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_connection_references` | default | List connection references, optional connector/status/OData filters |
+| `dataverse_get_connection_reference` | default | Get one by GUID or logical name |
+| `dataverse_create_connection_reference` | write | Create one, optional connection and solution association |
+| `dataverse_update_connection_reference` | write | Assign/clear connection, update fields, or associate with a solution |
+| `dataverse_delete_connection_reference` | delete | Delete an unmanaged connection reference |
+
+### Plug-in registration
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_plugin_assemblies` | default | List registered plug-in assemblies |
+| `dataverse_get_plugin_assembly` | default | Get one plug-in assembly |
+| `dataverse_list_plugin_packages` | default | List NuGet plug-in packages |
+| `dataverse_get_plugin_package` | default | Get one plug-in package |
+| `dataverse_list_plugin_types` | default | List plug-in types (classes) in an assembly |
+| `dataverse_get_plugin_type` | default | Get one plug-in type |
+| `dataverse_list_plugin_steps` | default | List SDK message processing step registrations |
+| `dataverse_get_plugin_step` | default | Get one processing step |
+| `dataverse_list_plugin_step_images` | default | List pre/post entity images on a step |
+| `dataverse_get_plugin_step_image` | default | Get one step image |
+| `dataverse_list_sdk_messages` | default | List SDK messages (Create, Update, …) — reference |
+| `dataverse_get_sdk_message` | default | Get one SDK message |
+| `dataverse_list_sdk_message_filters` | default | List SDK message filters (message/entity combos) — reference |
+| `dataverse_get_sdk_message_filter` | default | Get one SDK message filter |
+| `dataverse_create_plugin_assembly` | write | Register a plug-in assembly |
+| `dataverse_update_plugin_assembly` | write | Update a plug-in assembly |
+| `dataverse_create_plugin_package` | write | Register a plug-in package |
+| `dataverse_update_plugin_package` | write | Update a plug-in package |
+| `dataverse_create_plugin_type` | write | Register a plug-in type |
+| `dataverse_update_plugin_type` | write | Update a plug-in type |
+| `dataverse_create_plugin_step` | write | Register an SDK message processing step |
+| `dataverse_update_plugin_step` | write | Update a processing step |
+| `dataverse_create_plugin_step_image` | write | Register a step image |
+| `dataverse_update_plugin_step_image` | write | Update a step image |
+| `dataverse_delete_plugin_assembly` | delete | Delete a plug-in assembly |
+| `dataverse_delete_plugin_package` | delete | Delete a plug-in package |
+| `dataverse_delete_plugin_type` | delete | Delete a plug-in type |
+| `dataverse_delete_plugin_step` | delete | Delete a processing step |
+| `dataverse_delete_plugin_step_image` | delete | Delete a step image |
+
+### Plug-in tracing & statistics
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_plugin_type_statistics` | default | Runtime performance stats (execution count, failure rate, crashes) per plug-in type |
+| `dataverse_get_plugin_trace_log_setting` | default | Get org-wide trace log verbosity (off / exception / all) |
+| `dataverse_list_plugin_trace_logs` | default | List trace logs with filters (class, message, entity, operation, errors-only, time window) |
+| `dataverse_set_plugin_trace_log_setting` | write | Set org-wide trace log verbosity (`off`, `exception`, `all`) |
 
 ---
 

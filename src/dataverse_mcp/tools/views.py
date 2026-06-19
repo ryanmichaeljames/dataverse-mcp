@@ -571,13 +571,11 @@ async def _patch_view(
     },
 )
 async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
-    """List saved views (savedqueries) for a Dataverse table.
-    Returns view metadata: savedqueryid, name, querytype, isdefault, statecode.
+    """List saved views (savedqueries) registered in the Dataverse environment.
 
-    Filter by table_logical_name and/or query_type. Common query types:
-    0 = Main Grid, 1 = Advanced Find, 2 = Associated, 4 = Quick Find, 64 = Lookup.
-
-    Use dataverse_get_view to inspect the full layout of a specific view.
+    Returns metadata: id, name, querytype, isdefault, statecode. Filter by
+    table_logical_name and/or query_type (0=Main Grid, 1=Advanced Find,
+    2=Associated, 4=Quick Find, 64=Lookup). Use dataverse_get_view for layout.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -645,13 +643,11 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
-    """Get a Dataverse view's layout as structured JSON.
-    Parses FetchXml and LayoutXml into readable columns, sort, and filter lists.
+    """Get a single Dataverse view's layout as structured JSON.
 
-    Also returns fetchxml_backup and layoutxml_backup for reference.
+    Parses FetchXml and LayoutXml into readable columns, sort, and filter
+    lists. Returns fetchxml_backup and layoutxml_backup for reference.
     quick_find_fields is populated for Quick Find views (querytype=4).
-    layout.columns is empty for views with no grid layout (querytype=8192).
-
     Use dataverse_list_views to discover view IDs.
     """
     app_ctx = get_app_ctx(ctx)
@@ -713,18 +709,12 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
     },
 )
 async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> str:
-    """Validate the FetchXml and LayoutXml of a Dataverse view against 16 structural rules.
+    """Validate a Dataverse view's FetchXml and LayoutXml against 16 structural rules.
 
-    Fetches the live XML for the given view_id and checks:
-    FetchXml (rules 1-8): well-formed, <fetch> root, single <entity> with name,
-    <attribute> names present, <order> attribute present, <filter type> in {and,or},
-    <condition operator> valid, at least 1 attribute.
-    LayoutXml (rules 9-15): well-formed, <grid> root with name/object/select,
-    single <row> with name+id, at least 1 named <cell>, no duplicate cell names.
-    Cross-field (rule 16): every layout cell has a matching fetch attribute.
-    Rules 9-16 are skipped when layoutxml is null (e.g. querytype 8192).
-
-    Write tools run this validation automatically before every PATCH.
+    Fetches the live XML and checks FetchXml structure (rules 1-8), LayoutXml
+    structure (rules 9-15), and column cross-reference (rule 16). Layout rules
+    are skipped when layoutxml is null. Write tools run this automatically
+    before every PATCH — use this for a standalone pre-check.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -784,10 +774,12 @@ async def dataverse_validate_view(params: ValidateViewInput, ctx: Context) -> st
 )
 async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
     """Create a new saved view (savedquery) for a Dataverse table.
+
     Builds FetchXml and LayoutXml from the supplied column list automatically.
     Validates the generated XML before posting (16-rule check).
-    Always publishes after creating — no separate publish step needed.
-    The new view's fetchxml and layoutxml are returned for reference.
+    Publishes automatically — no separate publish needed.
+    Returns the new view's fetchxml and layoutxml for reference.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -940,12 +932,13 @@ async def dataverse_create_view(params: CreateViewInput, ctx: Context) -> str:
 )
 async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
     """Update an existing Dataverse view's columns, sort, filters, or name.
+
     Existing non-quickfind filters are preserved unless filter_fetchxml is given.
-    Quick Find filter blocks are always stripped before PATCH (Dataverse rejects them);
-    a quick_find_warning is returned naming the dropped search fields so the user can
-    restore them via the maker portal.
-    Always publishes after saving.
-    fetchxml_backup and layoutxml_backup contain the pre-change XML for rollback.
+    Quick Find filter blocks are stripped before PATCH (Dataverse rejects them) —
+    quick_find_warning names any dropped fields for restoration via the maker portal.
+    Publishes automatically — no separate publish needed.
+    Returns fetchxml_backup and layoutxml_backup for rollback.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1094,14 +1087,14 @@ async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
     },
 )
 async def dataverse_add_view_column(params: AddViewColumnInput, ctx: Context) -> str:
-    """Add a single column to a Dataverse view.
-    Splices one <attribute> into the FetchXml and one <cell> into the LayoutXml
-    while preserving all other columns, sort, and filters by construction.
-    Returns an informational no-op if the column is already present.
-    Always publishes after saving.
-    fetchxml_backup and layoutxml_backup contain the pre-change XML for rollback.
-    Quick Find filter blocks are stripped before PATCH; quick_find_warning is returned
-    when this occurs.
+    """Add a single column to a Dataverse view's FetchXml and LayoutXml.
+
+    Preserves all other columns, sort, and filters by construction. Returns a
+    no-op result if the column is already present. Quick Find filter blocks are
+    stripped before PATCH — quick_find_warning names any dropped fields.
+    Publishes automatically — no separate publish needed.
+    Returns fetchxml_backup and layoutxml_backup for rollback.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1251,14 +1244,14 @@ async def dataverse_add_view_column(params: AddViewColumnInput, ctx: Context) ->
     },
 )
 async def dataverse_remove_view_column(params: RemoveViewColumnInput, ctx: Context) -> str:
-    """Remove a single column from a Dataverse view.
-    Splices out one <attribute> from the FetchXml and one <cell> from the LayoutXml
-    while preserving all other columns, sort, and filters by construction.
-    Returns an error if the column is not present (safe — no change made).
-    Always publishes after saving.
-    fetchxml_backup and layoutxml_backup contain the pre-change XML for rollback.
-    Quick Find filter blocks are stripped before PATCH; quick_find_warning is returned
-    when this occurs.
+    """Remove a single column from a Dataverse view's FetchXml and LayoutXml.
+
+    Preserves all other columns, sort, and filters by construction. Returns an
+    error if the column is not present — no change is made. Quick Find filter
+    blocks are stripped before PATCH — quick_find_warning names any dropped fields.
+    Publishes automatically — no separate publish needed.
+    Returns fetchxml_backup and layoutxml_backup for rollback.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:

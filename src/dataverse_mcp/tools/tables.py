@@ -58,15 +58,14 @@ _BATCH_TIMEOUT = 120.0
     },
 )
 async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
-    """Query records from any Dataverse table.
-    Returns matching records from the specified table. Supports OData-style
-    filtering, column selection, sorting, and navigation property expansion.
+    """Query records from a Dataverse table with OData filtering, ordering, and expansion.
 
-    Always specify select to limit returned columns and reduce payload size.
-    Default top is 50 to prevent overwhelming context — increase if needed.
+    For a single record by GUID use dataverse_get_record. For just a count use
+    dataverse_count_records. For group-by aggregation use dataverse_aggregate_table.
+    To create, update, or delete records use dataverse_create_record,
+    dataverse_update_record, or dataverse_delete_record.
 
-    Use dataverse_list_tables or dataverse_get_table_metadata first to
-    discover available tables and their column names.
+    Always specify select to limit returned columns and keep payloads small.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -138,9 +137,10 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
-    """Retrieve a single record by its ID from any Dataverse table.
-    Returns selected columns for the given table
-    and record GUID. Use dataverse_query_table first to find record IDs.
+    """Retrieve a single Dataverse record by its GUID.
+
+    For multiple records with filtering use dataverse_query_table.
+    Use dataverse_query_table first to find record IDs if you do not have one.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -186,11 +186,12 @@ async def dataverse_get_record(params: GetRecordInput, ctx: Context) -> str:
     },
 )
 async def dataverse_create_record(params: CreateRecordInput, ctx: Context) -> str:
-    """Create a single record in any Dataverse table.
-    POSTs the supplied column/value pairs and returns the new record's id.
-    Use dataverse_get_record to read the created record back if you need its
-    fields. Use dataverse_get_entity_sets to resolve entity_set_name; use
-    dataverse_list_columns for column names.
+    """Create a single record in any Dataverse table and return the new record's id.
+
+    For updating an existing record use dataverse_update_record. For bulk or atomic
+    multi-operation writes use dataverse_execute_batch. Requires DATAVERSE_ALLOW_WRITE=true.
+    Use dataverse_get_entity_sets to discover entity_set_name; use
+    dataverse_list_columns to discover column names.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -240,10 +241,11 @@ async def dataverse_create_record(params: CreateRecordInput, ctx: Context) -> st
     },
 )
 async def dataverse_update_record(params: UpdateRecordInput, ctx: Context) -> str:
-    """Partially update a single record in any Dataverse table via PATCH.
-    Only the columns supplied in data are changed; all other columns are
-    left untouched. This is a PATCH partial update — unlike metadata tools
-    that require a full PUT definition.
+    """Partially update a single Dataverse record via PATCH — only supplied columns change.
+
+    For creating a new record use dataverse_create_record. For bulk or atomic
+    multi-operation writes use dataverse_execute_batch. Requires DATAVERSE_ALLOW_WRITE=true.
+    Unlike metadata tools, this is a PATCH partial update — no full definition needed.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -281,8 +283,9 @@ async def dataverse_update_record(params: UpdateRecordInput, ctx: Context) -> st
     },
 )
 async def dataverse_delete_record(params: DeleteRecordInput, ctx: Context) -> str:
-    """Permanently delete a single record from any Dataverse table.
-    Sends DELETE to the record URL. This action cannot be undone.
+    """Permanently delete a single Dataverse record by GUID — this action cannot be undone.
+
+    Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -320,13 +323,11 @@ async def dataverse_delete_record(params: DeleteRecordInput, ctx: Context) -> st
     },
 )
 async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> str:
-    """Count records in a Dataverse table, optionally filtered.
+    """Count records in a table (optionally filtered) and return only the integer total.
 
-    Returns an integer count. Counts are capped at 5,000 by Dataverse —
-    if total_count equals 5000 the actual count may be higher.
-
-    Use filter to narrow the count to matching records, e.g.,
-    "statecode eq 0" to count only active records.
+    Use this instead of dataverse_query_table when you need a number, not rows.
+    For per-group counts (e.g. count by status) use dataverse_aggregate_table.
+    The total is capped at 5,000 by Dataverse.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -374,24 +375,11 @@ async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> st
     },
 )
 async def dataverse_aggregate_table(params: AggregateTableInput, ctx: Context) -> str:
-    """Aggregate data from a Dataverse table using OData $apply expressions.
+    """Group and aggregate Dataverse records with an OData $apply expression.
 
-    Supports groupby, sum, avg, min, max, countdistinct, and distinct value queries.
-    Works on up to 50,000 records.
-
-    Common patterns:
-    - Count by status:     groupby((statecode),aggregate($count as total))
-    - Count distinct IDs:  groupby((statecode),aggregate(accountid with countdistinct as total))
-    - Sum a column:        aggregate(revenue with sum as total_revenue)
-    - Avg/min/max:         aggregate(numberofemployees with avg as avg_employees)
-    - Distinct values:     groupby((statuscode))
-    - Total row count:     aggregate($count as total)
-    - Filtered agg:        use the filter param to narrow before aggregation
-
-    Note: use 'countdistinct' not 'count' for column aggregation.
-    Note: $orderby on aggregate alias values is not supported by Dataverse.
-    Note: Lookup fields (e.g. ownerid) cannot be used in groupby — use
-    regular columns like statecode, statuscode, or other integer fields.
+    Use this for per-group questions (e.g. count by status, sum revenue by region).
+    For a single total count use dataverse_count_records; for raw rows use dataverse_query_table.
+    Works on up to 50,000 records. See the apply parameter for expression examples.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -441,11 +429,11 @@ async def dataverse_aggregate_table(params: AggregateTableInput, ctx: Context) -
 async def dataverse_associate_records(
     params: AssociateRecordsInput, ctx: Context
 ) -> str:
-    """Create an association between two records via a collection-valued navigation property.
-    Links the related record by POSTing an @odata.id reference to the navigation property.
+    """Associate two Dataverse records via a collection-valued navigation property.
 
-    Use dataverse_list_relationships to discover the correct navigation_property name.
-    Use dataverse_get_entity_sets to resolve entity set names.
+    Navigation property names are case-sensitive — use dataverse_list_relationships
+    to discover the correct name. For the reverse operation use dataverse_disassociate_records.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -486,8 +474,10 @@ async def dataverse_associate_records(
 async def dataverse_disassociate_records(
     params: DisassociateRecordsInput, ctx: Context
 ) -> str:
-    """Remove an association between two records via a collection-valued navigation property.
-    Unlinks the related record by sending a DELETE to the navigation property $ref endpoint.
+    """Remove an existing association between two Dataverse records.
+
+    Navigation property names are case-sensitive — use dataverse_list_relationships
+    to discover the correct name. Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -526,12 +516,11 @@ async def dataverse_disassociate_records(
     },
 )
 async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> str:
-    """Merge a subordinate record into a target record using the Dataverse Merge action.
-    Supported entity types: account, contact, lead, incident.
+    """Merge a subordinate record into a target record for account, contact, lead, or incident.
 
     The subordinate record is deactivated (not deleted) after the merge.
-    Use update_content to carry specific field values from the subordinate
-    to the target.
+    Use update_content to carry specific field values from the subordinate to the target.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -572,13 +561,16 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
     },
 )
 async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> str:
-    """Execute multiple OData operations in a single HTTP request using the $batch endpoint.
-    Supports up to 1,000 operations per request. Operations in the same
-    change_set_id are executed atomically — if any fails, all in that set
-    are rolled back.
+    """Execute bulk or atomic multi-operation reads and writes via the OData $batch endpoint.
 
-    Returns a list of per-operation results: [{index, status_code, body}].
-    Change set results are flattened into the list in order.
+    Use this for bulk record operations or when multiple writes must succeed or fail together.
+    For single-record writes use dataverse_create_record / dataverse_update_record /
+    dataverse_delete_record instead. For metadata/schema changes use the
+    dataverse_create_*/update_*/delete_* metadata tools.
+
+    Non-GET operations require DATAVERSE_ALLOW_WRITE=true. Group operations with the same
+    change_set_id to run them atomically (all-or-nothing, up to 1,000 operations per request).
+    Returns per-operation results [{index, status_code, body}].
     """
     app_ctx = get_app_ctx(ctx)
     try:

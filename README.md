@@ -343,7 +343,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**118 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**121 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -374,8 +374,11 @@ The **Gate** column shows when a tool is registered:
 | `dataverse_count_records` | default | Count rows in a table, optional filter |
 | `dataverse_aggregate_table` | default | Aggregate (sum, avg, min, max, countdistinct) with optional grouping |
 | `dataverse_execute_batch` | default | Run up to 1,000 OData operations in one `$batch` (GET-only unless write enabled) |
+| `dataverse_create_record` | write | Create a record and return its new GUID |
+| `dataverse_update_record` | write | Partially update a record (PATCH) |
 | `dataverse_associate_records` | write | Associate two records via a collection-valued navigation property |
 | `dataverse_merge_records` | write | Merge a subordinate record into a target (account, contact, lead, incident) |
+| `dataverse_delete_record` | delete | Permanently delete a record |
 | `dataverse_disassociate_records` | delete | Remove an association between two records |
 
 ### Tables & columns

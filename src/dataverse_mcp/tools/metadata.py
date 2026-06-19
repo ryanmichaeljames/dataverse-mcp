@@ -133,14 +133,11 @@ def _extract_action_bool(result: dict, result_key: str) -> bool:
     },
 )
 async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
-    """List available tables (entities) in the Dataverse environment.
-    Returns table metadata including logical name, schema name, and display
-    name. By default returns all non-private tables. Use filter to narrow
-    results (e.g., "IsCustomEntity eq true" for custom tables only).
+    """List tables (entities) in the Dataverse environment with their logical names and display names.
 
-    Use this tool to discover which tables exist before querying them with
-    dataverse_query_table or inspecting their schema with
-    dataverse_get_table_metadata.
+    Use filter to narrow results (e.g., "IsCustomEntity eq true" for custom tables only).
+    Use dataverse_get_table_metadata for full schema details on one table.
+    Use dataverse_get_entity_sets to discover OData collection names for record queries.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -183,11 +180,10 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
 async def dataverse_get_table_metadata(
     params: GetTableMetadataInput, ctx: Context
 ) -> str:
-    """Get detailed metadata for a specific Dataverse table.
-    Returns the table's schema name, logical name, entity set name,
-    primary key attribute, and primary name attribute. Use this to
-    understand a table's structure before querying it with
-    dataverse_query_table.
+    """Get schema details for a single Dataverse table by logical name.
+
+    Returns the entity set name, primary key attribute, and primary name attribute.
+    Use dataverse_list_tables to discover available table logical names.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -235,15 +231,11 @@ async def dataverse_get_table_metadata(
     },
 )
 async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
-    """List all column (attribute) definitions for a Dataverse table.
-    Returns metadata for every column on the specified table. Use
-    attribute_type to narrow by type (e.g., 'Lookup', 'Picklist').
-    Use select to choose which metadata properties to include.
+    """List column (attribute) definitions for a Dataverse table.
 
-    Use this before querying records to discover available columns and
-    their types. For full metadata on a single column, use
-    dataverse_get_column. For choice options, use
-    dataverse_list_choice_column_options.
+    Use attribute_type to narrow by column type (e.g., 'Lookup', 'Picklist').
+    For full metadata on a single column use dataverse_get_column.
+    For Picklist/MultiSelectPicklist option values use dataverse_list_choice_column_options.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -288,14 +280,12 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
-    """Get full metadata for a single column on a Dataverse table.
-    Returns all metadata properties for the specified column, including
-    type-specific properties such as MaxLength (String), Precision
-    (Decimal/Money), RequiredLevel, Format, and IsValidForCreate.
+    """Get full metadata for a single column on a Dataverse table, including type-specific properties.
 
-    Use dataverse_list_columns first to discover available column names.
-    For Picklist/MultiSelectPicklist option values, use
-    dataverse_list_choice_column_options.
+    Returns all properties including MaxLength, Precision, RequiredLevel, Format,
+    and IsValidForCreate. Use before updating a column — pass the returned object
+    as full_definition to dataverse_update_column.
+    For Picklist/MultiSelectPicklist option values use dataverse_list_choice_column_options.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -402,17 +392,11 @@ async def _fetch_picklist_options(
 async def dataverse_list_choice_column_options(
     params: ListChoiceColumnOptionsInput, ctx: Context
 ) -> str:
-    """Get all option values for a Picklist or MultiSelectPicklist column.
-    Returns the integer value and display label for each option in the
-    column's local option set. Handles both Picklist and
-    MultiSelectPicklist column types automatically.
+    """Get option values and labels for a Picklist or MultiSelectPicklist column's LOCAL option set.
 
-    Use this before filtering or writing records that contain choice
-    columns — the integer value is required for OData filter expressions
-    (e.g., "statuscode eq 1"). The label helps identify the correct value.
-
-    Only works for columns with a local (non-global) option set. Global
-    option sets shared across tables are not currently supported.
+    Use this before filtering records with choice columns — the integer value is required for
+    OData filter expressions (e.g., "statuscode eq 1"). For GLOBAL choices shared across tables
+    use dataverse_get_choice instead. Handles both Picklist and MultiSelectPicklist automatically.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -534,16 +518,11 @@ async def _fetch_relationships_httpx(
 async def dataverse_list_relationships(
     params: ListRelationshipsInput, ctx: Context
 ) -> str:
-    """List relationship definitions for a table or the whole environment.
-    When table_logical_name is supplied, queries that table's OneToMany,
-    ManyToOne, and/or ManyToMany relationships depending on relationship_type.
-    When table_logical_name is omitted, returns all RelationshipDefinitions
-    in the environment (relationship_type is ignored in this case).
+    """List relationship definitions for a table (OneToMany, ManyToOne, ManyToMany) or the whole environment.
 
-    Use the returned SchemaName to call dataverse_get_relationship for full
-    cascade and navigation property details. Use
-    ReferencingEntityNavigationPropertyName /
-    ReferencedEntityNavigationPropertyName in OData $expand queries.
+    Use the returned SchemaName with dataverse_get_relationship for full cascade and
+    navigation property details. Navigation property names from the results are required
+    for OData $expand queries and for dataverse_associate_records.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -608,15 +587,10 @@ async def dataverse_list_relationships(
 async def dataverse_get_relationship(
     params: GetRelationshipInput, ctx: Context
 ) -> str:
-    """Get full metadata for a single relationship by schema name.
-    Returns cascade configuration, navigation property names, and all
-    structural details for the relationship. Schema names are case-sensitive
-    and must exactly match the SchemaName returned by
-    dataverse_list_relationships (e.g., 'account_contacts').
+    """Get full metadata for a single relationship by schema name — cascade configuration and navigation properties.
 
-    Use dataverse_list_relationships first to discover the correct
-    SchemaName. The navigation property names are required for OData
-    $expand queries.
+    Schema names are case-sensitive; use the exact SchemaName from dataverse_list_relationships.
+    Use this to fetch the full definition before updating with dataverse_update_relationship.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -668,11 +642,11 @@ _DEFAULT_CHOICE_SELECT = ",".join([
     },
 )
 async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
-    """List global choice (option set) definitions in the Dataverse environment.
-    Returns metadata for all global choices. The Dataverse API does not
-    support $filter or $top on this endpoint; top is applied client-side.
-    Option values and labels are not included — use dataverse_get_choice
-    to retrieve full option details for a specific choice by name or MetadataId.
+    """List GLOBAL choice (option set) definitions in the Dataverse environment.
+
+    Option values and labels are not returned here — use dataverse_get_choice to retrieve
+    the full option set for a specific choice. $filter is not supported by this endpoint;
+    top is applied client-side.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -721,13 +695,11 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
-    """Get a specific global choice (option set) definition by name or MetadataId.
-    Returns all option values, integer codes, and labels for the choice.
-    Use this when you need the full option set for a global choice before
-    filtering records or building picklist column definitions.
+    """Get one GLOBAL choice (option set) — all option values, codes, and labels — by name or MetadataId.
 
-    Provide either name (logical name, e.g., 'incident_prioritycode') or
-    metadata_id (GUID). If both are provided, name takes precedence.
+    For the options of a specific column's LOCAL choice use
+    dataverse_list_choice_column_options instead.
+    Provide either name or metadata_id; name takes precedence when both are given.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -770,18 +742,11 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
 async def dataverse_check_relationship_eligibility(
     params: CheckRelationshipEligibilityInput, ctx: Context
 ) -> str:
-    """Pre-validate whether a table supports a specific relationship role before
-    attempting to create a relationship. Only call this immediately before
-    dataverse_create_one_to_many_relationship or
-    dataverse_create_many_to_many_relationship — do not call it for general
-    queries, data reads, or any other purpose.
+    """Pre-validate whether a table supports a specific relationship role before creating a relationship.
 
-    check_type options:
-    - 'referenced'    — can be the primary (one) side of a 1:N
-    - 'referencing'   — can be the related (many) side of a 1:N
-    - 'many_to_many'  — can participate in an N:N relationship
-
-    Returns eligible (bool) for the requested check_type.
+    Only call this immediately before dataverse_create_one_to_many_relationship or
+    dataverse_create_many_to_many_relationship — do not use for general queries or data reads.
+    Returns eligible (bool) for the requested check_type (see check_type field for valid values).
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -878,11 +843,10 @@ def _build_create_table_body(params: CreateTableInput) -> dict:
 )
 async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     """Create a new custom table (entity) in the Dataverse environment.
-    Builds and POSTs an EntityMetadata definition including the table schema,
-    display names, ownership type, and a required primary name string attribute.
 
-    The schema_name must include a publisher prefix (e.g., 'cr123_Widget').
-    The table logical name will be the lowercase form of schema_name.
+    The schema_name must include a publisher prefix (e.g., 'cr123_Widget');
+    the logical name is its lowercase form. Call dataverse_publish_customizations afterward.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     body = _build_create_table_body(params)
 
@@ -939,12 +903,10 @@ async def dataverse_create_table(params: CreateTableInput, ctx: Context) -> str:
     },
 )
 async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
-    """Update an existing table's display name or description.
-    Fetches the current full entity definition, applies the requested changes,
-    and PUTs the merged definition back. The Dataverse metadata API requires a
-    full PUT — partial updates (PATCH) are not supported on EntityDefinitions.
+    """Update a table's display name or description via a full PUT replacement.
 
-    At least one of display_name or description must be provided.
+    The tool fetches the current definition and applies your changes before PUTting it back.
+    Call dataverse_publish_customizations afterward. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     if not params.display_name and params.description is None:
         return json.dumps({
@@ -1017,12 +979,10 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
     },
 )
 async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
-    """Permanently delete a custom table and all its data from the environment.
-    WARNING: This operation is irreversible. All records in the table will be
-    permanently deleted along with the table definition.
+    """Permanently delete a custom table and all its records — irreversible.
 
-    Only custom tables (IsCustomEntity=true) can be deleted. Attempting to
-    delete a system table will return an error from the API.
+    Only custom, unmanaged tables (IsCustomEntity=true, IsManaged=false) can be deleted.
+    Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1117,19 +1077,11 @@ _ATTRIBUTE_TYPE_ODATA_MAP = {
     },
 )
 async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> str:
-    """Add a new column (attribute) to a Dataverse table.
-    Constructs the correct attribute metadata body based on attribute_type and
-    POSTs it to /EntityDefinitions(LogicalName='{table}')/Attributes.
+    """Add a new typed column (attribute) to a Dataverse table.
 
-    Use type_specific_properties to supply type-specific fields such as:
-    - String: {"MaxLength": 100}
-    - Integer: {"MinValue": 0, "MaxValue": 100000}
-    - Decimal: {"Precision": 2}
-    - DateTime: {"Format": "DateOnly"}  (DateOnly | DateAndTime)
-    - Picklist/MultiSelectPicklist: {"OptionSet": {...}}
-
-    Call dataverse_publish_customizations after creating columns to make the
-    changes visible in the application.
+    Use type_specific_properties to supply type-specific fields (e.g.,
+    String → {"MaxLength": 100}; DateTime → {"Format": "DateOnly"}).
+    Call dataverse_publish_customizations after creating columns. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     if params.type_specific_properties:
         conflicting_keys = sorted(
@@ -1218,10 +1170,10 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     },
 )
 async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> str:
-    """Update an existing column's metadata via full PUT replacement.
-    The Dataverse metadata API does not support partial updates (PATCH) on
-    attribute definitions. You must provide the complete column definition JSON.
+    """Update a column's metadata — the metadata API requires a full PUT, not a partial update.
 
+    First fetch the current definition with dataverse_get_column, change the fields you need,
+    then pass the whole object as full_definition.
     Call dataverse_publish_customizations after updating columns.
     """
     app_ctx = get_app_ctx(ctx)
@@ -1273,11 +1225,10 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
     },
 )
 async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> str:
-    """Permanently delete a custom column and all its data from a table.
-    WARNING: Deletion is permanent and irreversible. All data stored in this
-    column across every record will be lost.
+    """Permanently delete a custom column and all its data from a table — irreversible.
 
-    Call dataverse_publish_customizations after deleting columns.
+    Only custom, unmanaged columns can be deleted.
+    Call dataverse_publish_customizations after deleting columns. Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1375,11 +1326,10 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
 async def dataverse_create_one_to_many_relationship(
     params: CreateOneToManyRelationshipInput, ctx: Context
 ) -> str:
-    """Create a 1:N relationship between two tables.
-    This simultaneously creates the lookup column on the referencing (many) side.
-    Optionally use dataverse_check_relationship_eligibility to pre-validate eligibility.
+    """Create a 1:N relationship between two tables and its lookup column on the referencing side.
 
-    Call dataverse_publish_customizations after creating relationships.
+    Optionally call dataverse_check_relationship_eligibility first to pre-validate eligibility.
+    Call dataverse_publish_customizations after creating relationships. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     body = {
         "@odata.type": "Microsoft.Dynamics.CRM.OneToManyRelationshipMetadata",
@@ -1459,9 +1409,9 @@ async def dataverse_create_many_to_many_relationship(
     params: CreateManyToManyRelationshipInput, ctx: Context
 ) -> str:
     """Create an N:N relationship and its intersect (junction) table between two tables.
-    Optionally use dataverse_check_relationship_eligibility to pre-validate eligibility.
 
-    Call dataverse_publish_customizations after creating relationships.
+    Optionally call dataverse_check_relationship_eligibility first to pre-validate eligibility.
+    Call dataverse_publish_customizations after creating relationships. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     body = {
         "@odata.type": "Microsoft.Dynamics.CRM.ManyToManyRelationshipMetadata",
@@ -1528,11 +1478,10 @@ async def dataverse_create_many_to_many_relationship(
 async def dataverse_create_multi_table_lookup(
     params: CreateMultiTableLookupInput, ctx: Context
 ) -> str:
-    """Create a polymorphic lookup column that can reference multiple tables.
-    Uses the CreatePolymorphicLookupAttribute bound action. The lookup column
-    is added to owning_entity and can point to any of the target_entities.
+    """Create a polymorphic (multi-table) lookup column that can reference multiple tables.
 
-    Call dataverse_publish_customizations after creating lookup columns.
+    The lookup is added to owning_entity and can point to any of the target_entities.
+    Call dataverse_publish_customizations after creating lookup columns. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     # CreatePolymorphicLookupAttribute rejects @odata.type annotations on its
     # entity-typed parameters ("Incompatible type kinds"); the documented
@@ -1614,10 +1563,10 @@ async def dataverse_create_multi_table_lookup(
 async def dataverse_update_relationship(
     params: UpdateRelationshipInput, ctx: Context
 ) -> str:
-    """Update an existing relationship's cascade behavior or configuration.
-    The Dataverse metadata API requires a full PUT — partial updates are not
-    supported on RelationshipDefinitions.
+    """Update a relationship's cascade behavior or configuration — the metadata API requires a full PUT.
 
+    First fetch the current definition with dataverse_get_relationship, change the fields you need,
+    then pass the whole object as full_definition.
     Call dataverse_publish_customizations after updating relationships.
     """
     app_ctx = get_app_ctx(ctx)
@@ -1662,11 +1611,10 @@ async def dataverse_update_relationship(
 async def dataverse_delete_relationship(
     params: DeleteRelationshipInput, ctx: Context
 ) -> str:
-    """Delete a custom relationship by MetadataId.
-    WARNING: Deletion is permanent. For 1:N relationships, the associated
-    lookup column on the referencing entity is also deleted.
+    """Delete a custom relationship by MetadataId — permanent; deletes the associated lookup column for 1:N.
 
-    Call dataverse_publish_customizations after deleting relationships.
+    Only custom, unmanaged relationships can be deleted.
+    Call dataverse_publish_customizations afterward. Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1777,9 +1725,9 @@ def _build_option_set_target_params(
 async def dataverse_create_choice(
     params: CreateChoiceInput, ctx: Context
 ) -> str:
-    """Create a new global choice (option set) in Dataverse.
-    Global choices can be reused across multiple columns. After creating, use
-    dataverse_publish_customizations to make the choice visible in the UI.
+    """Create a new GLOBAL choice (option set) that can be reused across multiple columns.
+
+    Call dataverse_publish_customizations after creating global choices. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     options_body = [
         {
@@ -1838,9 +1786,11 @@ async def dataverse_create_choice(
 async def dataverse_update_choice(
     params: UpdateChoiceInput, ctx: Context
 ) -> str:
-    """Update an existing global choice via full PUT replacement.
-    The Dataverse metadata API requires a full PUT — partial updates are not
-    supported on GlobalOptionSetDefinitions.
+    """Update a global choice's metadata — the metadata API requires a full PUT, not a partial update.
+
+    First fetch the current definition with dataverse_get_choice, change the fields you need,
+    then pass the whole object as full_definition.
+    Call dataverse_publish_customizations after updating global choices.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1884,8 +1834,11 @@ async def dataverse_update_choice(
 async def dataverse_delete_choice(
     params: DeleteChoiceInput, ctx: Context
 ) -> str:
-    """Delete a global choice (option set) by logical name.
-    Call dataverse_publish_customizations after deleting global choices.
+    """Delete a GLOBAL choice (option set) by logical name.
+
+    Deleting a global choice still referenced by a column will fail; remove
+    those columns first. Call dataverse_publish_customizations afterward.
+    Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1923,9 +1876,10 @@ async def dataverse_delete_choice(
 async def dataverse_add_choice_option(
     params: AddChoiceOptionInput, ctx: Context
 ) -> str:
-    """Add a new option to a global or local choice column.
+    """Add a new option to a global or local (column-specific) choice.
+
     Provide option_set_name for a global choice, or entity_logical_name +
-    attribute_logical_name for a local (column-specific) choice — not both.
+    attribute_logical_name for a local choice — not both. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -1977,8 +1931,9 @@ async def dataverse_update_choice_option(
     params: UpdateChoiceOptionInput, ctx: Context
 ) -> str:
     """Update the display label of an existing option in a global or local choice.
+
     Provide option_set_name for a global choice, or entity_logical_name +
-    attribute_logical_name for a local choice — not both.
+    attribute_logical_name for a local choice — not both. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -2029,8 +1984,9 @@ async def dataverse_delete_choice_option(
     params: DeleteChoiceOptionInput, ctx: Context
 ) -> str:
     """Remove a specific option value from a global or local choice.
+
     Provide option_set_name for a global choice, or entity_logical_name +
-    attribute_logical_name for a local choice — not both.
+    attribute_logical_name for a local choice — not both. Requires DATAVERSE_ALLOW_DELETE=true.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -2077,9 +2033,10 @@ async def dataverse_delete_choice_option(
 async def dataverse_reorder_choice_options(
     params: ReorderChoiceOptionsInput, ctx: Context
 ) -> str:
-    """Reorder the options of a global or local choice.
+    """Reorder all options of a global or local choice by supplying the full ordered list of values.
+
     Provide option_set_name for a global choice, or entity_logical_name +
-    attribute_logical_name for a local choice — not both.
+    attribute_logical_name for a local choice — not both. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     target_params = _build_option_set_target_params(
         params.option_set_name, params.entity_logical_name, params.attribute_logical_name
@@ -2131,15 +2088,11 @@ async def dataverse_reorder_choice_options(
 async def dataverse_publish_customizations(
     params: PublishCustomizationsInput, ctx: Context
 ) -> str:
-    """Publish Dataverse customizations to make schema changes visible in the UI.
-    After creating or modifying tables, columns, relationships, or choices,
-    customizations must be published before they appear in model-driven apps.
+    """Publish Dataverse schema customizations to make changes visible in model-driven apps.
 
-    Two modes:
-    - Targeted: provide entities, option_sets, and/or relationships lists to
-      publish only those components. Calls PublishXml with ParameterXml.
-    - All: set publish_all=True to publish every unpublished customization in
-      the environment via PublishAllXml. May take several minutes.
+    Use targeted mode (entities/option_sets/relationships) to publish specific components,
+    or set publish_all=True to publish all unpublished customizations (may take several minutes).
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     if params.publish_all:
         app_ctx = get_app_ctx(ctx)

@@ -391,14 +391,10 @@ def _solution_not_found_message(
     },
 )
 async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> str:
-    """List solutions in the specified Dataverse environment.
+    """List solutions in the Dataverse environment with name, version, and managed status.
 
-    Returns solutions with their unique name, friendly name, version, and
-    managed status. Use the optional filter parameter to narrow results
-    (e.g., "ismanaged eq false" for unmanaged solutions only).
-
-    Use this tool to discover which solutions exist before drilling into
-    specific solution details or components.
+    Use filter to narrow results (e.g., "ismanaged eq false"). Use
+    dataverse_get_solution for full details on a specific solution.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -441,14 +437,10 @@ async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> 
     },
 )
 async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
-    """Retrieve a single solution by its unique name or ID.
+    """Retrieve a single Dataverse solution by its unique name or GUID.
 
-    Provide either solution_unique_name or solution_id (not both).
-    Returns full solution details including version, publisher, and
-    managed status.
-
-    Use this after dataverse_list_solutions to get full details for
-    a specific solution.
+    Returns full details including version, publisher, and managed status.
+    Provide solution_unique_name or solution_id — not both.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -506,15 +498,10 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
 async def dataverse_list_solution_components(
     params: ListSolutionComponentsInput, ctx: Context
 ) -> str:
-    """List components within a specific solution.
+    """List components within a Dataverse solution, with human-readable type names.
 
-    Returns the components (entities, web resources, workflows, etc.) that belong
-    to the specified solution. Each component includes both the integer type code
-    and a human-readable type name.
-
-    Use component_type to filter by a specific type code (e.g., 1=Entity,
-    61=Web Resource, 300=Canvas App). Use dataverse_get_solution first to
-    find the solution_id.
+    Use component_type to filter by type code (1=Entity, 61=Web Resource,
+    300=Canvas App, 91=Plugin Assembly, 92=SDK Message Processing Step).
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -559,7 +546,11 @@ async def dataverse_list_solution_components(
     },
 )
 async def dataverse_get_cloud_flows(params: ListCloudFlowsInput, ctx: Context) -> str:
-    """Get cloud flows by query and optionally scoped to a solution."""
+    """List cloud flows in the Dataverse environment, optionally scoped to a solution.
+
+    Returns workflow records with statecode, statuscode, and category. Scope
+    to a specific solution with solution_id or solution_unique_name.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -651,7 +642,10 @@ async def dataverse_get_cloud_flows(params: ListCloudFlowsInput, ctx: Context) -
 async def dataverse_enable_cloud_flow(
     params: SetCloudFlowStateInput, ctx: Context
 ) -> str:
-    """Enable a cloud flow."""
+    """Enable a single cloud flow (set statecode=1, statuscode=2).
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -688,7 +682,10 @@ async def dataverse_enable_cloud_flow(
 async def dataverse_disable_cloud_flow(
     params: SetCloudFlowStateInput, ctx: Context
 ) -> str:
-    """Disable a cloud flow."""
+    """Disable a single cloud flow (set statecode=0, statuscode=1).
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -725,7 +722,11 @@ async def dataverse_disable_cloud_flow(
 async def dataverse_batch_enable_cloud_flows(
     params: BatchSetCloudFlowsStateInput, ctx: Context
 ) -> str:
-    """Enable cloud flows in batch for improved performance."""
+    """Enable multiple cloud flows in a single $batch request for improved performance.
+
+    Use this instead of calling dataverse_enable_cloud_flow repeatedly.
+    Returns per-flow results with status_code and ok flag. Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -761,7 +762,11 @@ async def dataverse_batch_enable_cloud_flows(
 async def dataverse_batch_disable_cloud_flows(
     params: BatchSetCloudFlowsStateInput, ctx: Context
 ) -> str:
-    """Disable cloud flows in batch for improved performance."""
+    """Disable multiple cloud flows in a single $batch request for improved performance.
+
+    Use this instead of calling dataverse_disable_cloud_flow repeatedly.
+    Returns per-flow results with status_code and ok flag. Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -795,7 +800,10 @@ async def dataverse_batch_disable_cloud_flows(
     },
 )
 async def dataverse_create_publisher(params: CreatePublisherInput, ctx: Context) -> str:
-    """Create a Dataverse publisher."""
+    """Create a Dataverse publisher that owns the customization prefix for solutions.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -837,7 +845,10 @@ async def dataverse_create_publisher(params: CreatePublisherInput, ctx: Context)
     },
 )
 async def dataverse_update_publisher(params: UpdatePublisherInput, ctx: Context) -> str:
-    """Update mutable publisher fields."""
+    """Update a Dataverse publisher's display name, customization prefix, or option value prefix.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -874,7 +885,10 @@ async def dataverse_update_publisher(params: UpdatePublisherInput, ctx: Context)
     },
 )
 async def dataverse_create_solution(params: CreateSolutionInput, ctx: Context) -> str:
-    """Create a Dataverse solution."""
+    """Create a new Dataverse solution scoped to a publisher.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -918,7 +932,10 @@ async def dataverse_create_solution(params: CreateSolutionInput, ctx: Context) -
     },
 )
 async def dataverse_update_solution(params: UpdateSolutionInput, ctx: Context) -> str:
-    """Update mutable solution fields."""
+    """Update a Dataverse solution's display name, description, or publisher.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -984,7 +1001,10 @@ async def dataverse_update_solution(params: UpdateSolutionInput, ctx: Context) -
 async def dataverse_update_solution_version(
     params: UpdateSolutionVersionInput, ctx: Context
 ) -> str:
-    """Update solution version only."""
+    """Update a Dataverse solution's version string only (e.g., '1.0.0.1' → '1.0.0.2').
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -1047,7 +1067,10 @@ async def dataverse_update_solution_version(
 async def dataverse_add_component_to_solution(
     params: AddComponentToSolutionInput, ctx: Context
 ) -> str:
-    """Add a component to a solution via AddSolutionComponent action."""
+    """Add an existing component to a Dataverse solution via AddSolutionComponent.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
@@ -1114,7 +1137,11 @@ async def dataverse_add_component_to_solution(
 async def dataverse_remove_component_from_solution(
     params: RemoveComponentFromSolutionInput, ctx: Context
 ) -> str:
-    """Remove a component from a solution via RemoveSolutionComponent action."""
+    """Remove a component from a Dataverse solution via RemoveSolutionComponent.
+
+    Removes the component from the solution only — does not delete the component.
+    Requires DATAVERSE_ALLOW_DELETE=true.
+    """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)

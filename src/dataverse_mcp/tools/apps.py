@@ -396,9 +396,10 @@ def _summarise_validation(vr: dict) -> dict:
 )
 async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
     """List model-driven apps (AppModule records) in a Dataverse environment.
+
     Returns appmoduleid, name, uniquename, description, publish state, and statecode.
-    Set include_unpublished=true to also return draft apps not yet published.
-    Use dataverse_get_app to fetch a single app's components.
+    Set include_unpublished=true to also return draft apps not yet visible to users.
+    Use dataverse_get_app to inspect a single app's components.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -461,10 +462,11 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
-    """Get a model-driven app's properties and its current components.
-    Returns app metadata and a grouped component list (entities, forms, views,
-    sitemap, etc.) via RetrieveAppComponents. Use dataverse_list_apps to find app IDs.
-    Always call this before any write to confirm current component state.
+    """Get a model-driven app's properties and its current component list.
+
+    Returns app metadata and components grouped by type (Entity, View, Form, Sitemap,
+    etc.) via RetrieveAppComponents. Use dataverse_list_apps to find app IDs.
+    Call this before any write to confirm current component state.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -536,9 +538,11 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
     },
 )
 async def dataverse_validate_app(params: ValidateAppInput, ctx: Context) -> str:
-    """Validate a model-driven app using the ValidateApp function.
-    Checks for required components (sitemap, etc.) and returns all errors and warnings.
-    An app with validation errors cannot be published. Always run this before publishing.
+    """Validate a model-driven app and return all errors and warnings.
+
+    Uses the ValidateApp function to check for missing required components (sitemap,
+    etc.). An app with validation errors cannot be published. Run this before
+    calling dataverse_publish_app to catch errors early.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -571,10 +575,11 @@ async def dataverse_validate_app(params: ValidateAppInput, ctx: Context) -> str:
 )
 async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
     """Create a new model-driven app (AppModule) in a Dataverse environment.
+
     When tables is provided, auto-generates a sitemap and adds the entity components.
-    Validates and publishes by default (set validate=false or publish=false to skip).
-    The returned unique_name includes the publisher prefix added by Dataverse.
-    Always provide tables — apps without a sitemap fail validation and cannot publish.
+    Validates and publishes automatically by default — pass validate=false or
+    publish=false to skip. Always provide tables: an app without a sitemap fails
+    validation and cannot be published. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -728,8 +733,10 @@ async def dataverse_create_app(params: CreateAppInput, ctx: Context) -> str:
 )
 async def dataverse_update_app(params: UpdateAppInput, ctx: Context) -> str:
     """Update a model-driven app's name or description.
-    To change components use dataverse_add_app_components / dataverse_remove_app_components.
-    To update navigation use dataverse_set_app_sitemap.
+
+    To add or remove components use dataverse_add_app_components /
+    dataverse_remove_app_components. To replace navigation use
+    dataverse_set_app_sitemap. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -782,9 +789,11 @@ async def dataverse_update_app(params: UpdateAppInput, ctx: Context) -> str:
 )
 async def dataverse_add_app_components(params: AddAppComponentsInput, ctx: Context) -> str:
     """Add components (tables, forms, views, charts, BPFs) to a model-driven app.
+
     Each component specifies a type and either an id (GUID) or logical_name (for tables).
-    Table components are automatically resolved to their MetadataId. Publishes after.
-    Use dataverse_get_app first to check the current component list.
+    Table components are resolved to their MetadataId automatically. Publishes
+    automatically — no separate publish needed. Use dataverse_get_app first to check
+    the current component list. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -849,8 +858,10 @@ async def dataverse_add_app_components(params: AddAppComponentsInput, ctx: Conte
 )
 async def dataverse_remove_app_components(params: RemoveAppComponentsInput, ctx: Context) -> str:
     """Remove components from a model-driven app.
-    Same component spec format as dataverse_add_app_components.
-    Use object_id values from dataverse_get_app to identify components. Publishes after.
+
+    Uses the same component spec format as dataverse_add_app_components. Use
+    object_id values from dataverse_get_app to identify components to remove.
+    Publishes automatically — no separate publish needed. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -915,9 +926,11 @@ async def dataverse_remove_app_components(params: RemoveAppComponentsInput, ctx:
 )
 async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) -> str:
     """Create or replace the navigation sitemap for a model-driven app.
-    Provide tables (flat list → auto Area/Group) or areas (structured). Validates
-    the generated XML before writing. Publishes after updating.
-    Returns sitemapxml_backup (prior XML or null if newly created) for rollback.
+
+    Provide tables (flat list — auto-generates Area/Group) or areas (structured).
+    Validates the generated XML before writing. Publishes automatically — no
+    separate publish needed. Returns sitemapxml_backup (prior XML or null) for
+    rollback. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -998,8 +1011,10 @@ async def dataverse_set_app_sitemap(params: SetAppSitemapInput, ctx: Context) ->
 )
 async def dataverse_publish_app(params: PublishAppInput, ctx: Context) -> str:
     """Publish a model-driven app to make it visible to users.
-    Unpublished changes are invisible until this is called. Use dataverse_validate_app
-    first to catch errors before publishing.
+
+    Unpublished changes remain invisible until this is called. Use
+    dataverse_validate_app first to catch errors before publishing.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1034,9 +1049,10 @@ async def dataverse_publish_app(params: PublishAppInput, ctx: Context) -> str:
 )
 async def dataverse_assign_app_role(params: AssignAppRoleInput, ctx: Context) -> str:
     """Associate or disassociate a Dataverse security role with a model-driven app.
-    action='add' grants users in the role access to the app.
-    action='remove' revokes that access.
-    Use dataverse_query_table against the 'roles' entity set to find role IDs.
+
+    action='add' grants users in the role access to the app; action='remove' revokes
+    it. Use dataverse_query_table against the 'roles' entity set to find role IDs.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:

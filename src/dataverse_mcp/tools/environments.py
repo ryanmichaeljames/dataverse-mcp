@@ -72,9 +72,10 @@ async def dataverse_list_environments(
 ) -> str:
     """List Power Platform environments available to the authenticated user.
 
-    This tool uses the Power Platform admin API and does not require a
-    dataverse_url. Use it to discover available environments before calling
-    environment-specific Dataverse tools.
+    Uses the Power Platform admin API — no dataverse_url required.
+    Returns instance_url for each environment, which is the dataverse_url
+    for all other tools. Use this to discover environments before
+    calling environment-specific Dataverse tools.
     """
     app_ctx = get_app_ctx(ctx)
 
@@ -148,12 +149,10 @@ async def dataverse_list_environments(
     },
 )
 async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
-    """Return the authenticated user's identity from the Dataverse WhoAmI endpoint.
+    """Return the authenticated caller's identity from the Dataverse WhoAmI endpoint.
 
-    Returns UserId, BusinessUnitId, and OrganizationId for the caller.
-    Call this at the start of a session to confirm authentication is working
-    and to obtain the caller's system user GUID (useful for privilege checks
-    or filtering records owned by the current user).
+    Returns UserId, BusinessUnitId, and OrganizationId. Call at session start
+    to confirm authentication and get the caller's UserId for privilege checks.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -189,17 +188,11 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) -> str:
-    """List OData EntitySet names available in the Dataverse environment.
+    """List OData EntitySet names from the Dataverse service document.
 
-    Queries the OData service document and returns each EntitySet's name and url.
-    Use this to discover the exact entity_set_name for a table before composing
-    record query URLs — faster and smaller than fetching the full $metadata document.
-
-    For example, the 'account' table has EntitySet name 'accounts', and
-    'systemuser' has EntitySet name 'systemusers'.
-
-    Use 'contains' to filter by a substring and 'top' to limit results.
-    Check 'has_more' in the response to determine if additional entries exist.
+    Use this to discover the correct entity_set_name for a table before
+    querying records (e.g., 'account' → 'accounts', 'systemuser' → 'systemusers').
+    Faster and smaller than fetching $metadata. Filter with contains.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -258,12 +251,8 @@ async def dataverse_retrieve_user_privileges(
 ) -> str:
     """Retrieve all security privileges assigned to a system user via their roles.
 
-    Returns a list of RolePrivilege objects, each containing PrivilegeName,
-    Depth (Basic/Local/Deep/Global/None), and BusinessUnitId.
-
-    Use dataverse_whoami to get the current caller's UserId, then call this
-    tool to verify available privileges before attempting operations that may
-    fail due to missing permissions.
+    Returns RolePrivilege objects with PrivilegeName and Depth. Use
+    dataverse_whoami to get the caller's UserId for checking your own privileges.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -303,16 +292,11 @@ async def dataverse_retrieve_user_privileges(
 async def dataverse_retrieve_principal_access(
     params: RetrievePrincipalAccessInput, ctx: Context
 ) -> str:
-    """Return the access rights a system user has to a specific record.
+    """Return the access rights a system user has to a specific Dataverse record.
 
-    Returns the AccessRights bitmask and a list of named rights
-    (ReadAccess, WriteAccess, DeleteAccess, AssignAccess, ShareAccess, etc.).
-
-    Use this to confirm whether a user can act on a record before delegating
-    an operation that may fail if the user lacks the required access.
-
-    entity_set_name is the OData collection name (e.g., 'accounts', 'contacts').
-    Use dataverse_get_entity_sets to discover the correct name.
+    Returns the AccessRights bitmask and named rights (ReadAccess, WriteAccess,
+    DeleteAccess, etc.). Use before delegating an operation to confirm the user
+    can act on the record.
     """
     app_ctx = get_app_ctx(ctx)
     try:

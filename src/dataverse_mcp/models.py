@@ -3903,11 +3903,18 @@ class CreatePluginStepInput(DataverseEnvironmentInput):
     )
     stage: int = Field(
         ...,
-        description="10=PreValidation, 20=PreOperation, 40=PostOperation",
+        description=(
+            "Pipeline stage: 10 = pre-validation (outside the DB transaction), "
+            "20 = pre-operation (inside the DB transaction, before the main op), "
+            "40 = post-operation (after the main op). Not mutable after registration."
+        ),
     )
     mode: int = Field(
         ...,
-        description="0=Synchronous, 1=Asynchronous",
+        description=(
+            "Execution mode: 0 = synchronous (runs in the caller's transaction), "
+            "1 = asynchronous (runs in a background System Job). Not mutable after registration."
+        ),
     )
     rank: int = Field(
         default=1,

@@ -545,13 +545,11 @@ async def _resolve_column_info(
     },
 )
 async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
-    """List model-driven app forms for a Dataverse table.
-    Returns form metadata: formid, name, type, activation state, and whether
-    each is the default form. Filter by table_logical_name and/or form_type.
+    """List model-driven app forms registered in the Dataverse environment.
 
-    Common form types: 2 = Main, 5 = Quick Create, 4 = Quick View, 9 = Card.
-
-    Use dataverse_get_form to inspect the full layout of a specific form.
+    Returns form metadata: id, name, type, activation state, and default flag.
+    Filter by table_logical_name and/or form_type (2=Main, 4=Quick View,
+    5=Quick Create, 9=Card). Use dataverse_get_form to inspect a form's layout.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -618,12 +616,11 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
     },
 )
 async def dataverse_get_form(params: GetFormInput, ctx: Context) -> str:
-    """Get a Dataverse form's layout as a structured JSON object.
-    Parses the raw FormXml into a readable tabs → sections → controls tree
-    so agents don't need to work with raw XML.
+    """Get a single Dataverse form's layout parsed as a structured JSON object.
 
-    Also returns formxml_backup (the raw XML string) for reference.
-    Use dataverse_list_forms to discover form IDs.
+    Parses raw FormXml into a readable tabs → sections → controls tree so
+    agents don't need to work with raw XML. Also returns formxml_backup (the
+    raw XML string). Use dataverse_list_forms to discover form IDs.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -677,24 +674,13 @@ async def dataverse_get_form(params: GetFormInput, ctx: Context) -> str:
 )
 async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) -> str:
     """Add a column control to a Dataverse model-driven app form.
-    Resolves the correct control classid from the column's metadata automatically —
-    supply only the column logical name.
 
-    Memo and TextArea columns automatically receive rowspan=3 so they render
-    with usable height. Override with rowspan to change this.
-
-    The control is inserted into the specified section (0-based section_index within
-    the first tab, default 0). row_index controls the position; omit to append.
-
-    disabled=True sets the control read-only on the form (maps to the 'disabled'
-    attribute on <control> per the FormXml XSD). isrequired=True shows the required
-    indicator on the form (maps to 'isrequired' on <control>; distinct from the
-    column's RequiredLevel metadata).
-
-    Always publishes after saving — Dataverse requires PublishXml for formxml
-    changes to take effect (a bare PATCH writes to an unpublished staging layer
-    that is invisible to subsequent reads until published).
+    Resolves the correct control classid from column metadata automatically —
+    supply only the column logical name. Memo and TextArea columns auto-get
+    rowspan=3 for usable height; override with rowspan if needed.
+    Publishes automatically — no separate publish needed.
     Use dataverse_get_form first to see the current layout and section indices.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -843,24 +829,12 @@ async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) 
     },
 )
 async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) -> str:
-    """Validate FormXml against structural rules from the FormXml XSD.
+    """Validate FormXml against structural rules derived from the FormXml XSD.
 
-    Two modes:
-    - Dry-run (formxml provided): validates the given XML string directly without
-      fetching from Dataverse. Use this before calling dataverse_set_formxml to
-      catch structural errors before committing.
-    - Live (formxml omitted): fetches the current formxml for form_id and validates it.
-
-    Checks performed:
-    - XML is well-formed
-    - <form> root with required <tabs> / <tab> / <columns> / <column> hierarchy
-    - Each <column> has the required 'width' attribute
-    - Every <cell> id is a brace-wrapped GUID (FormGuidType: {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx})
-    - Every <control> has a brace-wrapped GUID classid and a datafieldname
-    - No duplicate datafieldname values within the form
-
-    Returns valid=true and the control list on success, or valid=false with a full
-    error list. Note: all write tools run this validation automatically before every PATCH.
+    Two modes: pass formxml to validate a string directly (dry-run before
+    dataverse_set_formxml), or omit formxml to fetch and validate the live
+    form. Returns valid=true + control list, or valid=false + full error list.
+    All write tools run this validation automatically before every PATCH.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -947,13 +921,11 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
 )
 async def dataverse_remove_form_control(params: RemoveFormControlInput, ctx: Context) -> str:
     """Remove a column control from a Dataverse model-driven app form.
-    Finds the control by its datafieldname and removes the entire row it sits in.
-    Returns an error if the control is not found (safe — no change is made).
 
-    Always publishes after saving — Dataverse requires PublishXml for formxml
-    changes to take effect (a bare PATCH writes to an unpublished staging layer
-    that is invisible to subsequent reads until published).
-    The original FormXml is returned in formxml_backup for rollback if needed.
+    Finds the control by datafieldname and removes the entire row it occupies.
+    Returns an error if the control is not found — no change is made.
+    Publishes automatically — no separate publish needed. The original FormXml
+    is returned in formxml_backup for rollback. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1042,23 +1014,13 @@ async def dataverse_remove_form_control(params: RemoveFormControlInput, ctx: Con
 async def dataverse_set_formxml(params: SetFormXmlInput, ctx: Context) -> str:
     """Replace a Dataverse form's FormXml with a complete new XML string, then publish.
 
-    Handles form redesign scenarios that add_form_control / remove_form_control cannot:
-    adding or removing tabs and sections, reordering controls across sections,
-    setting section labels and visibility, and setting column widths.
-
-    Steps performed:
-    1. Fetches the current formxml and saves it as formxml_backup in the response.
-    2. Validates the incoming formxml against FormXml XSD structural rules.
-       Returns validation errors without writing if the XML is invalid.
-    3. PATCHes systemforms({form_id}) with {"formxml": <new xml>}.
-    4. Publishes customizations for the form's table via PublishXml.
-
-    Use dataverse_get_form to retrieve the current FormXml as a starting point, and
-    dataverse_validate_formxml with the formxml parameter as an explicit dry-run
-    before calling this tool. formxml_backup in the response can be used to revert
-    by calling this tool again with the backup value if the result looks wrong.
-
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    Use for full form redesigns — adding/removing tabs and sections, reordering
+    controls across sections, setting column widths. For targeted edits prefer
+    dataverse_add_form_control / dataverse_remove_form_control.
+    Validates the XML before writing — returns errors without patching if invalid.
+    Use dataverse_validate_formxml as a dry-run first.
+    Publishes automatically — no separate publish needed.
+    Returns formxml_backup for rollback. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:

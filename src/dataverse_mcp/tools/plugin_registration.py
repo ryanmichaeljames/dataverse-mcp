@@ -161,13 +161,10 @@ def _combine_filters(*filters: str | None) -> str | None:
 async def dataverse_get_plugin_assembly(
     params: GetPluginAssemblyInput, ctx: Context
 ) -> str:
-    """Retrieve a single plug-in assembly record.
+    """Retrieve a single plug-in assembly record by its GUID.
 
-    Required: assembly_id (GUID of the pluginassembly).
-    Optional: select (columns to return), dataverse_url.
-
-    Note: the 'content' column contains the base64-encoded DLL and is very
-    large — exclude it from select unless you specifically need it.
+    The 'content' column contains the base64-encoded DLL and is very large —
+    exclude it from select unless you specifically need it.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -211,11 +208,11 @@ async def dataverse_get_plugin_assembly(
 async def dataverse_list_plugin_assemblies(
     params: ListPluginAssembliesInput, ctx: Context
 ) -> str:
-    """List plug-in assemblies, optionally filtered.
+    """List plug-in assemblies registered in the environment, optionally filtered.
 
-    Optional: name_contains (substring on name), package_id (only assemblies
-    in that plug-in package), filter (raw OData), top (default 50), select,
-    dataverse_url. Results are ordered newest-modified first.
+    Results ordered newest-modified first. Use package_id to scope to one
+    plug-in package. The prerequisite chain is: assembly (or package) →
+    plug-in type → processing step → step image.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -275,11 +272,8 @@ async def dataverse_create_plugin_assembly(
 ) -> str:
     """Upload a new plug-in assembly from base64-encoded DLL bytes.
 
-    Required: name, content (base64 DLL).
-    Optional: isolation_mode (default 2=Sandbox), version, culture,
-    public_key_token, description, dataverse_url.
-
-    sourcetype is fixed to 0 (Database). The assembly must be strong-name
+    First step of the prerequisite chain: assembly (or package) → plug-in
+    type → processing step → step image. The assembly must be strong-name
     signed. isolation_mode=2 (Sandbox) is required for Dataverse online.
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
@@ -336,11 +330,10 @@ async def dataverse_create_plugin_assembly(
 async def dataverse_update_plugin_assembly(
     params: UpdatePluginAssemblyInput, ctx: Context
 ) -> str:
-    """Update an existing plug-in assembly record (most often to re-deploy DLL bytes).
+    """Update an existing plug-in assembly — most often to re-deploy new DLL bytes.
 
-    Required: assembly_id. At least one of: content (new base64 DLL),
-    isolation_mode, version, description. Re-uploading content updates
-    the registered code in-place.
+    Re-uploading content updates the registered code in-place without
+    changing the assembly's GUID or breaking dependent types and steps.
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
@@ -388,12 +381,10 @@ async def dataverse_update_plugin_assembly(
 async def dataverse_delete_plugin_assembly(
     params: DeletePluginAssemblyInput, ctx: Context
 ) -> str:
-    """Delete a plug-in assembly record.
+    """Permanently delete a plug-in assembly record — this action cannot be undone.
 
-    Required: assembly_id.
-
-    WARNING: this call fails while dependent plug-in types or steps exist.
-    Delete steps, images, and types first (leaf-to-root order).
+    Fails while dependent plug-in types or steps exist. Delete in
+    leaf-to-root order: step images → steps → types → assembly.
     Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
@@ -441,10 +432,10 @@ async def dataverse_delete_plugin_assembly(
 async def dataverse_get_plugin_package(
     params: GetPluginPackageInput, ctx: Context
 ) -> str:
-    """Retrieve a single plug-in package record.
+    """Retrieve a single plug-in package record by its GUID.
 
-    Required: package_id (GUID of the pluginpackage).
-    Optional: select (columns), dataverse_url.
+    Packages are an alternative to raw assemblies — Dataverse extracts
+    the contained assemblies automatically on upload.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -488,10 +479,10 @@ async def dataverse_get_plugin_package(
 async def dataverse_list_plugin_packages(
     params: ListPluginPackagesInput, ctx: Context
 ) -> str:
-    """List plug-in packages, optionally filtered.
+    """List NuGet-based plug-in packages registered in the environment.
 
-    Optional: name_contains, filter (raw OData), top (default 50), select,
-    dataverse_url. Results ordered newest-modified first.
+    Results ordered newest-modified first. Packages are an alternative to
+    raw assemblies as the first step in the prerequisite chain.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -547,11 +538,11 @@ async def dataverse_list_plugin_packages(
 async def dataverse_create_plugin_package(
     params: CreatePluginPackageInput, ctx: Context
 ) -> str:
-    """Upload a new NuGet-based plug-in package.
+    """Upload a new NuGet-based plug-in package from base64-encoded .nupkg bytes.
 
-    Required: name, unique_name, content (base64 .nupkg), version.
-    Dataverse extracts the contained plug-in assemblies on create.
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    Dataverse extracts the contained plug-in assemblies automatically on
+    create. Use as an alternative first step to dataverse_create_plugin_assembly
+    when deploying NuGet-packaged plug-ins. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -597,9 +588,8 @@ async def dataverse_create_plugin_package(
 async def dataverse_update_plugin_package(
     params: UpdatePluginPackageInput, ctx: Context
 ) -> str:
-    """Update a plug-in package (re-upload content or bump version).
+    """Update a plug-in package — re-upload new .nupkg content or bump the version.
 
-    Required: package_id. At least one of: content (new base64 .nupkg), version.
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
@@ -643,12 +633,10 @@ async def dataverse_update_plugin_package(
 async def dataverse_delete_plugin_package(
     params: DeletePluginPackageInput, ctx: Context
 ) -> str:
-    """Delete a plug-in package.
+    """Permanently delete a plug-in package and its extracted assemblies, types, and steps.
 
-    Required: package_id.
-
-    WARNING: deleting a package removes its extracted assemblies, types, and
-    steps. Requires DATAVERSE_ALLOW_DELETE=true.
+    This action cannot be undone and cascades to all dependent records.
+    Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -695,10 +683,10 @@ async def dataverse_delete_plugin_package(
 async def dataverse_get_plugin_type(
     params: GetPluginTypeInput, ctx: Context
 ) -> str:
-    """Retrieve a single plug-in type record.
+    """Retrieve a single plug-in type record by its GUID.
 
-    Required: plugin_type_id (GUID of the plugintype).
-    Optional: select (columns), dataverse_url.
+    Plug-in types represent individual .NET classes within an assembly.
+    Use dataverse_list_plugin_types to browse types in a given assembly.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -742,12 +730,11 @@ async def dataverse_get_plugin_type(
 async def dataverse_list_plugin_types(
     params: ListPluginTypesInput, ctx: Context
 ) -> str:
-    """List plug-in types, optionally scoped to an assembly.
+    """List plug-in types (.NET classes) registered in the environment.
 
-    Optional: assembly_id (only types in one assembly), typename_contains,
-    is_workflow_activity (filter to/from workflow activities), filter (raw
-    OData), top (default 50), select, dataverse_url.
-    Results ordered by typename ascending.
+    Use assembly_id to scope to one assembly. Results ordered by typename
+    ascending. Types are the second step in the prerequisite chain:
+    assembly → type → step → image.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -808,13 +795,11 @@ async def dataverse_list_plugin_types(
 async def dataverse_create_plugin_type(
     params: CreatePluginTypeInput, ctx: Context
 ) -> str:
-    """Register a plug-in type (class) against an assembly.
+    """Register a plug-in type (a .NET class) against an existing assembly.
 
-    Required: assembly_id (GUID of the parent pluginassembly), typename
-    (fully-qualified .NET class name e.g. 'MyOrg.Plugins.ContactPlugin').
-    Optional: friendly_name, name, is_workflow_activity (default false),
-    workflow_activity_group_name, dataverse_url.
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    Second step of the prerequisite chain: assembly → type → step → image.
+    Supply the fully-qualified .NET class name as typename (e.g.
+    'MyOrg.Plugins.ContactPlugin'). Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -865,12 +850,10 @@ async def dataverse_create_plugin_type(
 async def dataverse_update_plugin_type(
     params: UpdatePluginTypeInput, ctx: Context
 ) -> str:
-    """Update mutable fields on a plug-in type record.
+    """Update mutable display fields on a plug-in type record.
 
-    Required: plugin_type_id. At least one of: friendly_name, name,
-    workflow_activity_group_name. (typename and assembly are not safely
-    mutable post-registration — re-create instead.)
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    typename and assembly are not safely mutable after registration —
+    re-create the type instead. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -915,13 +898,10 @@ async def dataverse_update_plugin_type(
 async def dataverse_delete_plugin_type(
     params: DeletePluginTypeInput, ctx: Context
 ) -> str:
-    """Delete a plug-in type record.
+    """Permanently delete a plug-in type record — this action cannot be undone.
 
-    Required: plugin_type_id.
-
-    WARNING: this call fails while dependent processing steps exist — delete
-    steps and images first.
-    Requires DATAVERSE_ALLOW_DELETE=true.
+    Fails while dependent processing steps exist. Delete step images and
+    steps first. Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -968,11 +948,10 @@ async def dataverse_delete_plugin_type(
 async def dataverse_get_sdk_message(
     params: GetSdkMessageInput, ctx: Context
 ) -> str:
-    """Resolve an SDK message by name or ID.
+    """Resolve an SDK message (e.g. 'Create', 'Update', 'Delete') to its sdkmessageid.
 
-    Provide message_name (e.g. 'Create', 'Update', 'Delete') OR message_id.
-    Exactly one identifier required. Returns the sdkmessageid used to bind
-    a processing step via dataverse_create_plugin_step.
+    Call this to get the message_id required by dataverse_create_plugin_step.
+    Provide message_name OR message_id — exactly one required.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1037,11 +1016,10 @@ async def dataverse_get_sdk_message(
 async def dataverse_list_sdk_messages(
     params: ListSdkMessagesInput, ctx: Context
 ) -> str:
-    """List/search SDK messages (the message catalog).
+    """List SDK messages — the catalog of operations plug-in steps can intercept.
 
-    Optional: name_contains, filter (raw OData), top (default 50), select,
-    dataverse_url. Use to discover valid message names before registering a
-    processing step.
+    Use to discover valid message names (e.g. 'Create', 'Update', 'Assign')
+    before calling dataverse_get_sdk_message to resolve message_id for a step.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1102,15 +1080,11 @@ async def dataverse_list_sdk_messages(
 async def dataverse_get_sdk_message_filter(
     params: GetSdkMessageFilterInput, ctx: Context
 ) -> str:
-    """Resolve an SDK message filter by message + primary entity, or by filter ID.
+    """Resolve the filter that scopes an SDK message to one entity — returns the sdkmessagefilterid.
 
-    Mode 1: Provide filter_id alone to retrieve a specific filter record.
-    Mode 2: Provide message_id + primary_entity (lowercase logical name,
-            e.g. 'contact') to look up the filter that scopes that message
-            to one entity.
-
-    Use the returned sdkmessagefilterid to scope a processing step to one
-    entity via dataverse_create_plugin_step filter_id parameter.
+    Call this to get the filter_id required by dataverse_create_plugin_step
+    when you want to scope a step to a specific entity (e.g. 'contact').
+    Provide filter_id alone, or message_id + primary_entity together.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1181,11 +1155,11 @@ async def dataverse_get_sdk_message_filter(
 async def dataverse_list_sdk_message_filters(
     params: ListSdkMessageFiltersInput, ctx: Context
 ) -> str:
-    """List SDK message filters (which entities support each message).
+    """List SDK message filters showing which entities support each message.
 
-    Optional: message_id (filters for one message), primary_entity (filter
-    by entity logical name), filter (raw OData), top (default 50), select,
-    dataverse_url.
+    Use message_id to scope to one message, or primary_entity to see all
+    messages supported by one table. Use dataverse_get_sdk_message_filter
+    to resolve a specific filter_id for dataverse_create_plugin_step.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1249,10 +1223,10 @@ async def dataverse_list_sdk_message_filters(
 async def dataverse_get_plugin_step(
     params: GetPluginStepInput, ctx: Context
 ) -> str:
-    """Retrieve a single SDK message processing step record.
+    """Retrieve a single SDK message processing step record by its GUID.
 
-    Required: step_id (GUID of the sdkmessageprocessingstep).
-    Optional: select (columns), dataverse_url.
+    Steps are the third node in the prerequisite chain:
+    assembly → type → step → image.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1296,11 +1270,10 @@ async def dataverse_get_plugin_step(
 async def dataverse_list_plugin_steps(
     params: ListPluginStepsInput, ctx: Context
 ) -> str:
-    """List SDK message processing steps.
+    """List SDK message processing steps registered in the environment.
 
-    Optional: plugin_type_id (steps handled by one plug-in type),
-    message_id (steps for one message), filter (raw OData), top (default 50),
-    select, dataverse_url. Results ordered by name ascending.
+    Use plugin_type_id to scope to one plug-in type, or message_id to scope
+    to one message. Results ordered by name ascending.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1358,16 +1331,12 @@ async def dataverse_list_plugin_steps(
 async def dataverse_create_plugin_step(
     params: CreatePluginStepInput, ctx: Context
 ) -> str:
-    """Register a plug-in step against a message (and optional entity filter).
+    """Register a processing step that runs a plug-in type on an SDK message.
 
-    Required: name, plugin_type_id (GUID of the plugintype), message_id
-    (GUID of the sdkmessage; resolve via dataverse_get_sdk_message),
-    stage (10/20/40), mode (0/1).
-    Optional: filter_id (scope to one entity; omit for all entities), rank
-    (default 1), filtering_attributes (comma-separated; Update steps only),
-    supported_deployment (default 0), async_auto_delete (default false),
-    configuration (unsecure config string), description, dataverse_url.
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    Prerequisite chain: create assembly (or package) → plug-in type → this
+    step → step image. Resolve message_id with dataverse_get_sdk_message and
+    the optional entity-scoping filter_id with dataverse_get_sdk_message_filter.
+    See the stage and mode fields for valid values. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1427,13 +1396,11 @@ async def dataverse_create_plugin_step(
 async def dataverse_update_plugin_step(
     params: UpdatePluginStepInput, ctx: Context
 ) -> str:
-    """Update an SDK message processing step (including enable/disable via state).
+    """Update an SDK message processing step, including enabling or disabling it.
 
-    Required: step_id. At least one of: name, rank, filtering_attributes,
-    state ('enabled'/'disabled'), configuration, description.
-    Use state to enable/disable the step without deleting it.
-    stage, mode, and message are not mutable post-registration — re-create instead.
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    Use state='enabled' or state='disabled' to toggle without deleting.
+    stage, mode, and message are not mutable after registration — re-create
+    the step to change those. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1489,11 +1456,10 @@ async def dataverse_update_plugin_step(
 async def dataverse_delete_plugin_step(
     params: DeletePluginStepInput, ctx: Context
 ) -> str:
-    """Delete an SDK message processing step.
+    """Permanently delete an SDK message processing step — this action cannot be undone.
 
-    Required: step_id.
-
-    WARNING: delete step images first.
+    Delete step images first. To temporarily deactivate a step without
+    deleting it, use dataverse_update_plugin_step with state='disabled'.
     Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
@@ -1541,10 +1507,10 @@ async def dataverse_delete_plugin_step(
 async def dataverse_get_plugin_step_image(
     params: GetPluginStepImageInput, ctx: Context
 ) -> str:
-    """Retrieve a single step image record.
+    """Retrieve a single plug-in step image record by its GUID.
 
-    Required: image_id (GUID of the sdkmessageprocessingstepimage).
-    Optional: select (columns), dataverse_url.
+    Step images are pre/post entity snapshots passed to the plug-in context.
+    They are the leaf node in the chain: assembly → type → step → image.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1588,10 +1554,9 @@ async def dataverse_get_plugin_step_image(
 async def dataverse_list_plugin_step_images(
     params: ListPluginStepImagesInput, ctx: Context
 ) -> str:
-    """List step images, optionally scoped to one step.
+    """List plug-in step images (pre/post entity snapshots) registered against steps.
 
-    Optional: step_id (images for one step), filter (raw OData), top
-    (default 50), select, dataverse_url.
+    Use step_id to scope to one processing step.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1646,15 +1611,11 @@ async def dataverse_list_plugin_step_images(
 async def dataverse_create_plugin_step_image(
     params: CreatePluginStepImageInput, ctx: Context
 ) -> str:
-    """Register a pre/post image on a processing step.
+    """Register a pre/post entity image on a processing step.
 
-    Required: step_id (GUID of the parent sdkmessageprocessingstep),
-    image_type (0=PreImage, 1=PostImage, 2=Both), entity_alias (property
-    bag key e.g. 'PreImage'), message_property_name (e.g. 'Target').
-    Optional: name (defaults to entity_alias), attributes (comma-separated
-    logical names; omit for all attributes), description, dataverse_url.
-
-    Note: PostImage is only valid for post-operation steps.
+    Final step in the chain: assembly → type → step → image. PostImage
+    (image_type=1) is only valid for post-operation (stage=40) steps.
+    entity_alias is the property-bag key used in plug-in code (e.g. 'PreImage').
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
@@ -1710,10 +1671,8 @@ async def dataverse_create_plugin_step_image(
 async def dataverse_update_plugin_step_image(
     params: UpdatePluginStepImageInput, ctx: Context
 ) -> str:
-    """Update a step image record.
+    """Update a plug-in step image's alias, property name, or attribute filter.
 
-    Required: image_id. At least one of: entity_alias, message_property_name,
-    attributes, name.
     Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
@@ -1761,9 +1720,8 @@ async def dataverse_update_plugin_step_image(
 async def dataverse_delete_plugin_step_image(
     params: DeletePluginStepImageInput, ctx: Context
 ) -> str:
-    """Delete a step image record.
+    """Permanently delete a plug-in step image — this action cannot be undone.
 
-    Required: image_id.
     Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)

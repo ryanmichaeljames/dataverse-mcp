@@ -498,6 +498,24 @@ The **Gate** column shows when a tool is registered:
 | `dataverse_update_connection_reference` | write | Assign/clear connection, update fields, or associate with a solution |
 | `dataverse_delete_connection_reference` | delete | Delete an unmanaged connection reference |
 
+### Environment variables — definitions
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_get_environment_variables` | default | List definitions with current values; optional solution filter or single-record name lookup (schema name / display name) |
+| `dataverse_create_environment_variable` | write | Create a definition and optional initial value |
+| `dataverse_update_environment_variable` | write | Update definition fields and/or upsert the current value |
+| `dataverse_delete_environment_variable` | delete | Delete definition, value record, or both |
+
+### Environment variables — values
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_get_environment_variable_values` | default | Get value record(s) by value GUID, definition GUID, or definition name |
+| `dataverse_create_environment_variable_value` | write | Create a value record bound to a definition (by GUID or name) |
+| `dataverse_update_environment_variable_value` | write | PATCH an existing value record by value GUID, definition GUID, or definition name |
+| `dataverse_delete_environment_variable_value` | delete | Delete a value record only (resets to default value) by value GUID, definition GUID, or definition name |
+
 ### Plug-in registration
 
 | Tool | Gate | Description |

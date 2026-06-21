@@ -3210,6 +3210,493 @@ class DeleteConnectionReferenceInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Environment variable tools
+# ---------------------------------------------------------------------------
+
+
+class GetEnvironmentVariablesInput(DataverseEnvironmentInput):
+    """Input for listing environment variable definitions with their current values."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Schema name or display name of a single environment variable to look up. "
+            "Schema name is tried first (exact match); display name is the fallback. "
+            "When provided, returns that single definition merged with its current value. "
+            "Cannot be combined with solution_id or solution_unique_name."
+        ),
+        min_length=1,
+    )
+    solution_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the solution to scope results to. "
+            "Only definitions included in this solution are returned. "
+            "Provide either solution_id or solution_unique_name, not both. "
+            "Cannot be combined with name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Unique name of the solution to scope results to "
+            "(e.g., 'MyApp'). "
+            "Only definitions included in this solution are returned. "
+            "Provide either solution_unique_name or solution_id, not both. "
+            "Cannot be combined with name."
+        ),
+        min_length=1,
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of records to return.",
+        ge=1,
+        le=5000,
+    )
+
+    @model_validator(mode="after")
+    def _validate_solution_filter(self) -> "GetEnvironmentVariablesInput":
+        if self.solution_id and self.solution_unique_name:
+            raise ValueError(
+                "Provide either solution_id or solution_unique_name, not both."
+            )
+        if self.name and (self.solution_id or self.solution_unique_name):
+            raise ValueError(
+                "name cannot be combined with solution_id or solution_unique_name; "
+                "name performs a single-record lookup."
+            )
+        return self
+
+    @field_validator("solution_id")
+    @classmethod
+    def _validate_solution_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("solution_id must be a valid GUID.")
+        return v.lower()
+
+
+class CreateEnvironmentVariableInput(DataverseEnvironmentInput):
+    """Input for creating a new environment variable definition and optional initial value."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    schema_name: str = Field(
+        description=(
+            "Schema name for the environment variable definition "
+            "(e.g., 'new_MyVariable'). Must include a publisher prefix and be unique."
+        ),
+        min_length=1,
+    )
+    display_name: str = Field(
+        description="Display name for the environment variable.",
+        min_length=1,
+    )
+    type: int = Field(
+        description=(
+            "Data type of the environment variable. "
+            "100000000=String, 100000001=Number, 100000002=Boolean, "
+            "100000003=JSON, 100000004=Data source, 100000005=Secret."
+        ),
+        ge=100000000,
+        le=100000005,
+    )
+    default_value: str | None = Field(
+        default=None,
+        description=(
+            "Default value stored on the definition. "
+            "Used when no environment-specific value record exists."
+        ),
+    )
+    description: str | None = Field(
+        default=None,
+        description="Description of the environment variable.",
+    )
+    value: str | None = Field(
+        default=None,
+        description=(
+            "Initial current value to set. "
+            "If provided, a bound environmentvariablevalue record is created immediately "
+            "alongside the definition."
+        ),
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Unique name of the solution to associate the new definition with. "
+            "Passed as the MSCRM.SolutionUniqueName request header."
+        ),
+    )
+
+
+class UpdateEnvironmentVariableInput(DataverseEnvironmentInput):
+    """Input for updating an environment variable definition and/or its current value."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    environment_variable_definition_id: str = Field(
+        description="GUID of the environment variable definition to update.",
+        min_length=36,
+        max_length=36,
+    )
+    display_name: str | None = Field(
+        default=None,
+        description="New display name for the environment variable.",
+        min_length=1,
+    )
+    default_value: str | None = Field(
+        default=None,
+        description="New default value to set on the definition.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="New description for the environment variable.",
+    )
+    value: str | None = Field(
+        default=None,
+        description=(
+            "New current value. "
+            "If an environmentvariablevalue record already exists it is PATCHed; "
+            "otherwise a new one is POSTed bound to this definition."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _require_at_least_one(self) -> "UpdateEnvironmentVariableInput":
+        if (
+            self.display_name is None
+            and self.default_value is None
+            and self.description is None
+            and self.value is None
+        ):
+            raise ValueError(
+                "Provide at least one of: display_name, default_value, description, value."
+            )
+        return self
+
+    @field_validator("environment_variable_definition_id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(
+                "environment_variable_definition_id must be a valid GUID."
+            )
+        return v.lower()
+
+
+class DeleteEnvironmentVariableInput(DataverseEnvironmentInput):
+    """Input for deleting an environment variable definition, its value record, or both."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    environment_variable_definition_id: str = Field(
+        description=(
+            "GUID of the environment variable definition. "
+            "Required when target is 'definition' or 'both'. "
+            "When target is 'value', this is used to locate the value record."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    target: str = Field(
+        description=(
+            "What to delete: "
+            "'definition' removes the definition record (and cascades to the value record), "
+            "'value' removes only the current value record (leaving the definition intact), "
+            "'both' removes the value record first then the definition."
+        ),
+    )
+
+    @field_validator("target")
+    @classmethod
+    def _validate_target(cls, v: str) -> str:
+        allowed = {"definition", "value", "both"}
+        if v not in allowed:
+            raise ValueError(f"target must be one of: {', '.join(sorted(allowed))}.")
+        return v
+
+    @field_validator("environment_variable_definition_id")
+    @classmethod
+    def _validate_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(
+                "environment_variable_definition_id must be a valid GUID."
+            )
+        return v.lower()
+
+
+# ---------------------------------------------------------------------------
+# Environment variable value tools
+# ---------------------------------------------------------------------------
+
+
+class GetEnvironmentVariableValuesInput(DataverseEnvironmentInput):
+    """Input for getting environment variable value record(s).
+
+    Exactly one of value_id, definition_id, or name must be provided.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    value_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the environmentvariablevalue record to fetch directly. "
+            "Mutually exclusive with definition_id and name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    definition_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the environment variable definition whose value record(s) "
+            "to retrieve. Mutually exclusive with value_id and name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Schema name or display name of the environment variable definition. "
+            "Schema name is tried first (exact match); display name is the fallback. "
+            "Mutually exclusive with value_id and definition_id."
+        ),
+        min_length=1,
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of value records to return.",
+        ge=1,
+        le=5000,
+    )
+
+    @model_validator(mode="after")
+    def _validate_targeting(self) -> "GetEnvironmentVariableValuesInput":
+        provided = [
+            f for f in (self.value_id, self.definition_id, self.name) if f is not None
+        ]
+        if len(provided) != 1:
+            raise ValueError(
+                "Provide exactly one of: value_id, definition_id, name."
+            )
+        return self
+
+    @field_validator("value_id")
+    @classmethod
+    def _validate_value_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("value_id must be a valid GUID.")
+        return v.lower()
+
+    @field_validator("definition_id")
+    @classmethod
+    def _validate_definition_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("definition_id must be a valid GUID.")
+        return v.lower()
+
+
+class CreateEnvironmentVariableValueInput(DataverseEnvironmentInput):
+    """Input for creating an environment variable value record.
+
+    Exactly one of definition_id or name must be provided to identify the
+    parent definition. A value is always required.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    definition_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the environment variable definition to bind the new value to. "
+            "Mutually exclusive with name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Schema name or display name of the environment variable definition. "
+            "Schema name is tried first (exact match); display name is the fallback. "
+            "Mutually exclusive with definition_id."
+        ),
+        min_length=1,
+    )
+    value: str = Field(
+        description="The value to store in the new environmentvariablevalue record.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_targeting(self) -> "CreateEnvironmentVariableValueInput":
+        provided = [f for f in (self.definition_id, self.name) if f is not None]
+        if len(provided) != 1:
+            raise ValueError(
+                "Provide exactly one of: definition_id, name."
+            )
+        return self
+
+    @field_validator("definition_id")
+    @classmethod
+    def _validate_definition_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("definition_id must be a valid GUID.")
+        return v.lower()
+
+
+class UpdateEnvironmentVariableValueInput(DataverseEnvironmentInput):
+    """Input for updating an existing environment variable value record.
+
+    Exactly one targeting path must be provided: value_id alone, or
+    definition_id alone, or name alone. A value string is always required.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    value_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the environmentvariablevalue record to PATCH directly. "
+            "Mutually exclusive with definition_id and name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    definition_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the environment variable definition. The tool looks up its "
+            "value record and PATCHes it. Mutually exclusive with value_id and name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Schema name or display name of the environment variable definition. "
+            "Schema name is tried first (exact match); display name is the fallback. "
+            "Mutually exclusive with value_id and definition_id."
+        ),
+        min_length=1,
+    )
+    value: str = Field(
+        description="The new value string to store in the value record.",
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_targeting(self) -> "UpdateEnvironmentVariableValueInput":
+        provided = [
+            f for f in (self.value_id, self.definition_id, self.name) if f is not None
+        ]
+        if len(provided) != 1:
+            raise ValueError(
+                "Provide exactly one of: value_id, definition_id, name."
+            )
+        return self
+
+    @field_validator("value_id")
+    @classmethod
+    def _validate_value_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("value_id must be a valid GUID.")
+        return v.lower()
+
+    @field_validator("definition_id")
+    @classmethod
+    def _validate_definition_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("definition_id must be a valid GUID.")
+        return v.lower()
+
+
+class DeleteEnvironmentVariableValueInput(DataverseEnvironmentInput):
+    """Input for deleting an environment variable value record.
+
+    Exactly one targeting path must be provided: value_id alone, or
+    definition_id alone, or name alone.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    value_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the environmentvariablevalue record to delete directly. "
+            "Mutually exclusive with definition_id and name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    definition_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the environment variable definition. The tool looks up its "
+            "value record and deletes it. Mutually exclusive with value_id and name."
+        ),
+        min_length=36,
+        max_length=36,
+    )
+    name: str | None = Field(
+        default=None,
+        description=(
+            "Schema name or display name of the environment variable definition. "
+            "Schema name is tried first (exact match); display name is the fallback. "
+            "Mutually exclusive with value_id and definition_id."
+        ),
+        min_length=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_targeting(self) -> "DeleteEnvironmentVariableValueInput":
+        provided = [
+            f for f in (self.value_id, self.definition_id, self.name) if f is not None
+        ]
+        if len(provided) != 1:
+            raise ValueError(
+                "Provide exactly one of: value_id, definition_id, name."
+            )
+        return self
+
+    @field_validator("value_id")
+    @classmethod
+    def _validate_value_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("value_id must be a valid GUID.")
+        return v.lower()
+
+    @field_validator("definition_id")
+    @classmethod
+    def _validate_definition_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("definition_id must be a valid GUID.")
+        return v.lower()
+
+
+# ---------------------------------------------------------------------------
 # Plugin registration tools
 # ---------------------------------------------------------------------------
 

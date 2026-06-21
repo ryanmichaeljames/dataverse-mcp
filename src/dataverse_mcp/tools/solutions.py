@@ -64,10 +64,10 @@ COMPONENT_TYPE_NAMES: dict[int, str] = {
     92: "SDK Message Processing Step",
     300: "Canvas App",
     371: "Connector",
-    372: "Environment Variable Definition",
-    373: "Environment Variable Value",
-    380: "AI Project Type",
-    381: "AI Project",
+    372: "Connector",
+    373: "Connector",
+    380: "Environment Variable Definition",
+    381: "Environment Variable Value",
     382: "AI Configuration",
 }
 

@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Four environment variable definition tools in `src/dataverse_mcp/tools/environment_variables.py`:
+  `dataverse_get_environment_variables` (read, joins definitions with their current value via
+  `$expand`, optional solution scoping via componenttype 380 solutioncomponents query; now also
+  accepts a `name` arg to look up a single definition by schema name or display name),
+  `dataverse_create_environment_variable` (`@write_tool`, creates definition and optional bound
+  value record in one call), `dataverse_update_environment_variable` (`@write_tool`, patches
+  definition fields and upserts the value record — PATCH if found, POST if not),
+  `dataverse_delete_environment_variable` (`@delete_tool`, target=`definition`|`value`|`both`).
+  A shared async helper `_resolve_definition_by_name_or_id` is exported from the definitions
+  module and resolves a definition GUID from a name (schema name first, display name fallback)
+  with structured error returns for zero or multiple matches.
+  Four matching input models (`GetEnvironmentVariablesInput`, `CreateEnvironmentVariableInput`,
+  `UpdateEnvironmentVariableInput`, `DeleteEnvironmentVariableInput`) updated in
+  `src/dataverse_mcp/models.py` (`GetEnvironmentVariablesInput` gains a `name` field).
+- Four new environment variable value tools in a new module
+  `src/dataverse_mcp/tools/environment_variable_values.py`:
+  `dataverse_get_environment_variable_values` (read, accepts value GUID, definition GUID, or
+  definition name; returns list shape with `count`/`has_more`),
+  `dataverse_create_environment_variable_value` (`@write_tool`, binds via
+  `EnvironmentVariableDefinitionId@odata.bind`, accepts definition GUID or name),
+  `dataverse_update_environment_variable_value` (`@write_tool`, PATCHes existing value record
+  by value GUID, definition GUID, or definition name; returns error if no value record exists),
+  `dataverse_delete_environment_variable_value` (`@delete_tool`, deletes the value record only
+  by value GUID, definition GUID, or definition name; leaves the definition intact).
+  Four matching input models (`GetEnvironmentVariableValuesInput`,
+  `CreateEnvironmentVariableValueInput`, `UpdateEnvironmentVariableValueInput`,
+  `DeleteEnvironmentVariableValueInput`) added to `src/dataverse_mcp/models.py`.
+
+### Fixed
+- Corrected `COMPONENT_TYPE_NAMES` in `src/dataverse_mcp/tools/solutions.py`: moved
+  "Environment Variable Definition" and "Environment Variable Value" from their previous
+  incorrect entries (372/373) to the authoritative component type codes 380/381, as verified
+  against the Microsoft Learn `solutioncomponent` EntityType reference. Entries for 372/373
+  are set to "Connector" matching the actual values in the map.
+
 ## [3.0.0] - 2026-06-19
 
 ### Added

@@ -23,6 +23,8 @@ import dataverse_mcp.tools.apps  # noqa: E402, F401
 import dataverse_mcp.tools.plugins  # noqa: E402, F401
 import dataverse_mcp.tools.connection_references  # noqa: E402, F401
 import dataverse_mcp.tools.plugin_registration  # noqa: E402, F401
+import dataverse_mcp.tools.environment_variables  # noqa: E402, F401
+import dataverse_mcp.tools.environment_variable_values  # noqa: E402, F401
 
 
 def main():

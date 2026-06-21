@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-06-22
+
 ### Added
 - Four environment variable definition tools in `src/dataverse_mcp/tools/environment_variables.py`:
   `dataverse_get_environment_variables` (read, joins definitions with their current value via

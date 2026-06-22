@@ -28,9 +28,11 @@ from dataverse_mcp.models import (
     BatchSetCloudFlowsStateInput,
     CreatePublisherInput,
     CreateSolutionInput,
+    GetSolutionHistoryInput,
     GetSolutionInput,
     ListCloudFlowsInput,
     ListSolutionComponentsInput,
+    ListSolutionHistoriesInput,
     ListSolutionsInput,
     RemoveComponentFromSolutionInput,
     SetCloudFlowStateInput,
@@ -99,6 +101,22 @@ _DEFAULT_CLOUD_FLOW_SELECT = [
     "ondemand",
     "createdon",
     "modifiedon",
+]
+
+_DEFAULT_SOLUTION_HISTORY_SELECT = [
+    "msdyn_solutionhistoryid",
+    "msdyn_name",
+    "msdyn_solutionversion",
+    "msdyn_operation",
+    "msdyn_suboperation",
+    "msdyn_starttime",
+    "msdyn_endtime",
+    "msdyn_result",
+    "msdyn_status",
+    "msdyn_errorcode",
+    "msdyn_exceptionmessage",
+    "msdyn_publishername",
+    "msdyn_ismanaged",
 ]
 
 _CLOUD_FLOW_COMPONENT_TYPE = 29
@@ -533,6 +551,130 @@ async def dataverse_list_solution_components(
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_list_solution_components")
+
+
+@mcp.tool(
+    name="dataverse_get_solution_history",
+    annotations={
+        "title": "Get Solution History",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_solution_history(
+    params: GetSolutionHistoryInput, ctx: Context
+) -> str:
+    """Retrieve a single solution history record by its GUID.
+
+    Returns import/upgrade/export operation details including result, timing,
+    error messages, and publisher information from msdyn_solutionhistories.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    select = params.select or _DEFAULT_SOLUTION_HISTORY_SELECT
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        url = (
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+            f"/msdyn_solutionhistories({params.solution_history_id})"
+            f"?$select={','.join(select)}"
+        )
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
+        resp.raise_for_status()
+        record = resp.json()
+        record.pop("@odata.context", None)
+        return json.dumps({"record": record})
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_solution_history")
+
+
+@mcp.tool(
+    name="dataverse_list_solution_histories",
+    annotations={
+        "title": "List Solution Histories",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_solution_histories(
+    params: ListSolutionHistoriesInput, ctx: Context
+) -> str:
+    """List solution history records from msdyn_solutionhistories.
+
+    Tracks import, upgrade, and export operations on solutions. Optionally
+    filter by solution_id or solution_unique_name (mutually exclusive).
+    solution_id is resolved to the solution unique name first, then used to
+    filter history records via msdyn_name. Omit both to list all.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    select = params.select or _DEFAULT_SOLUTION_HISTORY_SELECT
+    top = params.top
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+
+        odata_filter: str | None = None
+
+        if params.solution_id or params.solution_unique_name:
+            # Resolve the solution unique name. The msdyn_solutionhistory entity
+            # stores the solution unique name as a plain text column (msdyn_name),
+            # not a lookup. Filter by that name directly.
+            if params.solution_id:
+                solution = await _resolve_solution_record(
+                    app_ctx,
+                    base_url,
+                    headers,
+                    params.solution_id,
+                    None,
+                )
+                if solution is None:
+                    return json.dumps({
+                        "error": True,
+                        "message": _solution_not_found_message(params.solution_id, None),
+                    })
+                resolved_name = solution.get("uniquename")
+                if not resolved_name:
+                    return json.dumps({
+                        "error": True,
+                        "message": "Resolved solution is missing uniquename",
+                    })
+            else:
+                resolved_name = params.solution_unique_name
+
+            odata_filter = f"msdyn_name eq '{odata_quote(resolved_name)}'"
+
+        query_params: dict[str, str] = {
+            "$select": ",".join(select),
+            "$top": str(top),
+        }
+        if odata_filter:
+            query_params["$filter"] = odata_filter
+
+        url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/msdyn_solutionhistories"
+        full_url = f"{url}?{urlencode(query_params, safe='$,')}"
+
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
+        return finalize_response({
+            "records": records,
+            "count": len(records),
+            "has_more": len(records) >= top,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_solution_histories")
 
 
 @mcp.tool(

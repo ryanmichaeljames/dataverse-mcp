@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Twelve security administration tools in a new module
+  `src/dataverse_mcp/tools/security.py`. Read-only tools (registered via `@mcp.tool`):
+  `dataverse_list_security_roles` (list `roles` entity set, filter/select/top, count/has_more),
+  `dataverse_get_security_role` (single role by GUID → `{"record": {...}}`),
+  `dataverse_list_teams` (list `teams` entity set, filter/select/top),
+  `dataverse_get_team` (single team by GUID),
+  `dataverse_list_users` (list `systemusers` entity set, filter/select/top),
+  `dataverse_get_user` (single systemuser by GUID),
+  `dataverse_list_business_units` (list `businessunits` entity set, filter/select/top).
+  Write tools (registered via `@write_tool`, gated on `DATAVERSE_ALLOW_WRITE=true`):
+  `dataverse_assign_security_role` (POST `$ref` to `systemuserroles_association` or
+  `teamroles_association`), `dataverse_remove_security_role` (DELETE `$ref` from same),
+  `dataverse_add_team_members` (POST `$ref` to `teammembership_association`, per-user results),
+  `dataverse_remove_team_members` (DELETE `$ref` from `teammembership_association`),
+  `dataverse_set_user_state` (enable/disable a systemuser by PATCHing the writable
+  `isdisabled` boolean on `systemusers(<id>)`). Twelve matching input models
+  (`ListSecurityRolesInput`, `GetSecurityRoleInput`, `ListTeamsInput`, `GetTeamInput`,
+  `ListUsersInput`, `GetUserInput`, `ListBusinessUnitsInput`, `AssignSecurityRoleInput`,
+  `RemoveSecurityRoleInput`, `AddTeamMembersInput`, `RemoveTeamMembersInput`,
+  `SetUserStateInput`) added to `src/dataverse_mcp/models.py`. Module import added to
+  `src/dataverse_mcp/server.py`.
 - Two read-only solution history tools in `src/dataverse_mcp/tools/solutions.py`:
   `dataverse_get_solution_history` (retrieves a single `msdyn_solutionhistory` record by GUID,
   returns `{"record": {...}}`), `dataverse_list_solution_histories` (lists solution history records

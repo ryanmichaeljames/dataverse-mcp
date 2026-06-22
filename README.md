@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/dataverse-mcp)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, manage model-driven app forms, views, and apps, manage plug-in trace logging, and explore Power Platform environments.
+An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, manage model-driven app forms, views, and apps, administer security roles, teams, and users, manage plug-in trace logging, and explore Power Platform environments.
 
 Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** and works with Claude, GitHub Copilot, and any MCP-compatible client.
 
@@ -343,7 +343,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**121 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**143 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -364,6 +364,23 @@ The **Gate** column shows when a tool is registered:
 | `dataverse_get_entity_sets` | default | List OData EntitySet names from the service document |
 | `dataverse_retrieve_user_privileges` | default | List security privileges assigned to a user |
 | `dataverse_retrieve_principal_access` | default | Check a user's access rights to a specific record |
+
+### Security administration
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_security_roles` | default | List security roles, optional filter and pagination |
+| `dataverse_get_security_role` | default | Get one security role by GUID |
+| `dataverse_list_teams` | default | List teams, optional filter and pagination |
+| `dataverse_get_team` | default | Get one team by GUID |
+| `dataverse_list_users` | default | List system users, optional filter and pagination |
+| `dataverse_get_user` | default | Get one system user by GUID |
+| `dataverse_list_business_units` | default | List business units, optional filter and pagination |
+| `dataverse_assign_security_role` | write | Assign a security role to a user or team |
+| `dataverse_remove_security_role` | write | Remove a security role from a user or team |
+| `dataverse_add_team_members` | write | Add one or more users to a team |
+| `dataverse_remove_team_members` | write | Remove one or more users from a team |
+| `dataverse_set_user_state` | write | Enable or disable a system user (`isdisabled`) |
 
 ### Records & data
 
@@ -432,6 +449,8 @@ The **Gate** column shows when a tool is registered:
 | `dataverse_list_solutions` | default | List solutions, optional filter and pagination |
 | `dataverse_get_solution` | default | Get a solution by unique name or GUID |
 | `dataverse_list_solution_components` | default | List components in a solution, optional type filter |
+| `dataverse_get_solution_history` | default | Get one solution history record (import/upgrade/export operation) by GUID |
+| `dataverse_list_solution_histories` | default | List solution history records, optional filter by solution GUID or unique name |
 | `dataverse_create_publisher` | write | Create a publisher with customization prefixes |
 | `dataverse_update_publisher` | write | Update publisher fields by GUID |
 | `dataverse_create_solution` | write | Create a solution (publisher binding, version) |

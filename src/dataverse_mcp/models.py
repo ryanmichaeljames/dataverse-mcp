@@ -1829,6 +1829,373 @@ class RetrievePrincipalAccessInput(DataverseEnvironmentInput):
         return v
 
 
+class ListSecurityRolesInput(DataverseEnvironmentInput):
+    """Input for listing security roles in the Dataverse environment."""
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "OData $filter expression to narrow results. Use lowercase logical "
+            "names (e.g., \"ismanaged eq false\", "
+            "\"_businessunitid_value eq '<guid>'\")"
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to roleid, name, _businessunitid_value, "
+            "ismanaged, modifiedon."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of roles to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+class GetSecurityRoleInput(DataverseEnvironmentInput):
+    """Input for retrieving a single security role by GUID."""
+
+    role_id: str = Field(
+        ...,
+        description="GUID of the security role to retrieve.",
+        min_length=36,
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to roleid, name, _businessunitid_value, "
+            "ismanaged, modifiedon."
+        ),
+    )
+
+    @field_validator("role_id")
+    @classmethod
+    def validate_role_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListTeamsInput(DataverseEnvironmentInput):
+    """Input for listing teams in the Dataverse environment."""
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "OData $filter expression to narrow results "
+            "(e.g., \"teamtype eq 0\" for owner teams, "
+            "\"isdefault eq false\")."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to teamid, name, teamtype, "
+            "_businessunitid_value, isdefault, modifiedon."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of teams to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+class GetTeamInput(DataverseEnvironmentInput):
+    """Input for retrieving a single team by GUID."""
+
+    team_id: str = Field(
+        ...,
+        description="GUID of the team to retrieve.",
+        min_length=36,
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to teamid, name, teamtype, "
+            "_businessunitid_value, isdefault, modifiedon."
+        ),
+    )
+
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListUsersInput(DataverseEnvironmentInput):
+    """Input for listing system users in the Dataverse environment."""
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "OData $filter expression to narrow results "
+            "(e.g., \"isdisabled eq false\", "
+            "\"domainname eq 'user@contoso.com'\")."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to systemuserid, fullname, domainname, "
+            "internalemailaddress, isdisabled, _businessunitid_value."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of users to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+class GetUserInput(DataverseEnvironmentInput):
+    """Input for retrieving a single system user by GUID."""
+
+    user_id: str = Field(
+        ...,
+        description=(
+            "GUID of the system user to retrieve. "
+            "Use dataverse_whoami to get the current caller's UserId."
+        ),
+        min_length=36,
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to systemuserid, fullname, domainname, "
+            "internalemailaddress, isdisabled, _businessunitid_value."
+        ),
+    )
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListBusinessUnitsInput(DataverseEnvironmentInput):
+    """Input for listing business units in the Dataverse environment."""
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "OData $filter expression to narrow results "
+            "(e.g., \"isdisabled eq false\")."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to businessunitid, name, "
+            "_parentbusinessunitid_value, isdisabled, modifiedon."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of business units to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+class AssignSecurityRoleInput(DataverseEnvironmentInput):
+    """Input for assigning a security role to a user or team."""
+
+    role_id: str = Field(
+        ...,
+        description="GUID of the security role to assign.",
+        min_length=36,
+    )
+    user_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the system user to assign the role to. "
+            "Provide exactly one of user_id or team_id."
+        ),
+    )
+    team_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the team to assign the role to. "
+            "Provide exactly one of user_id or team_id."
+        ),
+    )
+
+    @field_validator("role_id")
+    @classmethod
+    def validate_role_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("user_id", "team_id")
+    @classmethod
+    def validate_optional_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_exactly_one_target(self) -> "AssignSecurityRoleInput":
+        has_user = self.user_id is not None
+        has_team = self.team_id is not None
+        if has_user and has_team:
+            raise ValueError("Provide either user_id or team_id, not both.")
+        if not has_user and not has_team:
+            raise ValueError("Either user_id or team_id must be provided.")
+        return self
+
+
+class RemoveSecurityRoleInput(DataverseEnvironmentInput):
+    """Input for removing a security role from a user or team."""
+
+    role_id: str = Field(
+        ...,
+        description="GUID of the security role to remove.",
+        min_length=36,
+    )
+    user_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the system user to remove the role from. "
+            "Provide exactly one of user_id or team_id."
+        ),
+    )
+    team_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the team to remove the role from. "
+            "Provide exactly one of user_id or team_id."
+        ),
+    )
+
+    @field_validator("role_id")
+    @classmethod
+    def validate_role_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("user_id", "team_id")
+    @classmethod
+    def validate_optional_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_exactly_one_target(self) -> "RemoveSecurityRoleInput":
+        has_user = self.user_id is not None
+        has_team = self.team_id is not None
+        if has_user and has_team:
+            raise ValueError("Provide either user_id or team_id, not both.")
+        if not has_user and not has_team:
+            raise ValueError("Either user_id or team_id must be provided.")
+        return self
+
+
+class AddTeamMembersInput(DataverseEnvironmentInput):
+    """Input for adding one or more system users to a team."""
+
+    team_id: str = Field(
+        ...,
+        description="GUID of the team to add members to.",
+        min_length=36,
+    )
+    user_ids: list[str] = Field(
+        ...,
+        description=(
+            "List of system user GUIDs to add as team members. "
+            "At least one user_id must be provided."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("user_ids")
+    @classmethod
+    def validate_user_guids(cls, v: list[str]) -> list[str]:
+        for uid in v:
+            if not _GUID_PATTERN.match(uid):
+                raise ValueError(f"Invalid GUID format: '{uid}'")
+        return v
+
+
+class RemoveTeamMembersInput(DataverseEnvironmentInput):
+    """Input for removing one or more system users from a team."""
+
+    team_id: str = Field(
+        ...,
+        description="GUID of the team to remove members from.",
+        min_length=36,
+    )
+    user_ids: list[str] = Field(
+        ...,
+        description=(
+            "List of system user GUIDs to remove from the team. "
+            "At least one user_id must be provided."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @field_validator("user_ids")
+    @classmethod
+    def validate_user_guids(cls, v: list[str]) -> list[str]:
+        for uid in v:
+            if not _GUID_PATTERN.match(uid):
+                raise ValueError(f"Invalid GUID format: '{uid}'")
+        return v
+
+
+class SetUserStateInput(DataverseEnvironmentInput):
+    """Input for enabling or disabling a Dataverse system user."""
+
+    user_id: str = Field(
+        ...,
+        description=(
+            "GUID of the system user to enable or disable. "
+            "Use dataverse_whoami to get the current caller's UserId."
+        ),
+        min_length=36,
+    )
+    disabled: bool = Field(
+        ...,
+        description=(
+            "True to disable the user (statecode=1, statuscode=2); "
+            "False to enable the user (statecode=0, statuscode=1)."
+        ),
+    )
+
+    @field_validator("user_id")
+    @classmethod
+    def validate_user_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------

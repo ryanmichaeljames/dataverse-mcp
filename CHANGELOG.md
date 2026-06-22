@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Two read-only solution history tools in `src/dataverse_mcp/tools/solutions.py`:
+  `dataverse_get_solution_history` (retrieves a single `msdyn_solutionhistory` record by GUID,
+  returns `{"record": {...}}`), `dataverse_list_solution_histories` (lists solution history records
+  with optional filtering by `solution_id` or `solution_unique_name`; when `solution_id` is given
+  it is resolved to `uniquename` via the `solutions` entity set first, then filtered via the
+  `msdyn_name` text column — both identifiers mutually exclusive, both omitted = list all;
+  returns `count`/`has_more`). A `_DEFAULT_SOLUTION_HISTORY_SELECT` constant is defined alongside
+  the other default-select tuples. Two matching input models (`GetSolutionHistoryInput`,
+  `ListSolutionHistoriesInput`) added to `src/dataverse_mcp/models.py`.
+
 ## [3.1.0] - 2026-06-22
 
 ### Added

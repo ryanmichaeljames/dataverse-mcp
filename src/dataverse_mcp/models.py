@@ -248,6 +248,79 @@ class _SolutionIdentifierInput(DataverseEnvironmentInput):
         return self
 
 
+class GetSolutionHistoryInput(DataverseEnvironmentInput):
+    """Input for retrieving a single solution history record by GUID."""
+
+    solution_history_id: str = Field(
+        ...,
+        description=(
+            "GUID of the msdyn_solutionhistory record to retrieve "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+        min_length=36,
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to a standard solution history projection."
+        ),
+    )
+
+    @field_validator("solution_history_id")
+    @classmethod
+    def validate_solution_history_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListSolutionHistoriesInput(DataverseEnvironmentInput):
+    """Input for listing solution history records with optional filtering."""
+
+    solution_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional GUID of the solution to filter history records by. "
+            "Provide either this or solution_unique_name, not both."
+        ),
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional unique name of the solution to filter history records by "
+            "(e.g., 'MyCustomApp'). "
+            "Provide either this or solution_id, not both."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to a standard solution history projection."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of solution history records to return.",
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("solution_id")
+    @classmethod
+    def validate_solution_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_solution_selector(self) -> "ListSolutionHistoriesInput":
+        if self.solution_id and self.solution_unique_name:
+            raise ValueError(
+                "Provide either solution_id or solution_unique_name, not both"
+            )
+        return self
+
+
 class CreateSolutionInput(DataverseEnvironmentInput):
     """Input for creating a solution."""
 

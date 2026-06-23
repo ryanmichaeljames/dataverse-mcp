@@ -7,7 +7,9 @@ from urllib.parse import urlencode
 
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("plugins")
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -73,7 +75,7 @@ _PLUGIN_TYPE_EXPAND = "plugintypeid($select=name,typename,assemblyname)"
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_plugin_type_statistics",
     annotations={
         "title": "List Plug-in Type Statistics",
@@ -140,7 +142,7 @@ async def dataverse_list_plugin_type_statistics(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_plugin_trace_log_setting",
     annotations={
         "title": "Get Plug-in Trace Log Setting",
@@ -265,7 +267,7 @@ async def dataverse_set_plugin_trace_log_setting(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_plugin_trace_logs",
     annotations={
         "title": "List Plug-in Trace Logs",

@@ -13,7 +13,9 @@ from urllib.parse import quote as _url_quote, urlencode
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("apps")
 from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
@@ -384,7 +386,7 @@ def _summarise_validation(vr: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_apps",
     annotations={
         "title": "List Model-Driven Apps",
@@ -451,7 +453,7 @@ async def dataverse_list_apps(params: ListAppsInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_app",
     annotations={
         "title": "Get Model-Driven App",
@@ -527,7 +529,7 @@ async def dataverse_get_app(params: GetAppInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_validate_app",
     annotations={
         "title": "Validate Model-Driven App",

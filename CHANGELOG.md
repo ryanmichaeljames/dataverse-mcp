@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Tool category gating via new `DATAVERSE_TOOLS` environment variable. When set to a
+  comma-separated list of category names, only those categories (plus `core`, which is
+  always registered) expose tools to the agent. When unset or empty, all categories
+  register (preserving current default behaviour). The 11 categories are: `core`,
+  `schema`, `solutions`, `flows`, `forms`, `views`, `apps`, `connections`, `variables`,
+  `plugins`, `security`. Gating composes with the existing `DATAVERSE_ALLOW_WRITE` and
+  `DATAVERSE_ALLOW_DELETE` flags: a tool registers only when its category is enabled AND
+  its write/delete flag (if applicable) is set. Unknown category names are logged as
+  warnings and ignored. Implemented via a `category_tools(category)` factory in
+  `src/dataverse_mcp/_app.py` that returns `(tool, write_tool, delete_tool)` decorators
+  scoped to the given category; all 13 tool modules now bind their decorators from this
+  factory. `solutions.py` binds two sets — `category_tools("solutions")` for solution and
+  publisher tools, `category_tools("flows")` for cloud-flow tools.
 - Twelve security administration tools in a new module
   `src/dataverse_mcp/tools/security.py`. Read-only tools (registered via `@mcp.tool`):
   `dataverse_list_security_roles` (list `roles` entity set, filter/select/top, count/has_more),

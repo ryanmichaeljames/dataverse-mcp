@@ -9,7 +9,9 @@ from urllib.parse import urlencode
 
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import delete_tool, mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("core")
 from dataverse_mcp.batch import build_batch_body, parse_batch_response
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
@@ -47,7 +49,7 @@ _GUID_RE = re.compile(
 _BATCH_TIMEOUT = 120.0
 
 
-@mcp.tool(
+@tool(
     name="dataverse_query_table",
     annotations={
         "title": "Query Table",
@@ -126,7 +128,7 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_query_table")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_record",
     annotations={
         "title": "Get Record",
@@ -312,7 +314,7 @@ async def dataverse_delete_record(params: DeleteRecordInput, ctx: Context) -> st
         return tool_error_response(e, "dataverse_delete_record")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_count_records",
     annotations={
         "title": "Count Records",
@@ -364,7 +366,7 @@ async def dataverse_count_records(params: CountRecordsInput, ctx: Context) -> st
         return tool_error_response(e, "dataverse_count_records")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_aggregate_table",
     annotations={
         "title": "Aggregate Table",
@@ -550,7 +552,7 @@ async def dataverse_merge_records(params: MergeRecordsInput, ctx: Context) -> st
         return tool_error_response(e, "dataverse_merge_records")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_execute_batch",
     annotations={
         "title": "Execute Batch",

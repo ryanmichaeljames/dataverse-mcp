@@ -9,7 +9,9 @@ from xml.etree import ElementTree as ET
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import delete_tool, mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("schema")
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -122,7 +124,7 @@ def _extract_action_bool(result: dict, result_key: str) -> bool:
     return _to_bool(raw)
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_tables",
     annotations={
         "title": "List Tables",
@@ -167,7 +169,7 @@ async def dataverse_list_tables(params: ListTablesInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_list_tables")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_table_metadata",
     annotations={
         "title": "Get Table Metadata",
@@ -220,7 +222,7 @@ async def dataverse_get_table_metadata(
         return tool_error_response(e, "dataverse_get_table_metadata")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_columns",
     annotations={
         "title": "List Columns",
@@ -269,7 +271,7 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_list_columns")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_column",
     annotations={
         "title": "Get Column",
@@ -379,7 +381,7 @@ async def _fetch_picklist_options(
     return _extract_options(payload.get("value", []))
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_choice_column_options",
     annotations={
         "title": "List Choice Column Options",
@@ -505,7 +507,7 @@ async def _fetch_relationships_httpx(
     return payload.get("value", [])
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_relationships",
     annotations={
         "title": "List Relationships",
@@ -574,7 +576,7 @@ async def dataverse_list_relationships(
         return tool_error_response(e, "dataverse_list_relationships")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_relationship",
     annotations={
         "title": "Get Relationship",
@@ -631,7 +633,7 @@ _DEFAULT_CHOICE_SELECT = ",".join([
 ])
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_choices",
     annotations={
         "title": "List Global Choices",
@@ -684,7 +686,7 @@ async def dataverse_list_choices(params: ListChoicesInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_list_choices")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_choice",
     annotations={
         "title": "Get Global Choice",
@@ -729,7 +731,7 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_get_choice")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_check_relationship_eligibility",
     annotations={
         "title": "Check Relationship Eligibility",

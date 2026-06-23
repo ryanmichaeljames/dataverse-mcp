@@ -10,7 +10,9 @@ from urllib.parse import urlencode
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("security")
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -83,7 +85,7 @@ _DEFAULT_BU_SELECT = [
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_security_roles",
     annotations={
         "title": "List Security Roles",
@@ -132,7 +134,7 @@ async def dataverse_list_security_roles(
         return tool_error_response(e, "dataverse_list_security_roles")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_security_role",
     annotations={
         "title": "Get Security Role",
@@ -177,7 +179,7 @@ async def dataverse_get_security_role(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_teams",
     annotations={
         "title": "List Teams",
@@ -224,7 +226,7 @@ async def dataverse_list_teams(params: ListTeamsInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_list_teams")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_team",
     annotations={
         "title": "Get Team",
@@ -267,7 +269,7 @@ async def dataverse_get_team(params: GetTeamInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_users",
     annotations={
         "title": "List Users",
@@ -315,7 +317,7 @@ async def dataverse_list_users(params: ListUsersInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_list_users")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_user",
     annotations={
         "title": "Get User",
@@ -359,7 +361,7 @@ async def dataverse_get_user(params: GetUserInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_business_units",
     annotations={
         "title": "List Business Units",

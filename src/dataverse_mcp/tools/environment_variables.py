@@ -7,7 +7,9 @@ from urllib.parse import urlencode
 
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import delete_tool, mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("variables")
 from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
@@ -231,7 +233,7 @@ async def _list_solution_env_var_definition_ids(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_environment_variables",
     annotations={
         "title": "Get Environment Variables",

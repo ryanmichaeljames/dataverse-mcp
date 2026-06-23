@@ -8,7 +8,9 @@ from typing import Any
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import mcp
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("core")
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -57,7 +59,7 @@ def _normalize_environment(raw_environment: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_environments",
     annotations={
         "title": "List Environments",
@@ -138,7 +140,7 @@ async def dataverse_list_environments(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_whoami",
     annotations={
         "title": "Who Am I",
@@ -177,7 +179,7 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_whoami")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_entity_sets",
     annotations={
         "title": "Get Entity Sets",
@@ -236,7 +238,7 @@ async def dataverse_get_entity_sets(params: GetEntitySetsInput, ctx: Context) ->
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_retrieve_user_privileges",
     annotations={
         "title": "Retrieve User Privileges",
@@ -279,7 +281,7 @@ async def dataverse_retrieve_user_privileges(
         return tool_error_response(e, "dataverse_retrieve_user_privileges")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_retrieve_principal_access",
     annotations={
         "title": "Retrieve Principal Access",

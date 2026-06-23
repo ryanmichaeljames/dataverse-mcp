@@ -19,7 +19,9 @@ from urllib.parse import urlencode
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import delete_tool, mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("plugins")
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -148,7 +150,7 @@ def _combine_filters(*filters: str | None) -> str | None:
 # ===========================================================================
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_plugin_assembly",
     annotations={
         "title": "Get Plug-in Assembly",
@@ -195,7 +197,7 @@ async def dataverse_get_plugin_assembly(
         return tool_error_response(e, "dataverse_get_plugin_assembly")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_plugin_assemblies",
     annotations={
         "title": "List Plug-in Assemblies",
@@ -419,7 +421,7 @@ async def dataverse_delete_plugin_assembly(
 # ===========================================================================
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_plugin_package",
     annotations={
         "title": "Get Plug-in Package",
@@ -466,7 +468,7 @@ async def dataverse_get_plugin_package(
         return tool_error_response(e, "dataverse_get_plugin_package")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_plugin_packages",
     annotations={
         "title": "List Plug-in Packages",
@@ -670,7 +672,7 @@ async def dataverse_delete_plugin_package(
 # ===========================================================================
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_plugin_type",
     annotations={
         "title": "Get Plug-in Type",
@@ -717,7 +719,7 @@ async def dataverse_get_plugin_type(
         return tool_error_response(e, "dataverse_get_plugin_type")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_plugin_types",
     annotations={
         "title": "List Plug-in Types",
@@ -935,7 +937,7 @@ async def dataverse_delete_plugin_type(
 # ===========================================================================
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_sdk_message",
     annotations={
         "title": "Get SDK Message",
@@ -1003,7 +1005,7 @@ async def dataverse_get_sdk_message(
         return tool_error_response(e, "dataverse_get_sdk_message")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_sdk_messages",
     annotations={
         "title": "List SDK Messages",
@@ -1067,7 +1069,7 @@ async def dataverse_list_sdk_messages(
 # ===========================================================================
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_sdk_message_filter",
     annotations={
         "title": "Get SDK Message Filter",
@@ -1142,7 +1144,7 @@ async def dataverse_get_sdk_message_filter(
         return tool_error_response(e, "dataverse_get_sdk_message_filter")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_sdk_message_filters",
     annotations={
         "title": "List SDK Message Filters",
@@ -1210,7 +1212,7 @@ async def dataverse_list_sdk_message_filters(
 # ===========================================================================
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_plugin_step",
     annotations={
         "title": "Get Plug-in Step",
@@ -1257,7 +1259,7 @@ async def dataverse_get_plugin_step(
         return tool_error_response(e, "dataverse_get_plugin_step")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_plugin_steps",
     annotations={
         "title": "List Plug-in Steps",
@@ -1494,7 +1496,7 @@ async def dataverse_delete_plugin_step(
 # ===========================================================================
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_plugin_step_image",
     annotations={
         "title": "Get Plug-in Step Image",
@@ -1541,7 +1543,7 @@ async def dataverse_get_plugin_step_image(
         return tool_error_response(e, "dataverse_get_plugin_step_image")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_plugin_step_images",
     annotations={
         "title": "List Plug-in Step Images",

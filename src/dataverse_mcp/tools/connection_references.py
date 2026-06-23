@@ -6,7 +6,9 @@ from urllib.parse import urlencode
 
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import delete_tool, mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("connections")
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -53,7 +55,7 @@ def _strip_odata(record: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_connection_references",
     annotations={
         "title": "List Connection References",
@@ -120,7 +122,7 @@ async def dataverse_list_connection_references(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_connection_reference",
     annotations={
         "title": "Get Connection Reference",

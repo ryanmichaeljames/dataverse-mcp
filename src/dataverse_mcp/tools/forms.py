@@ -16,7 +16,9 @@ from defusedxml.common import DefusedXmlException
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("forms")
 from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
@@ -534,7 +536,7 @@ async def _resolve_column_info(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_forms",
     annotations={
         "title": "List Forms",
@@ -605,7 +607,7 @@ async def dataverse_list_forms(params: ListFormsInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_form",
     annotations={
         "title": "Get Form",
@@ -818,7 +820,7 @@ async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) 
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_validate_formxml",
     annotations={
         "title": "Validate Form XML",

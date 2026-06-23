@@ -15,7 +15,9 @@ from defusedxml.common import DefusedXmlException
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("views")
 from dataverse_mcp.client import (
     AppContext,
     _DATAVERSE_API_VERSION,
@@ -560,7 +562,7 @@ async def _patch_view(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_views",
     annotations={
         "title": "List Views",
@@ -632,7 +634,7 @@ async def dataverse_list_views(params: ListViewsInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_view",
     annotations={
         "title": "Get View",
@@ -698,7 +700,7 @@ async def dataverse_get_view(params: GetViewInput, ctx: Context) -> str:
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(
+@tool(
     name="dataverse_validate_view",
     annotations={
         "title": "Validate View",

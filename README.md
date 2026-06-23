@@ -102,6 +102,7 @@ Set these in the `env` block of your MCP server entry. This project does not use
 | `DATAVERSE_AUTH_TYPE` | `interactive` | Authentication method: `interactive` (recommended) or `azure_cli` |
 | `DATAVERSE_ALLOW_WRITE` | `false` | Set to `true` to register create, update, associate, merge, and schema mutation tools |
 | `DATAVERSE_ALLOW_DELETE` | `false` | Set to `true` to register delete and disassociate tools |
+| `DATAVERSE_TOOLS` | — | Comma-separated list of tool categories to register (e.g., `core,schema,security`). When unset or empty, all categories register. `core` is always registered regardless. Unknown category names are logged as warnings and ignored. See [Tool categories](#tool-categories) below. |
 | `DATAVERSE_WHITELIST` | — | Comma-separated list of allowed environment hostnames (e.g., `yourorg.crm.dynamics.com,yourorg-uat.crm.dynamics.com`). When set, tool calls to any environment not on the list are rejected. When empty, **all** environments are permitted — see the warning below |
 | `DATAVERSE_AUTH_TIMEOUT_SECONDS` | `30` | Maximum seconds to wait for a credential acquisition (e.g., `az login` token fetch) before failing with an actionable auth error. Increase when operating in slow-network or MFA-heavy environments. Invalid or non-positive values fall back to `30` |
 | `DATAVERSE_TOKEN_CACHE_PERSIST` | `true` | Controls whether `interactive` auth persists its MSAL token cache to disk so the server survives restarts without a new browser prompt (while a refresh token is valid). Set to `false` to disable and revert to in-memory-only behaviour. Invalid values fall back to `true` with a logged warning. Has no effect on `azure_cli` auth. |
@@ -354,6 +355,26 @@ The **Gate** column shows when a tool is registered:
 | `delete` | Registered only when `DATAVERSE_ALLOW_DELETE=true`. |
 
 > `dataverse_execute_batch` is `default` but rejects non-GET operations unless `DATAVERSE_ALLOW_WRITE=true`.
+
+### Tool categories
+
+Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. This shrinks the visible tool list and reduces token overhead.
+
+| Category | Tools | Description |
+|----------|-------|-------------|
+| `core` | 16 | Environment introspection + all record CRUD (always registered) |
+| `schema` | 29 | Table/column/relationship/choice metadata |
+| `solutions` | 12 | Solution and publisher management, solution components and history |
+| `flows` | 5 | Cloud flow listing and enable/disable |
+| `forms` | 6 | Model-driven form management |
+| `views` | 7 | Saved query / view management |
+| `apps` | 10 | Canvas and model-driven app management |
+| `connections` | 5 | Connection reference management |
+| `variables` | 8 | Environment variable definitions and values |
+| `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
+| `security` | 12 | Security roles, teams, users, business units |
+
+`core` is **always** registered even when not listed. When `DATAVERSE_TOOLS` is unset or empty, all categories register (current default behaviour). Category gating composes with `DATAVERSE_ALLOW_WRITE` and `DATAVERSE_ALLOW_DELETE`: a tool registers only when its category is enabled AND its write/delete flag (if any) is set.
 
 ### Environment & identity
 

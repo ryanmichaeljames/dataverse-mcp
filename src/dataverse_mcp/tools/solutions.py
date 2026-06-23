@@ -8,7 +8,10 @@ from urllib.parse import urlencode
 import httpx
 from mcp.server.fastmcp import Context
 
-from dataverse_mcp._app import delete_tool, mcp, write_tool
+from dataverse_mcp._app import category_tools
+
+tool, write_tool, delete_tool = category_tools("solutions")
+flow_tool, flow_write_tool, flow_delete_tool = category_tools("flows")
 from dataverse_mcp.batch import build_batch_body, parse_batch_response
 from dataverse_mcp.client import (
     AppContext,
@@ -398,7 +401,7 @@ def _solution_not_found_message(
     return f"Solution not found: '{identifier}'"
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_solutions",
     annotations={
         "title": "List Solutions",
@@ -444,7 +447,7 @@ async def dataverse_list_solutions(params: ListSolutionsInput, ctx: Context) -> 
         return tool_error_response(e, "dataverse_list_solutions")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_solution",
     annotations={
         "title": "Get Solution",
@@ -503,7 +506,7 @@ async def dataverse_get_solution(params: GetSolutionInput, ctx: Context) -> str:
         return tool_error_response(e, "dataverse_get_solution")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_solution_components",
     annotations={
         "title": "List Solution Components",
@@ -553,7 +556,7 @@ async def dataverse_list_solution_components(
         return tool_error_response(e, "dataverse_list_solution_components")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_get_solution_history",
     annotations={
         "title": "Get Solution History",
@@ -595,7 +598,7 @@ async def dataverse_get_solution_history(
         return tool_error_response(e, "dataverse_get_solution_history")
 
 
-@mcp.tool(
+@tool(
     name="dataverse_list_solution_histories",
     annotations={
         "title": "List Solution Histories",
@@ -677,7 +680,7 @@ async def dataverse_list_solution_histories(
         return tool_error_response(e, "dataverse_list_solution_histories")
 
 
-@mcp.tool(
+@flow_tool(
     name="dataverse_get_cloud_flows",
     annotations={
         "title": "Get Cloud Flows",
@@ -771,7 +774,7 @@ async def dataverse_get_cloud_flows(params: ListCloudFlowsInput, ctx: Context) -
         return tool_error_response(e, "dataverse_get_cloud_flows")
 
 
-@write_tool(
+@flow_write_tool(
     name="dataverse_enable_cloud_flow",
     annotations={
         "title": "Enable Cloud Flow",
@@ -811,7 +814,7 @@ async def dataverse_enable_cloud_flow(
         return tool_error_response(e, "dataverse_enable_cloud_flow")
 
 
-@write_tool(
+@flow_write_tool(
     name="dataverse_disable_cloud_flow",
     annotations={
         "title": "Disable Cloud Flow",
@@ -851,7 +854,7 @@ async def dataverse_disable_cloud_flow(
         return tool_error_response(e, "dataverse_disable_cloud_flow")
 
 
-@write_tool(
+@flow_write_tool(
     name="dataverse_batch_enable_cloud_flows",
     annotations={
         "title": "Batch Enable Cloud Flows",
@@ -891,7 +894,7 @@ async def dataverse_batch_enable_cloud_flows(
         return tool_error_response(e, "dataverse_batch_enable_cloud_flows")
 
 
-@write_tool(
+@flow_write_tool(
     name="dataverse_batch_disable_cloud_flows",
     annotations={
         "title": "Batch Disable Cloud Flows",

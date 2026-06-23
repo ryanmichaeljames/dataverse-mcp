@@ -862,6 +862,40 @@ class QueryTableInput(DataverseEnvironmentInput):
     )
 
 
+class ExecuteFetchXmlInput(DataverseEnvironmentInput):
+    """Input for executing a FetchXML query against a Dataverse table."""
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "Entity set (collection) name matching the FetchXML root entity, "
+            "e.g. 'accounts'. Use dataverse_get_entity_sets to discover the correct name."
+        ),
+    )
+    fetch_xml: str = Field(
+        ...,
+        description="The FetchXML query string",
+    )
+    include_formatted_values: bool = Field(
+        default=False,
+        description=(
+            "When True, includes formatted (display) values for lookups, option sets, etc. "
+            "Formatted values appear as "
+            "'fieldname@OData.Community.Display.V1.FormattedValue' in each record."
+        ),
+    )
+
+    @field_validator("fetch_xml")
+    @classmethod
+    def validate_fetch_xml(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped.lower().startswith("<fetch"):
+            raise ValueError(
+                "fetch_xml must be a valid FetchXML string starting with '<fetch ...>'"
+            )
+        return stripped
+
+
 class GetRecordInput(DataverseEnvironmentInput):
     """Input for retrieving a single record by its ID."""
 

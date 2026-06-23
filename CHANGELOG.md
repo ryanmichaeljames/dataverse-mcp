@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `dataverse_execute_fetchxml` read-only tool in `src/dataverse_mcp/tools/tables.py` (`core` category).
+  Executes a FetchXML query via `GET {entity_set}?fetchXml=<encoded>` and returns `records`, `count`,
+  `has_more` (from `@Microsoft.Dynamics.CRM.morerecords`), `paging_cookie` (from
+  `@Microsoft.Dynamics.CRM.fetchxmlpagingcookie`, when present), and `total_record_count` (from
+  `@Microsoft.Dynamics.CRM.totalrecordcount`, when present and non-negative). Supports
+  `include_formatted_values` via `Prefer: odata.include-annotations` header. FetchXML uses paging
+  cookies rather than `@odata.nextLink`; this tool returns one page plus the paging metadata so
+  callers can iterate. `ExecuteFetchXmlInput` added to `src/dataverse_mcp/models.py` with a
+  `field_validator` that rejects input not starting with `<fetch`. Total tool count: 148 → 149.
+
 - Five solution ALM tools in `src/dataverse_mcp/tools/solutions.py` (all `solutions` category):
   `dataverse_export_solution` (read, `@tool`) — POST `ExportSolution`; optional `output_path` writes the
   decoded .zip to a local path and returns metadata only; inline base64 returned when under ~3 MB, structured

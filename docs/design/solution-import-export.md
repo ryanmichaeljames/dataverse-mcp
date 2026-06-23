@@ -75,11 +75,12 @@ Source: <https://learn.microsoft.com/en-us/power-apps/developer/data-platform/re
   caller explicitly opts in (e.g. `include_data=true` on `get_import_job`), and run it through
   `finalize_response` so an oversized XML returns the standard "too large" error rather than flooding.
 
-### CloneAsPatch (action **bound to the solution entity**)
+### CloneAsPatch (UNBOUND action)
 Source: <https://learn.microsoft.com/en-us/power-apps/developer/data-platform/webapi/reference/cloneaspatch>
-- **Bound** action — the URL is `solutions(<solutionid>)/Microsoft.Dynamics.CRM.CloneAsPatch`, *not* a
-  top-level `/CloneAsPatch`. Resolve the parent solution to its GUID first (reuse
-  `_resolve_solution_record`).
+- **Unbound** action — POST to top-level `/CloneAsPatch`. (VERIFIED LIVE: the docs list `solution`
+  under "Entities", but the bound URL `solutions(<id>)/Microsoft.Dynamics.CRM.CloneAsPatch` returns
+  HTTP 404. The parent is identified by `ParentSolutionUniqueName` in the body.) Resolve the parent
+  to its unique name first (reuse `_resolve_solution_record`, accepting GUID or unique name).
 - Params: `ParentSolutionUniqueName` (Edm.String, required), `DisplayName` (Edm.String, required),
   `VersionNumber` (Edm.String, required — must share the parent's major.minor and be greater).
 - Response: `CloneAsPatchResponse` with one field **`SolutionId`** (Edm.Guid).
@@ -143,8 +144,9 @@ Source: <https://learn.microsoft.com/en-us/power-platform/alm/solution-async>
 ### 3. `dataverse_get_import_job` — gate: `@tool`
 - **Input `GetImportJobInput(DataverseEnvironmentInput)`:** `import_job_id: str` (GUID, required, validated);
   `include_data: bool = False`.
-- **Calls:** `GET /importjobs(<id>)?$select=importjobid,solutionname,progress,startedon,completedon,createdon,name,_solutionid_value`
-  (and `,data` only when `include_data`). On 404 return the standard not-found error.
+- **Calls:** `GET /importjobs(<id>)?$select=importjobid,solutionname,progress,startedon,completedon,createdon,name,solutionid`
+  (and `,data` only when `include_data`). On 404 return the standard not-found error. (NOTE: the field is
+  `solutionid` — a Uniqueidentifier attribute, NOT a `_solutionid_value` lookup. Live-verified.)
 - **Response:** `{"record": {...}, "completed": <completedon is not null>, "progress": <float>}` via
   `finalize_response` (so a large `data` XML is guarded). This is the poll endpoint that closes the async
   loop.
@@ -161,9 +163,8 @@ Source: <https://learn.microsoft.com/en-us/power-platform/alm/solution-async>
 - **Input `CloneSolutionAsPatchInput(_SolutionIdentifierInput)`:** inherits the existing exactly-one-of
   `solution_id`/`solution_unique_name`; adds `display_name: str` (required), `version_number: str`
   (required).
-- **Calls:** resolve parent → `solutionid` and `uniquename` via `_resolve_solution_record`; `POST`
-  `solutions(<solutionid>)/Microsoft.Dynamics.CRM.CloneAsPatch` (bound) with
-  `{ParentSolutionUniqueName, DisplayName, VersionNumber}`.
+- **Calls:** resolve parent → `uniquename` via `_resolve_solution_record`; `POST` unbound
+  `/CloneAsPatch` with `{ParentSolutionUniqueName, DisplayName, VersionNumber}`.
 - **Response:** `{"cloned": true, "patch_solution_id": <SolutionId>, "parent_solution_unique_name": ...,
   "version_number": ...}`.
 

@@ -10,7 +10,7 @@ Coverage:
 - dataverse_get_import_job: default excludes data column, include_data=True adds it,
   404 → structured error.
 - dataverse_list_import_jobs: correct $filter, count/has_more.
-- dataverse_clone_solution_as_patch: resolves parent + posts bound action.
+- dataverse_clone_solution_as_patch: resolves parent + posts unbound action.
 
 Mocking strategy: patch build_headers to return {} and replace app_ctx.http_client
 with an AsyncMock whose .request method returns a crafted httpx.Response — matching
@@ -535,7 +535,7 @@ async def test_get_import_job_default_no_data(mock_headers):
         "completedon": None,
         "createdon": "2026-01-01T00:00:00Z",
         "name": "Import",
-        "_solutionid_value": _SOLUTION_ID,
+        "solutionid": _SOLUTION_ID,
     }
     get_response = _make_response(200, job_record)
     app_ctx = _make_app_ctx()
@@ -670,14 +670,14 @@ async def test_list_import_jobs_has_more(mock_paginate, mock_headers):
 
 
 # ---------------------------------------------------------------------------
-# dataverse_clone_solution_as_patch — resolves parent + posts bound action
+# dataverse_clone_solution_as_patch — resolves parent + posts unbound action
 # ---------------------------------------------------------------------------
 
 
 @patch("dataverse_mcp.tools.solutions.build_headers", new_callable=AsyncMock, return_value={})
 @patch("dataverse_mcp.tools.solutions._resolve_solution_record", new_callable=AsyncMock)
 async def test_clone_solution_as_patch_success(mock_resolve, mock_headers):
-    """clone resolves the parent solution then POSTs to the bound CloneAsPatch action."""
+    """clone resolves the parent solution then POSTs to the unbound CloneAsPatch action."""
     mock_resolve.return_value = {
         "solutionid": _SOLUTION_ID,
         "uniquename": "ParentSolution",
@@ -700,11 +700,13 @@ async def test_clone_solution_as_patch_success(mock_resolve, mock_headers):
     assert result["parent_solution_unique_name"] == "ParentSolution"
     assert result["version_number"] == "1.0.0.2"
 
-    # Verify bound action URL was used.
+    # Verify the unbound CloneAsPatch action URL was used with the parent name in the body.
     call_args = app_ctx.http_client.request.call_args
     url = call_args.args[1] if len(call_args.args) > 1 else call_args.kwargs.get("url", "")
-    assert "Microsoft.Dynamics.CRM.CloneAsPatch" in url
-    assert _SOLUTION_ID in url
+    assert url.endswith("/CloneAsPatch")
+    assert "/solutions(" not in url
+    body = call_args.kwargs.get("json", {})
+    assert body["ParentSolutionUniqueName"] == "ParentSolution"
 
 
 # ---------------------------------------------------------------------------

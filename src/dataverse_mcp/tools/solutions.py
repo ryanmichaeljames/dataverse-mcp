@@ -156,7 +156,7 @@ _DEFAULT_IMPORT_JOB_SELECT = [
     "completedon",
     "createdon",
     "name",
-    "_solutionid_value",
+    "solutionid",
 ]
 
 
@@ -1736,11 +1736,12 @@ async def dataverse_list_import_jobs(params: ListImportJobsInput, ctx: Context) 
 async def dataverse_clone_solution_as_patch(
     params: CloneSolutionAsPatchInput, ctx: Context
 ) -> str:
-    """Clone a solution as a patch via the bound CloneAsPatch action.
+    """Clone a solution as a patch via the unbound CloneAsPatch action.
 
-    Resolves the parent solution to its GUID first, then POSTs to
-    solutions(<solutionid>)/Microsoft.Dynamics.CRM.CloneAsPatch.
-    Returns the new patch solution GUID. Requires DATAVERSE_ALLOW_WRITE=true.
+    Resolves the parent solution to its unique name (accepting either a GUID
+    or unique name), then POSTs to the unbound /CloneAsPatch action with
+    ParentSolutionUniqueName in the body. Returns the new patch solution GUID.
+    Requires DATAVERSE_ALLOW_WRITE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1765,20 +1766,16 @@ async def dataverse_clone_solution_as_patch(
                 ),
             })
 
-        parent_solution_id = solution.get("solutionid")
-        parent_unique_name = solution.get("uniquename")
-        if not parent_solution_id:
+        parent_unique_name = solution.get("uniquename") or params.solution_unique_name
+        if not parent_unique_name:
             return json.dumps({
                 "error": True,
-                "message": "Resolved solution is missing solutionid",
+                "message": "Resolved solution is missing uniquename",
             })
 
-        action_url = (
-            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-            f"/solutions({parent_solution_id})/Microsoft.Dynamics.CRM.CloneAsPatch"
-        )
+        action_url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/CloneAsPatch"
         body = {
-            "ParentSolutionUniqueName": parent_unique_name or params.solution_unique_name,
+            "ParentSolutionUniqueName": parent_unique_name,
             "DisplayName": params.display_name,
             "VersionNumber": params.version_number,
         }

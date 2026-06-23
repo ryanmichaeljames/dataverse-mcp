@@ -8,6 +8,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Five solution ALM tools in `src/dataverse_mcp/tools/solutions.py` (all `solutions` category):
+  `dataverse_export_solution` (read, `@tool`) — POST `ExportSolution`; optional `output_path` writes the
+  decoded .zip to a local path and returns metadata only; inline base64 returned when under ~3 MB, structured
+  error otherwise; `_SOLUTION_JOB_TIMEOUT = 600.0` and `_INLINE_FILE_MAX_BYTES = 3_000_000` constants added.
+  `dataverse_import_solution` (write, `@write_tool`) — POST `ImportSolutionAsync`; accepts inline base64
+  (`customization_file`) XOR local zip path (`input_path`); generates `ImportJobId` GUID when not supplied;
+  returns `import_job_id`, `async_operation_id`, `import_job_key`.
+  `dataverse_get_import_job` (read, `@tool`) — GET `importjobs(<id>)`; excludes the large `data` XML column
+  by default; `include_data=true` fetches it; returns `progress` and `completed` alongside the record.
+  `dataverse_list_import_jobs` (read, `@tool`) — GET `importjobs`; optional filter by `solution_name`;
+  ordered by `createdon desc`; count/has_more.
+  `dataverse_clone_solution_as_patch` (write, `@write_tool`) — POST bound action
+  `solutions(<id>)/Microsoft.Dynamics.CRM.CloneAsPatch`; resolves parent solution via `_resolve_solution_record`;
+  returns `patch_solution_id`.
+  Five matching input models added to `src/dataverse_mcp/models.py`: `ExportSolutionInput`,
+  `ImportSolutionInput` (exactly-one-of validator for `customization_file`/`input_path`),
+  `GetImportJobInput`, `ListImportJobsInput`, `CloneSolutionAsPatchInput`.
+  This introduces the first local filesystem I/O in tool code: export writes the decoded zip when `output_path`
+  is given; import reads a zip when `input_path` is given. All OS errors (PermissionError, FileNotFoundError,
+  IsADirectoryError) are mapped to the standard `{"error": true, ...}` contract. Total tool count: 143 → 148.
+
 - Tool category gating via new `DATAVERSE_TOOLS` environment variable. When set to a
   comma-separated list of category names, only those categories (plus `core`, which is
   always registered) expose tools to the agent. When unset or empty, all categories

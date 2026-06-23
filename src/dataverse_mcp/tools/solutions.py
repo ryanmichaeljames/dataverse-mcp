@@ -1,7 +1,10 @@
 """Solution-related tools for the Dataverse MCP server."""
 
+import base64
 import json
 import logging
+import uuid
+from pathlib import Path
 from types import SimpleNamespace
 from urllib.parse import urlencode
 
@@ -29,11 +32,16 @@ from dataverse_mcp.client import (
 from dataverse_mcp.models import (
     AddComponentToSolutionInput,
     BatchSetCloudFlowsStateInput,
+    CloneSolutionAsPatchInput,
     CreatePublisherInput,
     CreateSolutionInput,
+    ExportSolutionInput,
+    GetImportJobInput,
     GetSolutionHistoryInput,
     GetSolutionInput,
+    ImportSolutionInput,
     ListCloudFlowsInput,
+    ListImportJobsInput,
     ListSolutionComponentsInput,
     ListSolutionHistoriesInput,
     ListSolutionsInput,
@@ -128,6 +136,28 @@ _CLOUD_FLOW_CATEGORY_FILTER = "category eq 5"
 # $batch requests and workflow state transitions need longer than the client default.
 _BATCH_TIMEOUT = 120.0
 _FLOW_STATE_TIMEOUT = 120.0
+
+# ExportSolution and ImportSolutionAsync are slow operations; 600 s keeps us
+# from timing out on large solutions while costing nothing on fast calls.
+_SOLUTION_JOB_TIMEOUT = 600.0
+
+# Base64 payload length above which inline return/accept is refused.
+# Decoded zip ≈ 0.75 × this — stays well under the 5 MB finalize_response cap
+# with the JSON envelope overhead.
+_INLINE_FILE_MAX_BYTES = 3_000_000
+
+# Default $select for importjob queries — deliberately excludes the 'data' column
+# (MaxLength ~1 GB result XML) to keep responses small.
+_DEFAULT_IMPORT_JOB_SELECT = [
+    "importjobid",
+    "solutionname",
+    "progress",
+    "startedon",
+    "completedon",
+    "createdon",
+    "name",
+    "solutionid",
+]
 
 
 def _combine_filters(*filters: str | None) -> str | None:
@@ -1341,3 +1371,429 @@ async def dataverse_remove_component_from_solution(
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_remove_component_from_solution")
+
+
+# ---------------------------------------------------------------------------
+# File I/O helpers (first filesystem access in this tool module)
+# ---------------------------------------------------------------------------
+
+
+def _decode_and_write_zip(b64_data: str, output_path: str) -> tuple[Path, int]:
+    """Decode a base64 string and write the bytes to *output_path*.
+
+    Creates the parent directory if it does not exist.
+
+    Returns (resolved_path, size_bytes).
+
+    Raises:
+        ValueError: When output_path is empty.
+        OSError: On any OS-level I/O failure (PermissionError, etc.).
+    """
+    if not output_path or not output_path.strip():
+        raise ValueError("output_path must be a non-empty string")
+    target = Path(output_path).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = base64.b64decode(b64_data)
+    target.write_bytes(data)
+    return target, len(data)
+
+
+def _read_and_encode_zip(input_path: str) -> str:
+    """Read a .zip file from *input_path* and return its base64-encoded content.
+
+    Raises:
+        ValueError: When input_path is empty.
+        FileNotFoundError: When the file does not exist.
+        OSError: On any other OS-level I/O failure.
+    """
+    if not input_path or not input_path.strip():
+        raise ValueError("input_path must be a non-empty string")
+    source = Path(input_path).expanduser().resolve()
+    data = source.read_bytes()
+    return base64.b64encode(data).decode("ascii")
+
+
+# ---------------------------------------------------------------------------
+# ALM tools: export / import / poll / list / clone
+# ---------------------------------------------------------------------------
+
+
+@tool(
+    name="dataverse_export_solution",
+    annotations={
+        "title": "Export Solution",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_export_solution(params: ExportSolutionInput, ctx: Context) -> str:
+    """Export a Dataverse solution as a base64-encoded zip.
+
+    Calls the ExportSolution unbound action. Large solutions (>~3 MB base64)
+    must be saved to disk via output_path — supply a local filesystem path and
+    the server writes the decoded .zip there, returning metadata only (no base64
+    in the response). Small solutions are returned inline when output_path is
+    omitted. This tool is read-only for the org (no mutations); writing a local
+    .zip when output_path is set is local I/O only and does not require
+    DATAVERSE_ALLOW_WRITE.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    body: dict = {
+        "SolutionName": params.solution_name,
+        "Managed": params.managed,
+    }
+    _optional_export_flags = {
+        "ExportGeneralSettings": params.export_general_settings,
+        "ExportCustomizationSettings": params.export_customization_settings,
+        "ExportEmailTrackingSettings": params.export_email_tracking_settings,
+        "ExportAutoNumberingSettings": params.export_auto_numbering_settings,
+        "ExportCalendarSettings": params.export_calendar_settings,
+        "ExportRelationshipRoles": params.export_relationship_roles,
+        "ExportIsvConfig": params.export_isv_config,
+        "ExportSales": params.export_sales,
+        "ExportMarketingSettings": params.export_marketing_settings,
+        "ExportOutlookSynchronizationSettings": params.export_outlook_synchronization_settings,
+    }
+    for api_key, value in _optional_export_flags.items():
+        if value is not None:
+            body[api_key] = value
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/ExportSolution"
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            json=body,
+            headers=headers,
+            timeout=_SOLUTION_JOB_TIMEOUT,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        b64_file = result.get("ExportSolutionFile", "")
+
+        # --- output_path provided: write to disk, return metadata only ---
+        if params.output_path:
+            try:
+                resolved_path, size_bytes = _decode_and_write_zip(b64_file, params.output_path)
+            except (PermissionError, FileNotFoundError, IsADirectoryError, OSError) as io_err:
+                logger.error("Export write failed for '%s': %s", params.output_path, io_err)
+                return json.dumps({
+                    "error": True,
+                    "message": f"Failed to write solution zip to '{params.output_path}': {io_err}",
+                })
+            except Exception as io_err:
+                logger.error("Export write unexpected error: %s", io_err)
+                return json.dumps({
+                    "error": True,
+                    "message": f"Unexpected error writing solution zip: {io_err}",
+                })
+            return json.dumps({
+                "written": True,
+                "path": str(resolved_path),
+                "size_bytes": size_bytes,
+                "solution": params.solution_name,
+                "managed": params.managed,
+            })
+
+        # --- no output_path: inline if under threshold, error if over ---
+        b64_len = len(b64_file)
+        if b64_len > _INLINE_FILE_MAX_BYTES:
+            size_mb = b64_len / 1_000_000
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Exported solution is {size_mb:.1f} MB (base64); "
+                    "supply output_path to write it to disk instead of returning it inline."
+                ),
+            })
+
+        return finalize_response({
+            "solution_file_base64": b64_file,
+            "size_bytes": b64_len,
+            "solution": params.solution_name,
+            "managed": params.managed,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_export_solution")
+
+
+@write_tool(
+    name="dataverse_import_solution",
+    annotations={
+        "title": "Import Solution",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_import_solution(params: ImportSolutionInput, ctx: Context) -> str:
+    """Import a Dataverse solution asynchronously via ImportSolutionAsync.
+
+    Accepts the solution zip as inline base64 (customization_file) or a local
+    filesystem path (input_path). Returns import_job_id, async_operation_id, and
+    import_job_key immediately — poll dataverse_get_import_job with import_job_id
+    to track progress and retrieve failure details. Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # Resolve the base64 payload from inline or local file.
+    if params.input_path:
+        try:
+            customization_b64 = _read_and_encode_zip(params.input_path)
+        except (FileNotFoundError, PermissionError, IsADirectoryError, OSError) as io_err:
+            logger.error("Import read failed for '%s': %s", params.input_path, io_err)
+            return json.dumps({
+                "error": True,
+                "message": f"Failed to read solution zip from '{params.input_path}': {io_err}",
+            })
+        except Exception as io_err:
+            logger.error("Import read unexpected error: %s", io_err)
+            return json.dumps({
+                "error": True,
+                "message": f"Unexpected error reading solution zip: {io_err}",
+            })
+    else:
+        # Inline base64 — guard against oversized payloads.
+        customization_b64 = params.customization_file or ""
+        if len(customization_b64) > _INLINE_FILE_MAX_BYTES:
+            size_mb = len(customization_b64) / 1_000_000
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Inline customization_file is {size_mb:.1f} MB; "
+                    "use input_path to supply the local .zip path instead."
+                ),
+            })
+
+    import_job_id = params.import_job_id or str(uuid.uuid4())
+
+    body: dict = {
+        "CustomizationFile": customization_b64,
+        "OverwriteUnmanagedCustomizations": params.overwrite_unmanaged_customizations,
+        "PublishWorkflows": params.publish_workflows,
+        "ImportJobId": import_job_id,
+        "HoldingSolution": params.hold_for_upgrade,
+        "SkipProductUpdateDependencies": params.skip_product_update_dependencies,
+    }
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/ImportSolutionAsync"
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            json=body,
+            headers=headers,
+            timeout=_SOLUTION_JOB_TIMEOUT,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return json.dumps({
+            "accepted": True,
+            "import_job_id": import_job_id,
+            "async_operation_id": result.get("AsyncOperationId"),
+            "import_job_key": result.get("ImportJobKey"),
+            "message": (
+                "Import started; poll dataverse_get_import_job with import_job_id."
+            ),
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_import_solution")
+
+
+@tool(
+    name="dataverse_get_import_job",
+    annotations={
+        "title": "Get Import Job",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_import_job(params: GetImportJobInput, ctx: Context) -> str:
+    """Retrieve a single importjob record by its GUID to check import progress.
+
+    Returns progress (0–100), completedon, solutionname, and other tracking fields.
+    The large result XML ('data' column) is excluded by default; set include_data=true
+    to fetch it when diagnosing import failures. Use dataverse_import_solution to
+    start an import and obtain the import_job_id.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    select_cols = list(_DEFAULT_IMPORT_JOB_SELECT)
+    if params.include_data:
+        select_cols.append("data")
+
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/importjobs({params.import_job_id})"
+        f"?$select={','.join(select_cols)}"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
+        if resp.status_code == 404:
+            return json.dumps({
+                "error": True,
+                "message": f"Import job not found: '{params.import_job_id}'",
+            })
+        resp.raise_for_status()
+        record = resp.json()
+        record.pop("@odata.context", None)
+        progress = record.get("progress")
+        completed = record.get("completedon") is not None
+        return finalize_response({
+            "record": record,
+            "completed": completed,
+            "progress": progress,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_import_job")
+
+
+@tool(
+    name="dataverse_list_import_jobs",
+    annotations={
+        "title": "List Import Jobs",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_import_jobs(params: ListImportJobsInput, ctx: Context) -> str:
+    """List importjob records, optionally filtered by solution unique name.
+
+    The large result XML ('data' column) is excluded from all records by default.
+    Results are ordered by createdon descending (most recent first).
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    select_cols = params.select or _DEFAULT_IMPORT_JOB_SELECT
+    top = params.top
+
+    query_params: dict[str, str] = {
+        "$select": ",".join(select_cols),
+        "$top": str(top),
+        "$orderby": "createdon desc",
+    }
+    if params.solution_name:
+        escaped = odata_quote(params.solution_name)
+        query_params["$filter"] = f"solutionname eq '{escaped}'"
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/importjobs"
+    full_url = f"{url}?{urlencode(query_params, safe='$,')}"
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
+        return finalize_response({
+            "records": records,
+            "count": len(records),
+            "has_more": len(records) >= top,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_import_jobs")
+
+
+@write_tool(
+    name="dataverse_clone_solution_as_patch",
+    annotations={
+        "title": "Clone Solution As Patch",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_clone_solution_as_patch(
+    params: CloneSolutionAsPatchInput, ctx: Context
+) -> str:
+    """Clone a solution as a patch via the unbound CloneAsPatch action.
+
+    Resolves the parent solution to its unique name (accepting either a GUID
+    or unique name), then POSTs to the unbound /CloneAsPatch action with
+    ParentSolutionUniqueName in the body. Returns the new patch solution GUID.
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        solution = await _resolve_solution_record(
+            app_ctx,
+            base_url,
+            headers,
+            params.solution_id,
+            params.solution_unique_name,
+        )
+        if solution is None:
+            return json.dumps({
+                "error": True,
+                "message": _solution_not_found_message(
+                    params.solution_id, params.solution_unique_name
+                ),
+            })
+
+        parent_unique_name = solution.get("uniquename") or params.solution_unique_name
+        if not parent_unique_name:
+            return json.dumps({
+                "error": True,
+                "message": "Resolved solution is missing uniquename",
+            })
+
+        action_url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/CloneAsPatch"
+        body = {
+            "ParentSolutionUniqueName": parent_unique_name,
+            "DisplayName": params.display_name,
+            "VersionNumber": params.version_number,
+        }
+
+        resp = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            action_url,
+            json=body,
+            headers=headers,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return json.dumps({
+            "cloned": True,
+            "patch_solution_id": result.get("SolutionId"),
+            "parent_solution_unique_name": parent_unique_name,
+            "version_number": params.version_number,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_clone_solution_as_patch")

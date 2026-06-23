@@ -344,7 +344,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**143 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**148 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -364,7 +364,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 |----------|-------|-------------|
 | `core` | 16 | Environment introspection + all record CRUD (always registered) |
 | `schema` | 29 | Table/column/relationship/choice metadata |
-| `solutions` | 12 | Solution and publisher management, solution components and history |
+| `solutions` | 17 | Solution and publisher management, solution components, history, import/export ALM |
 | `flows` | 5 | Cloud flow listing and enable/disable |
 | `forms` | 6 | Model-driven form management |
 | `views` | 7 | Saved query / view management |
@@ -479,6 +479,16 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_update_solution_version` | write | Update only a solution's version |
 | `dataverse_add_component_to_solution` | write | Add a component via `AddSolutionComponent` |
 | `dataverse_remove_component_from_solution` | delete | Remove a component via `RemoveSolutionComponent` |
+| `dataverse_export_solution` | default | Export a solution as a base64 zip; write to disk via `output_path` for large solutions (no org mutation — no write flag required) |
+| `dataverse_import_solution` | write | Import a solution asynchronously via `ImportSolutionAsync`; supply zip as inline base64 (`customization_file`) or a local path (`input_path`); returns `import_job_id` to poll |
+| `dataverse_get_import_job` | default | Get one importjob by GUID — returns progress, completedon, solutionname; add `include_data=true` for the result XML on failure |
+| `dataverse_list_import_jobs` | default | List importjobs, optional filter by solution unique name, ordered by createdon desc |
+| `dataverse_clone_solution_as_patch` | write | Clone a solution as a patch via bound `CloneAsPatch` action; resolves parent by GUID or unique name |
+
+> **Filesystem I/O note.** `dataverse_export_solution` can write the decoded .zip to a local path when
+> `output_path` is supplied. `dataverse_import_solution` can read a local .zip when `input_path` is
+> supplied. Both paths are resolved on the machine running the MCP server. Use `output_path` / `input_path`
+> for solutions larger than ~3 MB (the inline base64 threshold).
 
 ### Cloud flows
 

@@ -571,6 +571,227 @@ class BatchSetCloudFlowsStateInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Solution import/export ALM tools
+# ---------------------------------------------------------------------------
+
+
+class ExportSolutionInput(DataverseEnvironmentInput):
+    """Input for exporting a Dataverse solution as a base64-encoded zip."""
+
+    solution_name: str = Field(
+        ...,
+        description=(
+            "Unique name of the solution to export (e.g., 'MyCustomApp'). "
+            "Use lowercase logical name — not the display name."
+        ),
+        min_length=1,
+    )
+    managed: bool = Field(
+        default=False,
+        description=(
+            "When True, export as a managed solution. "
+            "When False (default), export as unmanaged."
+        ),
+    )
+    output_path: str | None = Field(
+        default=None,
+        description=(
+            "Local filesystem path to write the exported solution .zip to "
+            "(e.g., '/tmp/MySolution.zip' or 'C:\\\\exports\\\\MySolution.zip'). "
+            "When provided, the zip is decoded and written to disk; the response "
+            "contains metadata only (no base64 payload). "
+            "When omitted, the base64 payload is returned inline if it is under "
+            "~3 MB; otherwise a structured error asks you to supply output_path."
+        ),
+    )
+    export_general_settings: bool | None = Field(
+        default=None,
+        description="Export general environment settings. Omitted from request when None.",
+    )
+    export_customization_settings: bool | None = Field(
+        default=None,
+        description="Export customization settings. Omitted from request when None.",
+    )
+    export_email_tracking_settings: bool | None = Field(
+        default=None,
+        description="Export email tracking settings. Omitted from request when None.",
+    )
+    export_auto_numbering_settings: bool | None = Field(
+        default=None,
+        description="Export auto-numbering settings. Omitted from request when None.",
+    )
+    export_calendar_settings: bool | None = Field(
+        default=None,
+        description="Export calendar settings. Omitted from request when None.",
+    )
+    export_relationship_roles: bool | None = Field(
+        default=None,
+        description="Export relationship roles. Omitted from request when None.",
+    )
+    export_isv_config: bool | None = Field(
+        default=None,
+        description="Export ISV configuration. Omitted from request when None.",
+    )
+    export_sales: bool | None = Field(
+        default=None,
+        description="Export sales settings. Omitted from request when None.",
+    )
+    export_marketing_settings: bool | None = Field(
+        default=None,
+        description="Export marketing settings. Omitted from request when None.",
+    )
+    export_outlook_synchronization_settings: bool | None = Field(
+        default=None,
+        description="Export Outlook synchronization settings. Omitted from request when None.",
+    )
+
+
+class ImportSolutionInput(DataverseEnvironmentInput):
+    """Input for importing a Dataverse solution asynchronously via ImportSolutionAsync."""
+
+    customization_file: str | None = Field(
+        default=None,
+        description=(
+            "Base64-encoded solution .zip content to import inline. "
+            "Provide this XOR input_path — not both and not neither. "
+            "Rejected if the base64 string exceeds ~3 MB; use input_path instead."
+        ),
+    )
+    input_path: str | None = Field(
+        default=None,
+        description=(
+            "Local filesystem path to the solution .zip to import "
+            "(e.g., '/tmp/MySolution.zip'). "
+            "The server reads the file and base64-encodes it before posting. "
+            "Provide this XOR customization_file — not both and not neither."
+        ),
+    )
+    overwrite_unmanaged_customizations: bool = Field(
+        default=True,
+        description=(
+            "When True, overwrite existing unmanaged customizations with those "
+            "in the solution being imported."
+        ),
+    )
+    publish_workflows: bool = Field(
+        default=True,
+        description="When True, publish workflows (cloud flows) included in the solution.",
+    )
+    hold_for_upgrade: bool = Field(
+        default=False,
+        description=(
+            "When True, hold the solution as a holding solution for staged upgrade. "
+            "Maps to HoldingSolution in the ImportSolutionAsync request."
+        ),
+    )
+    skip_product_update_dependencies: bool = Field(
+        default=False,
+        description=(
+            "When True, skip enforcing product update dependencies during import."
+        ),
+    )
+    import_job_id: str | None = Field(
+        default=None,
+        description=(
+            "Client-supplied GUID to use as the importjob primary key. "
+            "When omitted, one is generated automatically. "
+            "Use this value to poll dataverse_get_import_job for progress."
+        ),
+    )
+
+    @field_validator("import_job_id")
+    @classmethod
+    def validate_import_job_guid(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_exactly_one_source(self) -> "ImportSolutionInput":
+        has_inline = bool(self.customization_file)
+        has_path = bool(self.input_path)
+        if has_inline and has_path:
+            raise ValueError(
+                "Provide customization_file (inline base64) XOR input_path (local .zip path) — not both."
+            )
+        if not has_inline and not has_path:
+            raise ValueError(
+                "Provide customization_file (inline base64) or input_path (local .zip path)."
+            )
+        return self
+
+
+class GetImportJobInput(DataverseEnvironmentInput):
+    """Input for retrieving a single importjob record by its GUID."""
+
+    import_job_id: str = Field(
+        ...,
+        description=(
+            "GUID of the importjob to retrieve. This is the client-supplied "
+            "ImportJobId GUID returned by dataverse_import_solution."
+        ),
+        min_length=36,
+    )
+    include_data: bool = Field(
+        default=False,
+        description=(
+            "When True, the response includes the result XML from the 'data' column. "
+            "The data column can be very large — use only to inspect failure details."
+        ),
+    )
+
+    @field_validator("import_job_id")
+    @classmethod
+    def validate_import_job_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class ListImportJobsInput(DataverseEnvironmentInput):
+    """Input for listing importjob records."""
+
+    solution_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional solution unique name to filter results by (e.g., 'MyCustomApp'). "
+            "Maps to an OData filter on the solutionname column."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of import job records to return.",
+        ge=1,
+        le=5000,
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to a projection that excludes the large "
+            "'data' XML column. Specify explicitly to override."
+        ),
+    )
+
+
+class CloneSolutionAsPatchInput(_SolutionIdentifierInput):
+    """Input for cloning a solution as a patch via CloneAsPatch."""
+
+    display_name: str = Field(
+        ...,
+        description="Display name for the new patch solution.",
+        min_length=1,
+    )
+    version_number: str = Field(
+        ...,
+        description=(
+            "Version string for the patch (e.g., '1.0.0.2'). "
+            "Must share the parent solution's major.minor version and be greater."
+        ),
+        min_length=1,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Table query tools
 # ---------------------------------------------------------------------------
 

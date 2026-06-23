@@ -10,10 +10,10 @@ interpreter process.
 
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
-   tools across all categories register (63 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 143 tools register.
+   tools across all categories register (66 tools).
+2. All allow flags set, DATAVERSE_TOOLS unset: all 148 tools register.
 3. DATAVERSE_TOOLS=security + both allow flags: only 16 core + 12 security = 28.
-4. DATAVERSE_TOOLS=core,solutions + both allow flags: 16 core + 12 solutions = 28.
+4. DATAVERSE_TOOLS=core,solutions + both allow flags: 16 core + 17 solutions = 33.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
    core tools in the registered set.
 6. Composition: DATAVERSE_TOOLS=security, no allow flags → 10 read core + 7 read
@@ -129,13 +129,17 @@ _SECURITY_WRITE_TOOLS = {
 
 _SECURITY_ALL_TOOLS = _SECURITY_READ_TOOLS | _SECURITY_WRITE_TOOLS
 
-# Solutions tools (solutions category only, not flows): 5 read + 6 write + 1 delete = 12
+# Solutions tools (solutions category only, not flows): 8 read + 8 write + 1 delete = 17
 _SOLUTIONS_READ_TOOLS = {
     "dataverse_list_solutions",
     "dataverse_get_solution",
     "dataverse_list_solution_components",
     "dataverse_get_solution_history",
     "dataverse_list_solution_histories",
+    # ALM tools (issue #91)
+    "dataverse_export_solution",
+    "dataverse_get_import_job",
+    "dataverse_list_import_jobs",
 }
 
 _SOLUTIONS_WRITE_TOOLS = {
@@ -145,6 +149,9 @@ _SOLUTIONS_WRITE_TOOLS = {
     "dataverse_update_solution",
     "dataverse_update_solution_version",
     "dataverse_add_component_to_solution",
+    # ALM tools (issue #91)
+    "dataverse_import_solution",
+    "dataverse_clone_solution_as_patch",
 }
 
 _SOLUTIONS_DELETE_TOOLS = {
@@ -174,7 +181,7 @@ _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
 
 
 def test_default_no_env_vars():
-    """No env vars set: only read-only tools register across all categories (63 tools)."""
+    """No env vars set: only read-only tools register across all categories (66 tools)."""
     tools = _run_scenario({})
     tool_set = set(tools)
 
@@ -194,17 +201,17 @@ def test_default_no_env_vars():
         f"Missing core read tools: {_CORE_READ_TOOLS - tool_set}"
     )
 
-    # Total should be 63
-    assert len(tools) == 63, f"Expected 63 default tools, got {len(tools)}: {tools}"
+    # Total should be 66 (63 + 3 new ALM read tools)
+    assert len(tools) == 66, f"Expected 66 default tools, got {len(tools)}: {tools}"
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 143 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 148 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 143, f"Expected 143 tools, got {len(tools)}"
+    assert len(tools) == 148, f"Expected 148 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
@@ -224,7 +231,7 @@ def test_security_only_with_all_flags():
 
 
 def test_core_solutions_with_all_flags():
-    """DATAVERSE_TOOLS=core,solutions + both allow flags: 16 core + 12 solutions = 28.
+    """DATAVERSE_TOOLS=core,solutions + both allow flags: 16 core + 17 solutions = 33.
 
     Flows (a separate category) must NOT register.
     """
@@ -240,7 +247,7 @@ def test_core_solutions_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 28, f"Expected 28 tools, got {len(tools)}"
+    assert len(tools) == 33, f"Expected 33 tools, got {len(tools)}"
 
     # Flow tools must not be present
     assert not (tool_set & _FLOWS_ALL_TOOLS), (

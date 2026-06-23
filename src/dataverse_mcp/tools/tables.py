@@ -31,6 +31,7 @@ from dataverse_mcp.models import (
     DeleteRecordInput,
     DisassociateRecordsInput,
     ExecuteBatchInput,
+    ExecuteFetchXmlInput,
     GetRecordInput,
     MergeRecordsInput,
     QueryTableInput,
@@ -126,6 +127,79 @@ async def dataverse_query_table(params: QueryTableInput, ctx: Context) -> str:
         return finalize_response(result)
     except Exception as e:
         return tool_error_response(e, "dataverse_query_table")
+
+
+@tool(
+    name="dataverse_execute_fetchxml",
+    annotations={
+        "title": "Execute FetchXML",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_execute_fetchxml(params: ExecuteFetchXmlInput, ctx: Context) -> str:
+    """Execute a FetchXML query against a Dataverse table and return matching records.
+
+    FetchXML supports complex joins (link-entity), aggregation, and queries that
+    OData $filter cannot express. Use dataverse_query_table for simple OData queries.
+    Use dataverse_get_entity_sets to discover entity_set_name; the entity_set_name
+    must match the root <entity name="..."> logical name's collection name.
+
+    FetchXML uses paging cookies (not @odata.nextLink). This tool returns one page
+    plus paging metadata (has_more, paging_cookie) so the caller can page if needed.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    entity_set = params.entity_set_name
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/{entity_set}?"
+        f"{urlencode({'fetchXml': params.fetch_xml}, safe='')}"
+    )
+
+    extra_headers: dict[str, str] = {}
+    if params.include_formatted_values:
+        extra_headers["Prefer"] = (
+            'odata.include-annotations="OData.Community.Display.V1.FormattedValue"'
+        )
+
+    try:
+        headers = await build_headers(app_ctx, base_url, extra=extra_headers or None)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
+
+        records = body.get("value", [])
+        # Remove top-level @odata.context but preserve per-record @odata.etag
+        body.pop("@odata.context", None)
+
+        # FetchXML-over-OData signals more pages via the presence of a paging
+        # cookie (@Microsoft.Dynamics.CRM.fetchxmlpagingcookie); there is no
+        # "morerecords" annotation in the Web API response. The total count, when
+        # requested via returntotalrecordcount="true", comes back as @odata.count.
+        paging_cookie = body.get("@Microsoft.Dynamics.CRM.fetchxmlpagingcookie")
+
+        result: dict = {
+            "records": records,
+            "count": len(records),
+            "has_more": paging_cookie is not None,
+        }
+
+        total_record_count = body.get("@odata.count")
+        if total_record_count is not None and total_record_count >= 0:
+            result["total_record_count"] = total_record_count
+
+        if paging_cookie is not None:
+            result["paging_cookie"] = paging_cookie
+
+        return finalize_response(result)
+    except Exception as e:
+        return tool_error_response(e, "dataverse_execute_fetchxml")
 
 
 @tool(

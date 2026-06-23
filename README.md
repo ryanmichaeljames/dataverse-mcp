@@ -344,7 +344,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**148 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**149 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -362,7 +362,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| `core` | 16 | Environment introspection + all record CRUD (always registered) |
+| `core` | 17 | Environment introspection + all record CRUD (always registered) |
 | `schema` | 29 | Table/column/relationship/choice metadata |
 | `solutions` | 17 | Solution and publisher management, solution components, history, import/export ALM |
 | `flows` | 5 | Cloud flow listing and enable/disable |
@@ -408,6 +408,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | Tool | Gate | Description |
 |------|------|-------------|
 | `dataverse_query_table` | default | Query records with filter, select, orderby, expand, top |
+| `dataverse_execute_fetchxml` | default | Execute a FetchXML query (joins, aggregation, paging cookie) |
 | `dataverse_get_record` | default | Get one record by entity set name and GUID |
 | `dataverse_count_records` | default | Count rows in a table, optional filter |
 | `dataverse_aggregate_table` | default | Aggregate (sum, avg, min, max, countdistinct) with optional grouping |

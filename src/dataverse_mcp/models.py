@@ -5427,6 +5427,174 @@ class DeletePluginStepImageInput(DataverseEnvironmentInput):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Web resource tools
+# ---------------------------------------------------------------------------
+
+
+class ListWebResourcesInput(DataverseEnvironmentInput):
+    """Input for listing webresource records."""
+
+    web_resource_type: int | None = Field(
+        default=None,
+        description=(
+            "Filter by webresourcetype Picklist value. "
+            "1=HTML, 2=CSS, 3=JScript, 4=XML, 5=PNG, 6=JPG, 7=GIF, "
+            "8=Silverlight(XAP), 9=StyleSheet(XSL), 10=ICO, "
+            "11=Vector(SVG), 12=String(RESX)."
+        ),
+    )
+    name_contains: str | None = Field(
+        default=None,
+        description=(
+            "Substring to filter web resource names (case-sensitive OData contains). "
+            "E.g., 'new_/' to find resources from the 'new' publisher."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Maximum number of records to return (1–5000).",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to webresourceid, name, displayname, "
+            "webresourcetype, description, languagecode, ismanaged, "
+            "iscustomizable, createdon, modifiedon."
+        ),
+    )
+
+
+class GetWebResourceInput(DataverseEnvironmentInput):
+    """Input for retrieving a single webresource record by GUID."""
+
+    web_resource_id: str = Field(
+        ...,
+        description=(
+            "GUID of the webresource record to retrieve "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+    include_content: bool = Field(
+        default=False,
+        description=(
+            "When true, include the base64-encoded content field in the response. "
+            "Content can be large; omit unless needed."
+        ),
+    )
+
+    @field_validator("web_resource_id")
+    @classmethod
+    def validate_web_resource_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class CreateWebResourceInput(DataverseEnvironmentInput):
+    """Input for creating a webresource record."""
+
+    name: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Unique name for the web resource. Must include a publisher prefix "
+            "(e.g., 'new_/scripts/myscript.js'). The prefix must match a registered "
+            "publisher customization prefix in the environment."
+        ),
+    )
+    web_resource_type: int = Field(
+        ...,
+        description=(
+            "Type of web resource (webresourcetype Picklist, required on create). "
+            "1=HTML, 2=CSS, 3=JScript, 4=XML, 5=PNG, 6=JPG, 7=GIF, "
+            "8=Silverlight(XAP), 9=StyleSheet(XSL), 10=ICO, "
+            "11=Vector(SVG), 12=String(RESX)."
+        ),
+    )
+    content: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Base64-encoded content of the web resource. "
+            "For text files (HTML/CSS/JS), encode the UTF-8 bytes. "
+            "For binary files (PNG/JPG/GIF/ICO), encode the raw bytes."
+        ),
+    )
+    display_name: str | None = Field(
+        default=None,
+        description="Optional friendly display name shown in the maker portal.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Optional description of the web resource.",
+    )
+
+
+class UpdateWebResourceInput(DataverseEnvironmentInput):
+    """Input for updating a webresource record (partial PATCH)."""
+
+    web_resource_id: str = Field(
+        ...,
+        description=(
+            "GUID of the webresource record to update "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+    content: str | None = Field(
+        default=None,
+        description=(
+            "Updated base64-encoded content. "
+            "Omit to leave the current content unchanged."
+        ),
+    )
+    display_name: str | None = Field(
+        default=None,
+        description="Updated friendly display name. Omit to leave unchanged.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Updated description. Omit to leave unchanged.",
+    )
+
+    @field_validator("web_resource_id")
+    @classmethod
+    def validate_web_resource_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+    @model_validator(mode="after")
+    def check_at_least_one_field(self) -> "UpdateWebResourceInput":
+        if self.content is None and self.display_name is None and self.description is None:
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "content, display_name, description"
+            )
+        return self
+
+
+class DeleteWebResourceInput(DataverseEnvironmentInput):
+    """Input for deleting a webresource record."""
+
+    web_resource_id: str = Field(
+        ...,
+        description=(
+            "GUID of the webresource record to delete "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+
+    @field_validator("web_resource_id")
+    @classmethod
+    def validate_web_resource_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
 class ListAsyncOperationsInput(DataverseEnvironmentInput):
     """Input for listing asyncoperation (system job) records."""
 

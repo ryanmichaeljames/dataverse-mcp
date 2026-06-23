@@ -344,7 +344,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**152 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**157 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -374,6 +374,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
 | `security` | 12 | Security roles, teams, users, business units |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
+| `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 
 `core` is **always** registered even when not listed. When `DATAVERSE_TOOLS` is unset or empty, all categories register (current default behaviour). Category gating composes with `DATAVERSE_ALLOW_WRITE` and `DATAVERSE_ALLOW_DELETE`: a tool registers only when its category is enabled AND its write/delete flag (if any) is set.
 
@@ -411,6 +412,16 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_list_async_operations` | default | List system jobs (asyncoperations), optional filter by statecode/statuscode/operationtype |
 | `dataverse_get_async_operation` | default | Get one system job by GUID |
 | `dataverse_cancel_async_operation` | write | Cancel a running or waiting system job (PATCH statecode=3/statuscode=32) |
+
+### Web resources
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_web_resources` | default | List web resources; optional filter by type and/or name substring |
+| `dataverse_get_web_resource` | default | Get one web resource by GUID; `include_content=true` adds the base64 content field |
+| `dataverse_create_web_resource` | write | Create a web resource (name, type, base64 content); call `dataverse_publish_customizations` afterward |
+| `dataverse_update_web_resource` | write | PATCH content, display name, or description; call `dataverse_publish_customizations` afterward |
+| `dataverse_delete_web_resource` | delete | Permanently delete an unmanaged web resource by GUID |
 
 ### Records & data
 

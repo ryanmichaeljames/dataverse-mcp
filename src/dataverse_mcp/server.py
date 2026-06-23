@@ -27,6 +27,7 @@ import dataverse_mcp.tools.environment_variables  # noqa: E402, F401
 import dataverse_mcp.tools.environment_variable_values  # noqa: E402, F401
 import dataverse_mcp.tools.security  # noqa: E402, F401
 import dataverse_mcp.tools.jobs  # noqa: E402, F401
+import dataverse_mcp.tools.web_resources  # noqa: E402, F401
 
 
 def main():

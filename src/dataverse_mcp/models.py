@@ -5420,3 +5420,94 @@ class DeletePluginStepImageInput(DataverseEnvironmentInput):
         if not _GUID_PATTERN.match(v):
             raise ValueError(f"Invalid GUID format: '{v}'")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Async operation (system job) tools
+# ---------------------------------------------------------------------------
+
+
+class ListAsyncOperationsInput(DataverseEnvironmentInput):
+    """Input for listing asyncoperation (system job) records."""
+
+    state_code: int | None = Field(
+        default=None,
+        description=(
+            "Filter by statecode. "
+            "0=Ready, 1=Suspended, 2=Locked, 3=Completed."
+        ),
+    )
+    status_code: int | None = Field(
+        default=None,
+        description=(
+            "Filter by statuscode. "
+            "0=Waiting For Resources, 10=Waiting, 20=In Progress, "
+            "21=Pausing, 22=Canceling, 30=Succeeded, 31=Failed, 32=Canceled."
+        ),
+    )
+    operation_type: int | None = Field(
+        default=None,
+        description=(
+            "Filter by operationtype (Picklist). "
+            "Common values: 1=System Event, 2=Bulk Email, 6=Import, "
+            "9=Quick Campaign, 12=Export to Excel, 25=Solution Import, "
+            "27=Import Translations, 32=Bulk Delete, 38=Solution Export, "
+            "56=Power Automate Flow, 79=Bulk Duplicate Detection. "
+            "Accept the raw integer from asyncoperation records."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Maximum number of records to return (1–5000).",
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to asyncoperationid, name, "
+            "operationtype, statecode, statuscode, message, "
+            "friendlymessage, startedon, completedon, createdon, modifiedon, "
+            "_regardingobjectid_value."
+        ),
+    )
+
+
+class GetAsyncOperationInput(DataverseEnvironmentInput):
+    """Input for retrieving a single asyncoperation record by GUID."""
+
+    async_operation_id: str = Field(
+        ...,
+        description=(
+            "GUID of the asyncoperation record to retrieve "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+
+    @field_validator("async_operation_id")
+    @classmethod
+    def validate_async_operation_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
+class CancelAsyncOperationInput(DataverseEnvironmentInput):
+    """Input for canceling a running or waiting asyncoperation (system job)."""
+
+    async_operation_id: str = Field(
+        ...,
+        description=(
+            "GUID of the asyncoperation record to cancel. "
+            "The job must be in a cancellable state "
+            "(statecode 0=Ready, 1=Suspended, or 2=Locked). "
+            "Completed jobs (statecode 3) cannot be canceled."
+        ),
+    )
+
+    @field_validator("async_operation_id")
+    @classmethod
+    def validate_async_operation_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v

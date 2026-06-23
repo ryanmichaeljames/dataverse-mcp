@@ -31,7 +31,7 @@ _ALLOW_DELETE = os.environ.get("DATAVERSE_ALLOW_DELETE", "").lower() == "true"
 
 _KNOWN_CATEGORIES = frozenset({
     "core", "schema", "solutions", "flows", "forms", "views", "apps",
-    "connections", "variables", "plugins", "security",
+    "connections", "variables", "plugins", "security", "jobs",
 })
 
 _raw_tools_env = os.environ.get("DATAVERSE_TOOLS", "").strip()

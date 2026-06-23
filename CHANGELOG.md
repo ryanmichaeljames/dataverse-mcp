@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Three async operation (system job) monitoring tools in new module
+  `src/dataverse_mcp/tools/jobs.py` (`jobs` category):
+  `dataverse_list_async_operations` (read, `@tool`) — GET `asyncoperations`; optional
+  filter by `state_code` (0=Ready,1=Suspended,2=Locked,3=Completed), `status_code`
+  (0=Waiting For Resources,10=Waiting,20=In Progress,21=Pausing,22=Canceling,30=Succeeded,
+  31=Failed,32=Canceled), or `operation_type` (raw int); ordered by `createdon desc`;
+  returns records enriched with `statecode_label`/`statuscode_label`, `count`, `has_more`.
+  `dataverse_get_async_operation` (read, `@tool`) — GET `asyncoperations(<id>)`;
+  returns `{"record": {...}}` stripped of `@odata.context`, enriched with labels.
+  `dataverse_cancel_async_operation` (write, `@write_tool`) — PATCH
+  `asyncoperations(<id>)` with `{"statecode": 3, "statuscode": 32}`; returns
+  `{"cancelled": true, "async_operation_id": "<id>"}`. The `asyncoperation` entity
+  supports direct `statecode`/`statuscode` PATCH (confirmed against the Dataverse
+  Web API v9.2 asyncoperation entity reference). Requires `DATAVERSE_ALLOW_WRITE=true`.
+  Three input models added to `src/dataverse_mcp/models.py`:
+  `ListAsyncOperationsInput`, `GetAsyncOperationInput`, `CancelAsyncOperationInput`.
+  New `jobs` category added to `_KNOWN_CATEGORIES` in `src/dataverse_mcp/_app.py`.
+  Module registered in `src/dataverse_mcp/server.py`. Total tool count: 149 → 152.
+
 - `dataverse_execute_fetchxml` read-only tool in `src/dataverse_mcp/tools/tables.py` (`core` category).
   Executes a FetchXML query via `GET {entity_set}?fetchXml=<encoded>` and returns `records`, `count`,
   `has_more` (from `@Microsoft.Dynamics.CRM.morerecords`), `paging_cookie` (from

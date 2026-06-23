@@ -10,8 +10,8 @@ interpreter process.
 
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
-   tools across all categories register (69 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 152 tools register.
+   tools across all categories register (71 tools).
+2. All allow flags set, DATAVERSE_TOOLS unset: all 157 tools register.
 3. DATAVERSE_TOOLS=security + both allow flags: only 17 core + 12 security = 29.
 4. DATAVERSE_TOOLS=core,solutions + both allow flags: 17 core + 17 solutions = 34.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
@@ -22,6 +22,8 @@ Acceptance criteria covered:
    logged, bogus ignored, security+core still register (29 tools).
 8. DATAVERSE_TOOLS=jobs + both allow flags: 17 core + 3 jobs = 20 tools.
 9. DATAVERSE_TOOLS=security (no jobs): jobs tools absent.
+10. DATAVERSE_TOOLS=webresources + both allow flags: 17 core + 5 webresources = 22.
+11. DATAVERSE_TOOLS=security (no webresources): webresource tools absent.
 """
 
 import json
@@ -144,6 +146,25 @@ _JOBS_WRITE_TOOLS = {
 
 _JOBS_ALL_TOOLS = _JOBS_READ_TOOLS | _JOBS_WRITE_TOOLS
 
+# Web resource tools: 2 read + 2 write + 1 delete = 5 total
+_WEBRESOURCES_READ_TOOLS = {
+    "dataverse_list_web_resources",
+    "dataverse_get_web_resource",
+}
+
+_WEBRESOURCES_WRITE_TOOLS = {
+    "dataverse_create_web_resource",
+    "dataverse_update_web_resource",
+}
+
+_WEBRESOURCES_DELETE_TOOLS = {
+    "dataverse_delete_web_resource",
+}
+
+_WEBRESOURCES_ALL_TOOLS = (
+    _WEBRESOURCES_READ_TOOLS | _WEBRESOURCES_WRITE_TOOLS | _WEBRESOURCES_DELETE_TOOLS
+)
+
 # Solutions tools (solutions category only, not flows): 8 read + 8 write + 1 delete = 17
 _SOLUTIONS_READ_TOOLS = {
     "dataverse_list_solutions",
@@ -196,7 +217,7 @@ _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
 
 
 def test_default_no_env_vars():
-    """No env vars set: only read-only tools register across all categories (69 tools)."""
+    """No env vars set: only read-only tools register across all categories (71 tools)."""
     tools = _run_scenario({})
     tool_set = set(tools)
 
@@ -207,6 +228,7 @@ def test_default_no_env_vars():
         | _SOLUTIONS_WRITE_TOOLS | _SOLUTIONS_DELETE_TOOLS
         | _FLOWS_WRITE_TOOLS
         | _JOBS_WRITE_TOOLS
+        | _WEBRESOURCES_WRITE_TOOLS | _WEBRESOURCES_DELETE_TOOLS
     )
     assert not (tool_set & all_write_delete), (
         f"Write/delete tools unexpectedly registered: {tool_set & all_write_delete}"
@@ -222,17 +244,22 @@ def test_default_no_env_vars():
         f"Missing jobs read tools: {_JOBS_READ_TOOLS - tool_set}"
     )
 
-    # Total should be 69 (67 + 2 new jobs read tools)
-    assert len(tools) == 69, f"Expected 69 default tools, got {len(tools)}: {tools}"
+    # Webresource read tools must be present (webresources is always-on when DATAVERSE_TOOLS unset)
+    assert _WEBRESOURCES_READ_TOOLS <= tool_set, (
+        f"Missing webresources read tools: {_WEBRESOURCES_READ_TOOLS - tool_set}"
+    )
+
+    # Total should be 71 (69 + 2 new webresource read tools)
+    assert len(tools) == 71, f"Expected 71 default tools, got {len(tools)}: {tools}"
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 152 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 157 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 152, f"Expected 152 tools, got {len(tools)}"
+    assert len(tools) == 157, f"Expected 157 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
@@ -373,4 +400,42 @@ def test_security_only_no_jobs():
     assert not (tool_set & _JOBS_ALL_TOOLS), (
         f"Jobs tools should not register when DATAVERSE_TOOLS=security: "
         f"{tool_set & _JOBS_ALL_TOOLS}"
+    )
+
+
+def test_webresources_only_with_all_flags():
+    """DATAVERSE_TOOLS=webresources + both allow flags: 17 core + 5 webresources = 22."""
+    tools = _run_scenario({
+        "DATAVERSE_TOOLS": "webresources",
+        "DATAVERSE_ALLOW_WRITE": "true",
+        "DATAVERSE_ALLOW_DELETE": "true",
+    })
+    tool_set = set(tools)
+
+    expected = _CORE_ALL_TOOLS | _WEBRESOURCES_ALL_TOOLS
+    assert tool_set == expected, (
+        f"Unexpected tools. Extra: {tool_set - expected}, "
+        f"Missing: {expected - tool_set}"
+    )
+    assert len(tools) == 22, f"Expected 22 tools, got {len(tools)}"
+
+    # Security tools must not be present
+    assert not (tool_set & _SECURITY_ALL_TOOLS), (
+        f"Security tools should not register: {tool_set & _SECURITY_ALL_TOOLS}"
+    )
+
+
+def test_security_only_no_webresources():
+    """DATAVERSE_TOOLS=security (no webresources): webresource tools absent."""
+    tools = _run_scenario({
+        "DATAVERSE_TOOLS": "security",
+        "DATAVERSE_ALLOW_WRITE": "true",
+        "DATAVERSE_ALLOW_DELETE": "true",
+    })
+    tool_set = set(tools)
+
+    # Web resource tools must NOT register when webresources category is not requested
+    assert not (tool_set & _WEBRESOURCES_ALL_TOOLS), (
+        f"Web resource tools should not register when DATAVERSE_TOOLS=security: "
+        f"{tool_set & _WEBRESOURCES_ALL_TOOLS}"
     )

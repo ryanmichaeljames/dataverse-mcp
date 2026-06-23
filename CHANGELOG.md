@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Five web resource CRUD tools in new module `src/dataverse_mcp/tools/web_resources.py`
+  (`webresources` category):
+  `dataverse_list_web_resources` (read, `@tool`) — GET `webresources`; optional filter by
+  `web_resource_type` (Picklist int) and/or `name_contains` (OData `contains(name,'...')`);
+  ordered by `name`; returns records enriched with `webresourcetype_label`, `count`, `has_more`.
+  Content field excluded from list responses (can be very large).
+  `dataverse_get_web_resource` (read, `@tool`) — GET `webresources(<id>)`; returns
+  `{"record": {...}}` stripped of `@odata.context`, enriched with `webresourcetype_label`;
+  `include_content=true` adds the base64 `content` field.
+  `dataverse_create_web_resource` (write, `@write_tool`) — POST `webresources` with required
+  `name`, `webresourcetype`, `content` (base64); optional `displayname`, `description`;
+  extracts new GUID from `OData-EntityId` response header; returns `{"created": true, "id": ...}`.
+  Requires `DATAVERSE_ALLOW_WRITE=true`. Caller must publish afterward via
+  `dataverse_publish_customizations`.
+  `dataverse_update_web_resource` (write, `@write_tool`) — PATCH `webresources(<id>)` with
+  at least one of `content`, `display_name`, `description`; returns `{"updated": true, "id": ...}`.
+  Requires `DATAVERSE_ALLOW_WRITE=true`. Caller must publish afterward.
+  `dataverse_delete_web_resource` (delete, `@delete_tool`) — DELETE `webresources(<id>)`;
+  returns `{"deleted": true, "id": ...}`. Requires `DATAVERSE_ALLOW_DELETE=true`.
+  Five input models added to `src/dataverse_mcp/models.py`:
+  `ListWebResourcesInput`, `GetWebResourceInput`, `CreateWebResourceInput`,
+  `UpdateWebResourceInput` (model_validator requires at least one updatable field),
+  `DeleteWebResourceInput`.
+  New `webresources` category added to `_KNOWN_CATEGORIES` in `src/dataverse_mcp/_app.py`.
+  Module registered in `src/dataverse_mcp/server.py`. Total tool count: 152 → 157.
+  webresourcetype enum confirmed: 1=HTML, 2=CSS, 3=JScript, 4=XML, 5=PNG, 6=JPG, 7=GIF,
+  8=Silverlight(XAP), 9=StyleSheet(XSL), 10=ICO, 11=Vector(SVG), 12=String(RESX).
+
 - Three async operation (system job) monitoring tools in new module
   `src/dataverse_mcp/tools/jobs.py` (`jobs` category):
   `dataverse_list_async_operations` (read, `@tool`) — GET `asyncoperations`; optional

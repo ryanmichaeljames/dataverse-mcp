@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dataverse_create_column` now supports `Memo` (multi-line text / `MemoAttributeMetadata`) as a column type; `MaxLength` defaults to `2000` and `IsValidForAdvancedFind` is automatically omitted (Dataverse rejects it for Memo columns).
+- `dataverse_create_column` now supports `boolean_true_label` and `boolean_false_label` fields for Boolean columns; the required `OptionSet` with `TrueOption`/`FalseOption` is built automatically (defaults: "Yes" / "No").
+- `dataverse_create_column` now supports `global_choice_name` for `Picklist` and `MultiSelectPicklist` columns to bind the column to an existing global choice; the tool resolves the choice name to its MetadataId GUID automatically before creating the column.
+
 ## [3.2.0] - 2026-06-24
 
 ### Added

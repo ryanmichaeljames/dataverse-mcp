@@ -1059,6 +1059,7 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
 
 _ATTRIBUTE_TYPE_ODATA_MAP = {
     "String": "Microsoft.Dynamics.CRM.StringAttributeMetadata",
+    "Memo": "Microsoft.Dynamics.CRM.MemoAttributeMetadata",
     "Integer": "Microsoft.Dynamics.CRM.IntegerAttributeMetadata",
     "Decimal": "Microsoft.Dynamics.CRM.DecimalAttributeMetadata",
     "DateTime": "Microsoft.Dynamics.CRM.DateTimeAttributeMetadata",
@@ -1081,8 +1082,11 @@ _ATTRIBUTE_TYPE_ODATA_MAP = {
 async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> str:
     """Add a new typed column (attribute) to a Dataverse table.
 
-    Use type_specific_properties to supply type-specific fields (e.g.,
-    String → {"MaxLength": 100}; DateTime → {"Format": "DateOnly"}).
+    Supported types: String, Memo, Integer, Decimal, DateTime, Boolean, Lookup, Picklist, MultiSelectPicklist.
+    Boolean columns automatically get an OptionSet — use boolean_true_label/boolean_false_label to set option labels.
+    Picklist/MultiSelectPicklist columns can bind to an existing global choice via global_choice_name.
+    Memo columns default MaxLength to 2000 and omit IsValidForAdvancedFind (Dataverse rejects it for Memo type).
+    Use type_specific_properties for additional type-specific fields (e.g., String → {"MaxLength": 100}).
     Call dataverse_publish_customizations after creating columns. Requires DATAVERSE_ALLOW_WRITE=true.
     """
     if params.type_specific_properties:
@@ -1110,8 +1114,28 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
             "Value": params.required_level,
             "CanBeChanged": True,
         }
+    if params.attribute_type == "Memo":
+        # Dataverse requires MaxLength on Memo; default to 2000 if not supplied.
+        body.setdefault("MaxLength", 2000)
+    if params.attribute_type == "Boolean":
+        body["OptionSet"] = {
+            "@odata.type": "Microsoft.Dynamics.CRM.BooleanOptionSetMetadata",
+            "TrueOption": {
+                "@odata.type": "Microsoft.Dynamics.CRM.OptionMetadata",
+                "Value": 1,
+                "Label": _make_label(params.boolean_true_label or "Yes"),
+            },
+            "FalseOption": {
+                "@odata.type": "Microsoft.Dynamics.CRM.OptionMetadata",
+                "Value": 0,
+                "Label": _make_label(params.boolean_false_label or "No"),
+            },
+        }
     if params.type_specific_properties:
         body.update(params.type_specific_properties)
+    if params.attribute_type == "Memo":
+        # Dataverse rejects IsValidForAdvancedFind on Memo (nested resource error).
+        body.pop("IsValidForAdvancedFind", None)
 
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1126,6 +1150,30 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
             app_ctx, base_url, include_content_type=True,
             extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
         )
+
+        # Resolve global choice name → MetadataId GUID before the POST.
+        # @odata.bind requires a GUID key; Name= is not supported by the metadata API.
+        if params.global_choice_name and params.attribute_type in ("Picklist", "MultiSelectPicklist"):
+            lookup_headers = await build_headers(app_ctx, base_url)
+            choice_name_enc = _url_quote(params.global_choice_name, safe="")
+            lookup_resp = await request_with_retry(
+                app_ctx.http_client, "GET",
+                f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+                f"/GlobalOptionSetDefinitions(Name='{choice_name_enc}')"
+                "?$select=MetadataId",
+                headers=lookup_headers,
+            )
+            lookup_resp.raise_for_status()
+            metadata_id = lookup_resp.json().get("MetadataId")
+            if not metadata_id:
+                return json.dumps({
+                    "error": True,
+                    "message": f"Global choice '{params.global_choice_name}' was not found.",
+                })
+            body["GlobalOptionSet@odata.bind"] = (
+                f"/GlobalOptionSetDefinitions({metadata_id})"
+            )
+
         response = await request_with_retry(app_ctx.http_client, "POST",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
             f"EntityDefinitions(LogicalName='{table_enc}')/Attributes",

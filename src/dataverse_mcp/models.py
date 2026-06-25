@@ -1388,6 +1388,7 @@ class DeleteTableInput(DataverseEnvironmentInput):
 
 _COLUMN_ATTRIBUTE_TYPES = (
     "String",
+    "Memo",
     "Integer",
     "Decimal",
     "DateTime",
@@ -1423,7 +1424,7 @@ class CreateColumnInput(MetadataWriteInput):
     attribute_type: str = Field(
         ...,
         description=(
-            "Column type. One of: String, Integer, Decimal, DateTime, Boolean, "
+            "Column type. One of: String, Memo, Integer, Decimal, DateTime, Boolean, "
             "Lookup, Picklist, MultiSelectPicklist."
         ),
     )
@@ -1445,9 +1446,29 @@ class CreateColumnInput(MetadataWriteInput):
             "Optional dict of type-specific properties merged into the attribute "
             "definition body. Examples: String → {'MaxLength': 100}; "
             "Integer → {'MinValue': 0, 'MaxValue': 100000}; "
-            "Decimal → {'Precision': 2}; DateTime → {'Format': 'DateOnly'}; "
-            "Boolean → {'DefaultValue': false}; "
-            "Picklist → {'OptionSet': {'@odata.type': '...OptionSetMetadata', 'Options': [...]}}."
+            "Decimal → {'Precision': 2}; DateTime → {'Format': 'DateOnly'}."
+        ),
+    )
+    boolean_true_label: str | None = Field(
+        default="Yes",
+        description=(
+            "Display label for the True option of a Boolean column. "
+            "Only used when attribute_type is 'Boolean'. Defaults to 'Yes'."
+        ),
+    )
+    boolean_false_label: str | None = Field(
+        default="No",
+        description=(
+            "Display label for the False option of a Boolean column. "
+            "Only used when attribute_type is 'Boolean'. Defaults to 'No'."
+        ),
+    )
+    global_choice_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of an existing global choice (option set) to bind this column to. "
+            "Only used when attribute_type is 'Picklist' or 'MultiSelectPicklist'. "
+            "When set, the column references the global choice instead of having a local option set."
         ),
     )
 
@@ -1468,6 +1489,14 @@ class CreateColumnInput(MetadataWriteInput):
                 f"required_level must be one of: {', '.join(_COLUMN_REQUIRED_LEVELS)}"
             )
         return v
+
+    @model_validator(mode="after")
+    def validate_cross_field(self) -> "CreateColumnInput":
+        if self.global_choice_name and self.attribute_type not in ("Picklist", "MultiSelectPicklist"):
+            raise ValueError(
+                "global_choice_name is only valid when attribute_type is 'Picklist' or 'MultiSelectPicklist'."
+            )
+        return self
 
 
 class UpdateColumnInput(MetadataWriteInput):

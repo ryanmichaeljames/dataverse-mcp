@@ -9,7 +9,7 @@ Key constraints from Dataverse:
   - uniquename, bindingtype, boundentitylogicalname, allowedcustomprocessingsteptype,
     isfunction, workflowsdkstepenabled are immutable after creation on customapi.
   - uniquename, customapiid, type, logicalentityname are immutable on parameters/properties.
-  - Use odata.bind for the customapiid lookup when creating parameters/properties.
+  - Use CustomAPIId@odata.bind (nav prop name) when linking parameters/properties to a custom api.
 
 Type enum (for both request parameters and response properties):
   0=Boolean, 1=DateTime, 2=Decimal, 3=Entity, 4=EntityCollection,
@@ -253,13 +253,12 @@ async def dataverse_create_custom_api(
     body: dict = {
         "uniquename": params.uniquename,
         "name": params.name,
+        "displayname": params.displayname if params.displayname is not None else params.name,
         "bindingtype": params.binding_type,
         "isfunction": params.is_function,
         "isprivate": params.is_private,
         "allowedcustomprocessingsteptype": params.allowed_custom_processing_step_type,
     }
-    if params.displayname is not None:
-        body["displayname"] = params.displayname
     if params.description is not None:
         body["description"] = params.description
     if params.bound_entity_logical_name is not None:
@@ -497,14 +496,13 @@ async def dataverse_create_custom_api_request_parameter(
         return json.dumps({"error": True, "message": str(e)})
 
     body: dict = {
-        "customapiid@odata.bind": f"/customapis({params.custom_api_id})",
+        "CustomAPIId@odata.bind": f"/customapis({params.custom_api_id})",
         "uniquename": params.uniquename,
         "type": params.type,
         "name": params.name,
+        "displayname": params.displayname if params.displayname is not None else params.name,
         "isoptional": params.is_optional,
     }
-    if params.displayname is not None:
-        body["displayname"] = params.displayname
     if params.description is not None:
         body["description"] = params.description
 
@@ -742,13 +740,12 @@ async def dataverse_create_custom_api_response_property(
         return json.dumps({"error": True, "message": str(e)})
 
     body: dict = {
-        "customapiid@odata.bind": f"/customapis({params.custom_api_id})",
+        "CustomAPIId@odata.bind": f"/customapis({params.custom_api_id})",
         "uniquename": params.uniquename,
         "type": params.type,
         "name": params.name,
+        "displayname": params.displayname if params.displayname is not None else params.name,
     }
-    if params.displayname is not None:
-        body["displayname"] = params.displayname
     if params.description is not None:
         body["description"] = params.description
 

@@ -8,6 +8,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Thirteen Custom API management tools in new module `src/dataverse_mcp/tools/custom_apis.py`
+  (`customapis` category), covering three Dataverse entity sets (standard OData, not metadata API):
+  `dataverse_list_custom_apis` (read, `@tool`) — GET `customapis`; optional OData `filter` and
+  `top`; returns customapiid, uniquename, name, displayname, bindingtype, isfunction, isprivate,
+  allowedcustomprocessingsteptype, count, has_more.
+  `dataverse_get_custom_api` (read, `@tool`) — GET `customapis(<id>)` with `$expand` for
+  `CustomAPIRequestParameters` and `CustomAPIResponseProperties`; returns `{"custom_api": {...}}`.
+  `dataverse_create_custom_api` (write, `@write_tool`) — POST `customapis`; required `uniquename`
+  (with publisher prefix, immutable) and `name`; optional `displayname`, `description`,
+  `binding_type` (0=Global, 1=Entity, 2=EntityCollection, default 0), `is_function` (default false),
+  `is_private` (default false), `allowed_custom_processing_step_type` (default 0),
+  `bound_entity_logical_name` (required when binding_type=1/2); model_validator enforces this.
+  `dataverse_update_custom_api` (write, `@write_tool`) — PATCH mutable fields only (name,
+  displayname, description, is_private, execute_privilege_name); model_validator requires ≥1 field.
+  `dataverse_delete_custom_api` (delete, `@delete_tool`) — DELETE `customapis(<id>)`; cascades
+  to associated parameters and properties.
+  `dataverse_list_custom_api_request_parameters` (read, `@tool`) — GET `customapirequestparameters`
+  filtered by `_customapiid_value`; optional additional OData filter and top; returns
+  customapirequestparameterid, uniquename, name, displayname, type, isoptional, count, has_more.
+  `dataverse_create_custom_api_request_parameter` (write, `@write_tool`) — POST
+  `customapirequestparameters`; required `custom_api_id`, `uniquename`, `type` (0-12, immutable),
+  `name`; optional `displayname`, `description`, `is_optional` (default false); uses
+  `customapiid@odata.bind` lookup binding.
+  `dataverse_update_custom_api_request_parameter` (write, `@write_tool`) — PATCH mutable fields
+  (name, displayname, description, is_optional); model_validator requires ≥1 field.
+  `dataverse_delete_custom_api_request_parameter` (delete, `@delete_tool`) — DELETE by
+  `request_parameter_id` GUID.
+  `dataverse_list_custom_api_response_properties` (read, `@tool`) — GET
+  `customapiresponseproperties` filtered by `_customapiid_value`; optional additional OData filter
+  and top; returns customapiresponsepropertyid, uniquename, name, displayname, type, count, has_more.
+  `dataverse_create_custom_api_response_property` (write, `@write_tool`) — POST
+  `customapiresponseproperties`; required `custom_api_id`, `uniquename`, `type` (0-12, immutable),
+  `name`; optional `displayname`, `description`; uses `customapiid@odata.bind` lookup binding.
+  `dataverse_update_custom_api_response_property` (write, `@write_tool`) — PATCH mutable fields
+  (name, displayname, description); model_validator requires ≥1 field.
+  `dataverse_delete_custom_api_response_property` (delete, `@delete_tool`) — DELETE by
+  `response_property_id` GUID.
+  Thirteen input models added to `src/dataverse_mcp/models.py`:
+  `ListCustomApisInput`, `GetCustomApiInput`, `CreateCustomApiInput` (model_validator enforces
+  bound_entity_logical_name when binding_type=1/2), `UpdateCustomApiInput`, `DeleteCustomApiInput`,
+  `ListCustomApiRequestParametersInput`, `CreateCustomApiRequestParameterInput`,
+  `UpdateCustomApiRequestParameterInput`, `DeleteCustomApiRequestParameterInput`,
+  `ListCustomApiResponsePropertiesInput`, `CreateCustomApiResponsePropertyInput`,
+  `UpdateCustomApiResponsePropertyInput`, `DeleteCustomApiResponsePropertyInput`.
+  New `customapis` category added to `_KNOWN_CATEGORIES` in `src/dataverse_mcp/_app.py`.
+  Module registered in `src/dataverse_mcp/server.py`. Total tool count: 157 → 170.
+  Type enum for parameters and properties: 0=Boolean, 1=DateTime, 2=Decimal, 3=Entity,
+  4=EntityCollection, 5=EntityReference, 6=Float, 7=Integer, 8=Money, 9=Picklist,
+  10=String, 11=StringArray, 12=Guid.
 - `dataverse_create_column` now supports `Memo` (multi-line text / `MemoAttributeMetadata`) as a column type; `MaxLength` defaults to `2000` and `IsValidForAdvancedFind` is automatically omitted (Dataverse rejects it for Memo columns).
 - `dataverse_create_column` now supports `boolean_true_label` and `boolean_false_label` fields for Boolean columns; the required `OptionSet` with `TrueOption`/`FalseOption` is built automatically (defaults: "Yes" / "No").
 - `dataverse_create_column` now supports `global_choice_name` for `Picklist` and `MultiSelectPicklist` columns to bind the column to an existing global choice; the tool resolves the choice name to its MetadataId GUID automatically before creating the column.

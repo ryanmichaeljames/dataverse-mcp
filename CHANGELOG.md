@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-06-26
+
 ### Added
 - Thirteen Custom API management tools in new module `src/dataverse_mcp/tools/custom_apis.py`
   (`customapis` category), covering three Dataverse entity sets (standard OData, not metadata API):

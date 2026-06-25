@@ -5708,3 +5708,496 @@ class CancelAsyncOperationInput(DataverseEnvironmentInput):
         if not _GUID_PATTERN.match(v):
             raise ValueError(f"Invalid GUID format: '{v}'")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Custom API tools
+# ---------------------------------------------------------------------------
+
+
+class ListCustomApisInput(DataverseEnvironmentInput):
+    """Input for listing Custom API records in the Dataverse environment."""
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "OData $filter expression to narrow results. Use lowercase logical "
+            "names (e.g., \"isprivate eq false\", \"isfunction eq true\", "
+            "\"bindingtype eq 0\")."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Maximum number of Custom API records to return (1–5000).",
+    )
+
+
+class GetCustomApiInput(DataverseEnvironmentInput):
+    """Input for retrieving a single Custom API record by GUID."""
+
+    custom_api_id: str = Field(
+        ...,
+        description=(
+            "GUID of the Custom API record to retrieve "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+
+    @field_validator("custom_api_id")
+    @classmethod
+    def validate_custom_api_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("custom_api_id must be a valid GUID")
+        return v
+
+
+class CreateCustomApiInput(DataverseEnvironmentInput):
+    """Input for creating a Custom API record."""
+
+    uniquename: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Unique name for the Custom API. Must include a publisher prefix "
+            "(e.g., 'contoso_MyCustomAction'). This value is immutable after creation."
+        ),
+    )
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Display name for the Custom API.",
+    )
+    displayname: str | None = Field(
+        default=None,
+        description="Localizable display name for the Custom API. Defaults to name when omitted.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Description of the Custom API.",
+    )
+    binding_type: int = Field(
+        default=0,
+        ge=0,
+        le=2,
+        description=(
+            "Binding type for the Custom API (immutable after creation). "
+            "0=Global (default), 1=Entity, 2=EntityCollection."
+        ),
+    )
+    is_function: bool = Field(
+        default=False,
+        description=(
+            "When True, the Custom API is a Function (GET-style, appears in $metadata). "
+            "When False (default), it is an Action (POST-style). Immutable after creation."
+        ),
+    )
+    is_private: bool = Field(
+        default=False,
+        description=(
+            "When True, the Custom API is hidden from $metadata and not discoverable "
+            "by external callers. Defaults to False."
+        ),
+    )
+    allowed_custom_processing_step_type: int = Field(
+        default=0,
+        ge=0,
+        le=2,
+        description=(
+            "Controls which plug-in processing step types may be registered "
+            "(immutable after creation). "
+            "0=None (default), 1=AsyncOnly, 2=SyncAndAsync."
+        ),
+    )
+    bound_entity_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Logical name of the bound entity (e.g., 'account'). "
+            "Required when binding_type is 1 (Entity) or 2 (EntityCollection). "
+            "Immutable after creation."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_bound_entity(self) -> "CreateCustomApiInput":
+        if self.binding_type in (1, 2) and not self.bound_entity_logical_name:
+            raise ValueError(
+                "bound_entity_logical_name is required when binding_type is 1 (Entity) "
+                "or 2 (EntityCollection)."
+            )
+        return self
+
+
+class UpdateCustomApiInput(DataverseEnvironmentInput):
+    """Input for updating mutable fields on a Custom API record."""
+
+    custom_api_id: str = Field(
+        ...,
+        description="GUID of the Custom API record to update.",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Updated display name.",
+    )
+    displayname: str | None = Field(
+        default=None,
+        description="Updated localizable display name.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Updated description.",
+    )
+    is_private: bool | None = Field(
+        default=None,
+        description="When provided, sets the isprivate flag.",
+    )
+    execute_privilege_name: str | None = Field(
+        default=None,
+        description=(
+            "Privilege name required to execute the Custom API "
+            "(e.g., 'prvMyPrivilege'). Set to an empty string to clear."
+        ),
+    )
+
+    @field_validator("custom_api_id")
+    @classmethod
+    def validate_custom_api_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("custom_api_id must be a valid GUID")
+        return v
+
+    @model_validator(mode="after")
+    def check_at_least_one_field(self) -> "UpdateCustomApiInput":
+        if (
+            self.name is None
+            and self.displayname is None
+            and self.description is None
+            and self.is_private is None
+            and self.execute_privilege_name is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "name, displayname, description, is_private, execute_privilege_name"
+            )
+        return self
+
+
+class DeleteCustomApiInput(DataverseEnvironmentInput):
+    """Input for deleting a Custom API record."""
+
+    custom_api_id: str = Field(
+        ...,
+        description=(
+            "GUID of the Custom API record to delete "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+
+    @field_validator("custom_api_id")
+    @classmethod
+    def validate_custom_api_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("custom_api_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Custom API Request Parameter tools
+# ---------------------------------------------------------------------------
+
+
+class ListCustomApiRequestParametersInput(DataverseEnvironmentInput):
+    """Input for listing Custom API request parameter records."""
+
+    custom_api_id: str = Field(
+        ...,
+        description="GUID of the parent Custom API whose request parameters to list.",
+    )
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "Additional OData $filter expression to narrow results "
+            "(e.g., \"isoptional eq true\"). "
+            "The parent Custom API filter is always applied automatically."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Maximum number of records to return (1–5000).",
+    )
+
+    @field_validator("custom_api_id")
+    @classmethod
+    def validate_custom_api_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("custom_api_id must be a valid GUID")
+        return v
+
+
+class CreateCustomApiRequestParameterInput(DataverseEnvironmentInput):
+    """Input for creating a Custom API request parameter record."""
+
+    custom_api_id: str = Field(
+        ...,
+        description=(
+            "GUID of the parent Custom API. "
+            "This value is immutable after creation."
+        ),
+    )
+    uniquename: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Unique name for the parameter within the Custom API "
+            "(e.g., 'Target'). Immutable after creation."
+        ),
+    )
+    type: int = Field(
+        ...,
+        ge=0,
+        le=12,
+        description=(
+            "Data type for the parameter (immutable after creation). "
+            "0=Boolean, 1=DateTime, 2=Decimal, 3=Entity, 4=EntityCollection, "
+            "5=EntityReference, 6=Float, 7=Integer, 8=Money, 9=Picklist, "
+            "10=String, 11=StringArray, 12=Guid."
+        ),
+    )
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Display name for the request parameter.",
+    )
+    displayname: str | None = Field(
+        default=None,
+        description="Localizable display name. Defaults to name when omitted.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Description of the request parameter.",
+    )
+    is_optional: bool = Field(
+        default=False,
+        description="When True, this parameter is optional for callers. Defaults to False.",
+    )
+
+    @field_validator("custom_api_id")
+    @classmethod
+    def validate_custom_api_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("custom_api_id must be a valid GUID")
+        return v
+
+
+class UpdateCustomApiRequestParameterInput(DataverseEnvironmentInput):
+    """Input for updating mutable fields on a Custom API request parameter record."""
+
+    request_parameter_id: str = Field(
+        ...,
+        description="GUID of the Custom API request parameter record to update.",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Updated display name.",
+    )
+    displayname: str | None = Field(
+        default=None,
+        description="Updated localizable display name.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Updated description.",
+    )
+    is_optional: bool | None = Field(
+        default=None,
+        description="When provided, updates the isoptional flag.",
+    )
+
+    @field_validator("request_parameter_id")
+    @classmethod
+    def validate_request_parameter_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("request_parameter_id must be a valid GUID")
+        return v
+
+    @model_validator(mode="after")
+    def check_at_least_one_field(self) -> "UpdateCustomApiRequestParameterInput":
+        if (
+            self.name is None
+            and self.displayname is None
+            and self.description is None
+            and self.is_optional is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "name, displayname, description, is_optional"
+            )
+        return self
+
+
+class DeleteCustomApiRequestParameterInput(DataverseEnvironmentInput):
+    """Input for deleting a Custom API request parameter record."""
+
+    request_parameter_id: str = Field(
+        ...,
+        description=(
+            "GUID of the Custom API request parameter record to delete "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+
+    @field_validator("request_parameter_id")
+    @classmethod
+    def validate_request_parameter_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("request_parameter_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Custom API Response Property tools
+# ---------------------------------------------------------------------------
+
+
+class ListCustomApiResponsePropertiesInput(DataverseEnvironmentInput):
+    """Input for listing Custom API response property records."""
+
+    custom_api_id: str = Field(
+        ...,
+        description="GUID of the parent Custom API whose response properties to list.",
+    )
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "Additional OData $filter expression to narrow results "
+            "(e.g., \"type eq 10\"). "
+            "The parent Custom API filter is always applied automatically."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        ge=1,
+        le=5000,
+        description="Maximum number of records to return (1–5000).",
+    )
+
+    @field_validator("custom_api_id")
+    @classmethod
+    def validate_custom_api_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("custom_api_id must be a valid GUID")
+        return v
+
+
+class CreateCustomApiResponsePropertyInput(DataverseEnvironmentInput):
+    """Input for creating a Custom API response property record."""
+
+    custom_api_id: str = Field(
+        ...,
+        description=(
+            "GUID of the parent Custom API. "
+            "This value is immutable after creation."
+        ),
+    )
+    uniquename: str = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Unique name for the response property within the Custom API "
+            "(e.g., 'Result'). Immutable after creation."
+        ),
+    )
+    type: int = Field(
+        ...,
+        ge=0,
+        le=12,
+        description=(
+            "Data type for the response property (immutable after creation). "
+            "0=Boolean, 1=DateTime, 2=Decimal, 3=Entity, 4=EntityCollection, "
+            "5=EntityReference, 6=Float, 7=Integer, 8=Money, 9=Picklist, "
+            "10=String, 11=StringArray, 12=Guid."
+        ),
+    )
+    name: str = Field(
+        ...,
+        min_length=1,
+        description="Display name for the response property.",
+    )
+    displayname: str | None = Field(
+        default=None,
+        description="Localizable display name. Defaults to name when omitted.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Description of the response property.",
+    )
+
+    @field_validator("custom_api_id")
+    @classmethod
+    def validate_custom_api_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("custom_api_id must be a valid GUID")
+        return v
+
+
+class UpdateCustomApiResponsePropertyInput(DataverseEnvironmentInput):
+    """Input for updating mutable fields on a Custom API response property record."""
+
+    response_property_id: str = Field(
+        ...,
+        description="GUID of the Custom API response property record to update.",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Updated display name.",
+    )
+    displayname: str | None = Field(
+        default=None,
+        description="Updated localizable display name.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Updated description.",
+    )
+
+    @field_validator("response_property_id")
+    @classmethod
+    def validate_response_property_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("response_property_id must be a valid GUID")
+        return v
+
+    @model_validator(mode="after")
+    def check_at_least_one_field(self) -> "UpdateCustomApiResponsePropertyInput":
+        if (
+            self.name is None
+            and self.displayname is None
+            and self.description is None
+        ):
+            raise ValueError(
+                "At least one updatable field must be provided: "
+                "name, displayname, description"
+            )
+        return self
+
+
+class DeleteCustomApiResponsePropertyInput(DataverseEnvironmentInput):
+    """Input for deleting a Custom API response property record."""
+
+    response_property_id: str = Field(
+        ...,
+        description=(
+            "GUID of the Custom API response property record to delete "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+    )
+
+    @field_validator("response_property_id")
+    @classmethod
+    def validate_response_property_id(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("response_property_id must be a valid GUID")
+        return v

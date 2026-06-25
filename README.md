@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/dataverse-mcp)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, manage model-driven app forms, views, and apps, administer security roles, teams, and users, manage plug-in trace logging, and explore Power Platform environments.
+An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, manage model-driven app forms, views, and apps, administer security roles, teams, and users, manage plug-in trace logging, manage custom APIs, and explore Power Platform environments.
 
 Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** and works with Claude, GitHub Copilot, and any MCP-compatible client.
 
@@ -344,7 +344,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**157 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**170 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -375,6 +375,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `security` | 12 | Security roles, teams, users, business units |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
+| `customapis` | 13 | Custom API, request parameter, and response property management |
 
 `core` is **always** registered even when not listed. When `DATAVERSE_TOOLS` is unset or empty, all categories register (current default behaviour). Category gating composes with `DATAVERSE_ALLOW_WRITE` and `DATAVERSE_ALLOW_DELETE`: a tool registers only when its category is enabled AND its write/delete flag (if any) is set.
 
@@ -450,7 +451,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_column` | default | Get full metadata for one column, including type-specific properties |
 | `dataverse_create_table` | write | Create a custom table (ownership type, primary name attribute) |
 | `dataverse_update_table` | write | Update a table's display name or description |
-| `dataverse_create_column` | write | Add a typed column to a table |
+| `dataverse_create_column` | write | Add a typed column to a table (supports Memo, Boolean with custom labels, and Picklist/MultiSelectPicklist bound to a global choice) |
 | `dataverse_update_column` | write | Replace a column via full PUT (fetch with `dataverse_get_column` first) |
 | `dataverse_publish_customizations` | write | Publish schema changes via `PublishXml` (targeted) or `PublishAllXml` |
 | `dataverse_delete_table` | delete | Permanently delete a custom table and all its data |
@@ -629,6 +630,24 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_plugin_trace_log_setting` | default | Get org-wide trace log verbosity (off / exception / all) |
 | `dataverse_list_plugin_trace_logs` | default | List trace logs with filters (class, message, entity, operation, errors-only, time window) |
 | `dataverse_set_plugin_trace_log_setting` | write | Set org-wide trace log verbosity (`off`, `exception`, `all`) |
+
+### Custom APIs
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_custom_apis` | default | List custom APIs, optional filter and pagination |
+| `dataverse_get_custom_api` | default | Get one custom API by GUID, including its request parameters and response properties |
+| `dataverse_create_custom_api` | write | Create a custom API (unbound, entity-bound, or entity collection-bound) |
+| `dataverse_update_custom_api` | write | Update mutable fields of a custom API (display name, description, visibility, allowed step types) |
+| `dataverse_delete_custom_api` | delete | Permanently delete a custom API and its child parameters and properties |
+| `dataverse_list_custom_api_request_parameters` | default | List request parameters for a custom API |
+| `dataverse_create_custom_api_request_parameter` | write | Add a typed request parameter to a custom API |
+| `dataverse_update_custom_api_request_parameter` | write | Update mutable fields of a request parameter |
+| `dataverse_delete_custom_api_request_parameter` | delete | Delete a request parameter |
+| `dataverse_list_custom_api_response_properties` | default | List response properties for a custom API |
+| `dataverse_create_custom_api_response_property` | write | Add a typed response property to a custom API |
+| `dataverse_update_custom_api_response_property` | write | Update mutable fields of a response property |
+| `dataverse_delete_custom_api_response_property` | delete | Delete a response property |
 
 ---
 

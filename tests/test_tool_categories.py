@@ -10,8 +10,8 @@ interpreter process.
 
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
-   tools across all categories register (71 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 157 tools register.
+   tools across all categories register (75 tools).
+2. All allow flags set, DATAVERSE_TOOLS unset: all 170 tools register.
 3. DATAVERSE_TOOLS=security + both allow flags: only 17 core + 12 security = 29.
 4. DATAVERSE_TOOLS=core,solutions + both allow flags: 17 core + 17 solutions = 34.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
@@ -24,6 +24,8 @@ Acceptance criteria covered:
 9. DATAVERSE_TOOLS=security (no jobs): jobs tools absent.
 10. DATAVERSE_TOOLS=webresources + both allow flags: 17 core + 5 webresources = 22.
 11. DATAVERSE_TOOLS=security (no webresources): webresource tools absent.
+12. DATAVERSE_TOOLS=customapis + both allow flags: 17 core + 13 customapis = 30.
+13. DATAVERSE_TOOLS=security (no customapis): customapi tools absent.
 """
 
 import json
@@ -165,6 +167,33 @@ _WEBRESOURCES_ALL_TOOLS = (
     _WEBRESOURCES_READ_TOOLS | _WEBRESOURCES_WRITE_TOOLS | _WEBRESOURCES_DELETE_TOOLS
 )
 
+# Custom APIs tools: 4 read + 6 write + 3 delete = 13 total
+_CUSTOMAPIS_READ_TOOLS = {
+    "dataverse_list_custom_apis",
+    "dataverse_get_custom_api",
+    "dataverse_list_custom_api_request_parameters",
+    "dataverse_list_custom_api_response_properties",
+}
+
+_CUSTOMAPIS_WRITE_TOOLS = {
+    "dataverse_create_custom_api",
+    "dataverse_update_custom_api",
+    "dataverse_create_custom_api_request_parameter",
+    "dataverse_update_custom_api_request_parameter",
+    "dataverse_create_custom_api_response_property",
+    "dataverse_update_custom_api_response_property",
+}
+
+_CUSTOMAPIS_DELETE_TOOLS = {
+    "dataverse_delete_custom_api",
+    "dataverse_delete_custom_api_request_parameter",
+    "dataverse_delete_custom_api_response_property",
+}
+
+_CUSTOMAPIS_ALL_TOOLS = (
+    _CUSTOMAPIS_READ_TOOLS | _CUSTOMAPIS_WRITE_TOOLS | _CUSTOMAPIS_DELETE_TOOLS
+)
+
 # Solutions tools (solutions category only, not flows): 8 read + 8 write + 1 delete = 17
 _SOLUTIONS_READ_TOOLS = {
     "dataverse_list_solutions",
@@ -217,7 +246,7 @@ _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
 
 
 def test_default_no_env_vars():
-    """No env vars set: only read-only tools register across all categories (71 tools)."""
+    """No env vars set: only read-only tools register across all categories (75 tools)."""
     tools = _run_scenario({})
     tool_set = set(tools)
 
@@ -229,6 +258,7 @@ def test_default_no_env_vars():
         | _FLOWS_WRITE_TOOLS
         | _JOBS_WRITE_TOOLS
         | _WEBRESOURCES_WRITE_TOOLS | _WEBRESOURCES_DELETE_TOOLS
+        | _CUSTOMAPIS_WRITE_TOOLS | _CUSTOMAPIS_DELETE_TOOLS
     )
     assert not (tool_set & all_write_delete), (
         f"Write/delete tools unexpectedly registered: {tool_set & all_write_delete}"
@@ -249,17 +279,22 @@ def test_default_no_env_vars():
         f"Missing webresources read tools: {_WEBRESOURCES_READ_TOOLS - tool_set}"
     )
 
-    # Total should be 71 (69 + 2 new webresource read tools)
-    assert len(tools) == 71, f"Expected 71 default tools, got {len(tools)}: {tools}"
+    # Custom API read tools must be present (customapis is always-on when DATAVERSE_TOOLS unset)
+    assert _CUSTOMAPIS_READ_TOOLS <= tool_set, (
+        f"Missing customapis read tools: {_CUSTOMAPIS_READ_TOOLS - tool_set}"
+    )
+
+    # Total should be 75 (71 + 4 new customapis read tools)
+    assert len(tools) == 75, f"Expected 75 default tools, got {len(tools)}: {tools}"
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 157 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 170 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 157, f"Expected 157 tools, got {len(tools)}"
+    assert len(tools) == 170, f"Expected 170 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
@@ -438,4 +473,42 @@ def test_security_only_no_webresources():
     assert not (tool_set & _WEBRESOURCES_ALL_TOOLS), (
         f"Web resource tools should not register when DATAVERSE_TOOLS=security: "
         f"{tool_set & _WEBRESOURCES_ALL_TOOLS}"
+    )
+
+
+def test_customapis_only_with_all_flags():
+    """DATAVERSE_TOOLS=customapis + both allow flags: 17 core + 13 customapis = 30."""
+    tools = _run_scenario({
+        "DATAVERSE_TOOLS": "customapis",
+        "DATAVERSE_ALLOW_WRITE": "true",
+        "DATAVERSE_ALLOW_DELETE": "true",
+    })
+    tool_set = set(tools)
+
+    expected = _CORE_ALL_TOOLS | _CUSTOMAPIS_ALL_TOOLS
+    assert tool_set == expected, (
+        f"Unexpected tools. Extra: {tool_set - expected}, "
+        f"Missing: {expected - tool_set}"
+    )
+    assert len(tools) == 30, f"Expected 30 tools, got {len(tools)}"
+
+    # Security tools must not be present
+    assert not (tool_set & _SECURITY_ALL_TOOLS), (
+        f"Security tools should not register: {tool_set & _SECURITY_ALL_TOOLS}"
+    )
+
+
+def test_security_only_no_customapis():
+    """DATAVERSE_TOOLS=security (no customapis): customapis tools absent."""
+    tools = _run_scenario({
+        "DATAVERSE_TOOLS": "security",
+        "DATAVERSE_ALLOW_WRITE": "true",
+        "DATAVERSE_ALLOW_DELETE": "true",
+    })
+    tool_set = set(tools)
+
+    # Custom API tools must NOT register when customapis category is not requested
+    assert not (tool_set & _CUSTOMAPIS_ALL_TOOLS), (
+        f"Custom API tools should not register when DATAVERSE_TOOLS=security: "
+        f"{tool_set & _CUSTOMAPIS_ALL_TOOLS}"
     )

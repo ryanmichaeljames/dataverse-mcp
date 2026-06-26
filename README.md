@@ -4,7 +4,7 @@
 [![Python](https://img.shields.io/pypi/pyversions/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)
 [![License: MIT](https://img.shields.io/github/license/ryanmichaeljames/dataverse-mcp)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, inspect metadata, manage schema, manage model-driven app forms, views, and apps, administer security roles, teams, and users, manage plug-in trace logging, manage custom APIs, and explore Power Platform environments.
+An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, bulk upsert data, inspect metadata, manage schema, analyze component dependencies, manage model-driven app forms, views, and apps, administer security roles, teams, and users, audit user access, manage plug-in trace logging, manage custom APIs, and explore Power Platform environments.
 
 Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** and works with Claude, GitHub Copilot, and any MCP-compatible client.
 
@@ -344,7 +344,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**170 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**173 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -362,9 +362,9 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| `core` | 17 | Environment introspection + all record CRUD (always registered) |
+| `core` | 18 | Environment introspection + all record CRUD (always registered) |
 | `schema` | 29 | Table/column/relationship/choice metadata |
-| `solutions` | 17 | Solution and publisher management, solution components, history, import/export ALM |
+| `solutions` | 18 | Solution and publisher management, solution components, history, import/export ALM, dependency analysis |
 | `flows` | 5 | Cloud flow listing and enable/disable |
 | `forms` | 6 | Model-driven form management |
 | `views` | 7 | Saved query / view management |
@@ -372,7 +372,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `connections` | 5 | Connection reference management |
 | `variables` | 8 | Environment variable definitions and values |
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
-| `security` | 12 | Security roles, teams, users, business units |
+| `security` | 13 | Security roles, teams, users, business units, composite access audit |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 | `customapis` | 13 | Custom API, request parameter, and response property management |
@@ -400,6 +400,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_list_users` | default | List system users, optional filter and pagination |
 | `dataverse_get_user` | default | Get one system user by GUID |
 | `dataverse_list_business_units` | default | List business units, optional filter and pagination |
+| `dataverse_audit_user_access` | default | Composite report: user identity, direct roles, team memberships + team roles, effective privileges, optional record-level access check |
 | `dataverse_assign_security_role` | write | Assign a security role to a user or team |
 | `dataverse_remove_security_role` | write | Remove a security role from a user or team |
 | `dataverse_add_team_members` | write | Add one or more users to a team |
@@ -434,6 +435,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_count_records` | default | Count rows in a table, optional filter |
 | `dataverse_aggregate_table` | default | Aggregate (sum, avg, min, max, countdistinct) with optional grouping |
 | `dataverse_execute_batch` | default | Run up to 1,000 OData operations in one `$batch` (GET-only unless write enabled) |
+| `dataverse_bulk_upsert` | write | Upsert many records via `$batch` PATCH; auto-detects primary GUID key or uses `key_columns` for alternate-key upserts; per-row outcomes |
 | `dataverse_create_record` | write | Create a record and return its new GUID |
 | `dataverse_update_record` | write | Partially update a record (PATCH) |
 | `dataverse_associate_records` | write | Associate two records via a collection-valued navigation property |
@@ -453,7 +455,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_update_table` | write | Update a table's display name or description |
 | `dataverse_create_column` | write | Add a typed column to a table (supports Memo, Boolean with custom labels, and Picklist/MultiSelectPicklist bound to a global choice) |
 | `dataverse_update_column` | write | Replace a column via full PUT (fetch with `dataverse_get_column` first) |
-| `dataverse_publish_customizations` | write | Publish schema changes via `PublishXml` (targeted) or `PublishAllXml` |
+| `dataverse_publish_customizations` | write | Publish schema changes via `PublishXml` (targeted by entity/option set/relationship/web resource IDs) or `PublishAllXml` |
 | `dataverse_delete_table` | delete | Permanently delete a custom table and all its data |
 | `dataverse_delete_column` | delete | Permanently delete a custom column and all its data |
 
@@ -506,6 +508,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_import_job` | default | Get one importjob by GUID — returns progress, completedon, solutionname; add `include_data=true` for the result XML on failure |
 | `dataverse_list_import_jobs` | default | List importjobs, optional filter by solution unique name, ordered by createdon desc |
 | `dataverse_clone_solution_as_patch` | write | Clone a solution as a patch via bound `CloneAsPatch` action; resolves parent by GUID or unique name |
+| `dataverse_analyze_dependencies` | default | Analyze component dependencies: `blocking_delete` (blocks deletion), `dependents` (what depends on it), or `required` (what it needs); resolves component type codes to names |
 
 > **Filesystem I/O note.** `dataverse_export_solution` can write the decoded .zip to a local path when
 > `output_path` is supplied. `dataverse_import_solution` can read a local .zip when `input_path` is

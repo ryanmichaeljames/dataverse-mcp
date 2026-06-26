@@ -1,7 +1,7 @@
 """Pydantic input models for all Dataverse MCP tools."""
 
 import re
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -2033,23 +2033,31 @@ class PublishCustomizationsInput(DataverseEnvironmentInput):
             "Provide this to publish only specific relationships."
         ),
     )
+    web_resource_ids: list[str] = Field(
+        default_factory=list,
+        description=(
+            "GUIDs of web resources to publish (e.g., ['a1b2c3d4-...')]. "
+            "Use instead of publish_all to publish only specific web resources — "
+            "much faster than PublishAllXml."
+        ),
+    )
     publish_all: bool = Field(
         default=False,
         description=(
             "When True, publishes ALL unpublished customizations in the environment "
             "using PublishAllXml. This may take several minutes for large environments. "
-            "Ignores entities, option_sets, and relationships parameters when True."
+            "Ignores all other parameters when True."
         ),
     )
 
     @model_validator(mode="after")
     def validate_publish_target(self) -> "PublishCustomizationsInput":
         if not self.publish_all and not (
-            self.entities or self.option_sets or self.relationships
+            self.entities or self.option_sets or self.relationships or self.web_resource_ids
         ):
             raise ValueError(
                 "When publish_all is false, provide at least one target in entities, "
-                "option_sets, or relationships."
+                "option_sets, relationships, or web_resource_ids."
             )
         return self
 
@@ -2480,6 +2488,68 @@ class SetUserStateInput(DataverseEnvironmentInput):
         return v
 
 
+class AuditUserAccessInput(DataverseEnvironmentInput):
+    """Input for the composite user access audit tool."""
+
+    user_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the system user to audit. "
+            "Provide either user_id or user_domain_name, not both."
+        ),
+        min_length=36,
+    )
+    user_domain_name: str | None = Field(
+        default=None,
+        description=(
+            "Domain name of the user to audit (e.g., 'user@contoso.com'). "
+            "Provide either user_id or user_domain_name, not both."
+        ),
+        min_length=1,
+    )
+    target_entity_set_name: str | None = Field(
+        default=None,
+        description=(
+            "OData collection name of a specific record to check access against "
+            "(e.g., 'accounts'). Requires target_record_id."
+        ),
+    )
+    target_record_id: str | None = Field(
+        default=None,
+        description=(
+            "GUID of the specific record to check access against. "
+            "Requires target_entity_set_name."
+        ),
+        min_length=36,
+    )
+    include_privileges: bool = Field(
+        default=True,
+        description=(
+            "When True, includes the user's effective privilege list. "
+            "Set False to skip this call and speed up the report."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def validate_user_identifier(self) -> "AuditUserAccessInput":
+        if not self.user_id and not self.user_domain_name:
+            raise ValueError("Provide exactly one of user_id or user_domain_name.")
+        if self.user_id and self.user_domain_name:
+            raise ValueError("Provide exactly one of user_id or user_domain_name, not both.")
+        if bool(self.target_entity_set_name) != bool(self.target_record_id):
+            raise ValueError(
+                "target_entity_set_name and target_record_id must both be provided together."
+            )
+        return self
+
+    @field_validator("user_id", "target_record_id", mode="before")
+    @classmethod
+    def validate_audit_guids(cls, v: str | None) -> str | None:
+        if v is not None and not _GUID_PATTERN.match(v):
+            raise ValueError("must be a valid GUID")
+        return v
+
+
 # ---------------------------------------------------------------------------
 # Service discovery tools
 # ---------------------------------------------------------------------------
@@ -2867,6 +2937,64 @@ class ExecuteBatchInput(DataverseEnvironmentInput):
                     )
                 seen.add(cs)
                 current_cs = cs
+        return v
+
+
+class BulkUpsertInput(DataverseEnvironmentInput):
+    """Input for bulk-upserting records via OData $batch PATCH."""
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the target table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    records: list[dict[str, Any]] = Field(
+        ...,
+        description=(
+            "List of records to upsert. Each record is a dict of column→value pairs "
+            "and must include the key field(s). "
+            "Maximum 1,000 records per call."
+        ),
+        min_length=1,
+    )
+    key_columns: list[str] | None = Field(
+        default=None,
+        description=(
+            "Alternate key column names used to build the upsert URL. "
+            "When provided, the URL is built as "
+            "entity_set_name(col1='val1',col2='val2') and these fields are "
+            "removed from the PATCH body. "
+            "When omitted, the tool looks for a GUID-valued field in each record "
+            "and uses it as the primary key."
+        ),
+        min_length=1,
+    )
+    continue_on_error: bool = Field(
+        default=True,
+        description=(
+            "When True, a failed row does not stop the batch — remaining rows "
+            "are still attempted and each row gets its own outcome in the results."
+        ),
+    )
+    chunk_size: int = Field(
+        default=100,
+        description=(
+            "Number of records per $batch request. "
+            "Keep ≤1,000 (the Dataverse batch limit). "
+            "Smaller values reduce timeout risk on slow environments."
+        ),
+        ge=1,
+        le=1000,
+    )
+
+    @field_validator("records")
+    @classmethod
+    def validate_record_count(cls, v: list) -> list:
+        if len(v) > 1000:
+            raise ValueError("records must not exceed 1,000 per call")
         return v
 
 
@@ -6200,4 +6328,50 @@ class DeleteCustomApiResponsePropertyInput(DataverseEnvironmentInput):
     def validate_response_property_id(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
             raise ValueError("response_property_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Dependency analysis tools
+# ---------------------------------------------------------------------------
+
+
+class AnalyzeDependenciesInput(DataverseEnvironmentInput):
+    """Input for analyzing component dependencies in Dataverse."""
+
+    component_id: str = Field(
+        ...,
+        description=(
+            "GUID of the solution component to analyze "
+            "(e.g., an entity metadata id, attribute metadata id)."
+        ),
+        min_length=36,
+    )
+    component_type: int = Field(
+        ...,
+        description=(
+            "Integer component type code. Common values: "
+            "1=Entity, 2=Attribute, 3=Relationship, 9=OptionSet, "
+            "20=SecurityRole, 26=SavedQuery, 29=Workflow, 60=SystemForm, "
+            "61=WebResource, 62=SiteMap, 91=PluginAssembly, 92=SDKMessageProcessingStep, "
+            "300=CanvasApp. "
+            "See https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/solutioncomponent."
+        ),
+        ge=1,
+    )
+    direction: Literal["blocking_delete", "dependents", "required"] = Field(
+        default="blocking_delete",
+        description=(
+            "Which dependency direction to retrieve: "
+            "'blocking_delete' — components that block deletion of this component; "
+            "'dependents' — all components that depend on this component; "
+            "'required' — all components this component requires."
+        ),
+    )
+
+    @field_validator("component_id")
+    @classmethod
+    def validate_component_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("component_id must be a valid GUID")
         return v

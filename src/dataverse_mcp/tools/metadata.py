@@ -2197,6 +2197,12 @@ async def dataverse_publish_customizations(
         relationship_node = ET.SubElement(relationships_node, "relationship")
         relationship_node.text = relationship_name
 
+    if params.web_resource_ids:
+        webresources_node = ET.SubElement(root, "webresources")
+        for wr_id in params.web_resource_ids:
+            wr_node = ET.SubElement(webresources_node, "webresource")
+            wr_node.text = wr_id
+
     parameter_xml = ET.tostring(root, encoding="unicode", short_empty_elements=True)
 
     app_ctx = get_app_ctx(ctx)

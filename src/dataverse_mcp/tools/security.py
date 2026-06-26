@@ -27,6 +27,7 @@ from dataverse_mcp.client import (
 from dataverse_mcp.models import (
     AddTeamMembersInput,
     AssignSecurityRoleInput,
+    AuditUserAccessInput,
     GetSecurityRoleInput,
     GetTeamInput,
     GetUserInput,
@@ -730,3 +731,177 @@ async def dataverse_set_user_state(params: SetUserStateInput, ctx: Context) -> s
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_set_user_state")
+
+
+# ---------------------------------------------------------------------------
+# Composite: user access audit
+# ---------------------------------------------------------------------------
+
+
+@tool(
+    name="dataverse_audit_user_access",
+    annotations={
+        "title": "Audit User Access",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_audit_user_access(
+    params: AuditUserAccessInput, ctx: Context
+) -> str:
+    """Return a composite access report for a Dataverse system user.
+
+    Gathers in one call: user identity, direct security roles, team memberships
+    (with each team's roles), and optionally effective privileges and record-level
+    access rights. Resolves all type codes to human-readable names.
+
+    Provide either user_id (GUID) or user_domain_name (e.g. 'user@contoso.com').
+    Optionally provide target_entity_set_name + target_record_id to include a
+    record-level access check.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    api_base = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+
+        # Resolve user_id from domain name if needed
+        user_id = params.user_id
+        if not user_id:
+            resp = await request_with_retry(
+                app_ctx.http_client,
+                "GET",
+                f"{api_base}/systemusers"
+                f"?$filter=domainname eq '{params.user_domain_name}'"
+                f"&$select=systemuserid,fullname,domainname,isdisabled,_businessunitid_value"
+                f"&$top=1",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            users = resp.json().get("value", [])
+            if not users:
+                return json.dumps({
+                    "error": True,
+                    "message": f"No user found with domainname '{params.user_domain_name}'.",
+                })
+            user_id = users[0]["systemuserid"]
+            user_record = users[0]
+            user_record.pop("@odata.context", None)
+            user_record.pop("@odata.etag", None)
+        else:
+            resp = await request_with_retry(
+                app_ctx.http_client,
+                "GET",
+                f"{api_base}/systemusers({user_id})"
+                f"?$select=systemuserid,fullname,domainname,isdisabled,_businessunitid_value",
+                headers=headers,
+            )
+            resp.raise_for_status()
+            user_record = resp.json()
+            user_record.pop("@odata.context", None)
+            user_record.pop("@odata.etag", None)
+
+        # Direct security roles
+        roles_resp = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            f"{api_base}/systemusers({user_id})/systemuserroles_association"
+            f"?$select=roleid,name",
+            headers=headers,
+        )
+        roles_resp.raise_for_status()
+        direct_roles = [
+            {"id": r.get("roleid"), "name": r.get("name")}
+            for r in roles_resp.json().get("value", [])
+        ]
+
+        # Team memberships
+        teams_resp = await request_with_retry(
+            app_ctx.http_client,
+            "GET",
+            f"{api_base}/systemusers({user_id})/teammembership_association"
+            f"?$select=teamid,name,teamtype",
+            headers=headers,
+        )
+        teams_resp.raise_for_status()
+        raw_teams = teams_resp.json().get("value", [])
+
+        # Roles for each team (up to 10 teams to cap HTTP calls)
+        teams = []
+        for team in raw_teams[:10]:
+            team_id = team.get("teamid")
+            tr_resp = await request_with_retry(
+                app_ctx.http_client,
+                "GET",
+                f"{api_base}/teams({team_id})/teamroles_association?$select=roleid,name",
+                headers=headers,
+            )
+            tr_resp.raise_for_status()
+            team_roles = [
+                {"id": r.get("roleid"), "name": r.get("name")}
+                for r in tr_resp.json().get("value", [])
+            ]
+            teams.append({
+                "id": team_id,
+                "name": team.get("name"),
+                "team_type": team.get("teamtype"),
+                "roles": team_roles,
+            })
+        if len(raw_teams) > 10:
+            teams.append({"note": f"{len(raw_teams) - 10} additional teams omitted (cap 10)"})
+
+        report: dict = {
+            "user": user_record,
+            "direct_roles": direct_roles,
+            "teams": teams,
+        }
+
+        # Effective privileges (optional)
+        if params.include_privileges:
+            priv_resp = await request_with_retry(
+                app_ctx.http_client,
+                "GET",
+                f"{api_base}/systemusers({user_id})"
+                f"/Microsoft.Dynamics.CRM.RetrieveUserPrivileges",
+                headers=headers,
+            )
+            priv_resp.raise_for_status()
+            privileges = priv_resp.json().get("RolePrivileges", [])
+            report["effective_privilege_count"] = len(privileges)
+            report["effective_privileges"] = privileges
+
+        # Record-level access check (optional)
+        if params.target_entity_set_name and params.target_record_id:
+            target_ref = (
+                f"{api_base}/{params.target_entity_set_name}({params.target_record_id})"
+            )
+            access_resp = await request_with_retry(
+                app_ctx.http_client,
+                "GET",
+                f"{api_base}/systemusers({user_id})"
+                f"/Microsoft.Dynamics.CRM.RetrievePrincipalAccess(Target=@tid)",
+                params={"@tid": f"{{'@odata.id':'{target_ref}'}}"},
+                headers=headers,
+            )
+            access_resp.raise_for_status()
+            access_payload = access_resp.json()
+            access_rights_str = access_payload.get("AccessRights", "")
+            named_rights = [r.strip() for r in access_rights_str.split(",") if r.strip()]
+            report["record_access"] = {
+                "entity_set_name": params.target_entity_set_name,
+                "record_id": params.target_record_id,
+                "access_rights": access_rights_str,
+                "named_rights": named_rights,
+            }
+
+        return json.dumps(report)
+
+    except Exception as e:
+        return tool_error_response(e, "dataverse_audit_user_access")

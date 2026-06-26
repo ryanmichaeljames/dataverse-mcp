@@ -26,6 +26,8 @@ from dataverse_mcp.client import (
 from dataverse_mcp.models import (
     AggregateTableInput,
     AssociateRecordsInput,
+    BatchOperationItem,
+    BulkUpsertInput,
     CountRecordsInput,
     CreateRecordInput,
     DeleteRecordInput,
@@ -724,3 +726,193 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_execute_batch")
+
+
+# ---------------------------------------------------------------------------
+# Bulk upsert
+# ---------------------------------------------------------------------------
+
+_GUID_RE_FULL = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
+
+def _build_upsert_url(
+    entity_set_name: str,
+    record: dict,
+    key_columns: list[str] | None,
+) -> tuple[str, dict]:
+    """Return (relative_url, body_without_key_fields) for a PATCH upsert."""
+    if key_columns:
+        key_parts = []
+        for col in key_columns:
+            val = record.get(col)
+            if val is None:
+                raise ValueError(f"Record is missing key column '{col}'")
+            if isinstance(val, str) and not _GUID_RE_FULL.match(val):
+                key_parts.append(f"{col}='{val}'")
+            else:
+                key_parts.append(f"{col}={val}")
+        key_str = ",".join(key_parts)
+        url = f"/{entity_set_name}({key_str})"
+        body = {k: v for k, v in record.items() if k not in key_columns}
+    else:
+        # Detect primary GUID field: first field whose value matches GUID pattern
+        primary_id: str | None = None
+        primary_col: str | None = None
+        for col, val in record.items():
+            if isinstance(val, str) and _GUID_RE_FULL.match(val):
+                primary_id = val
+                primary_col = col
+                break
+        if not primary_id:
+            raise ValueError(
+                "No GUID-valued field found in record for primary key upsert. "
+                "Provide key_columns to use an alternate key."
+            )
+        url = f"/{entity_set_name}({primary_id})"
+        body = {k: v for k, v in record.items() if k != primary_col}
+    return url, body
+
+
+@write_tool(
+    name="dataverse_bulk_upsert",
+    annotations={
+        "title": "Bulk Upsert Records",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_bulk_upsert(params: BulkUpsertInput, ctx: Context) -> str:
+    """Upsert many records in one call using OData $batch PATCH operations.
+
+    Each record is PATCHed individually (not in a change set) so a single bad
+    row does not roll back the rest when continue_on_error=true. Records are
+    chunked into requests of up to chunk_size operations each.
+
+    Key detection:
+    - Provide key_columns to upsert by alternate key
+      (e.g., key_columns=['accountnumber'] → PATCH accounts(accountnumber='AN001')).
+    - Omit key_columns to upsert by primary GUID — the tool detects the first
+      GUID-valued field in each record and uses it as the primary key.
+
+    Returns per-row outcomes (created, updated, or failed) with row index and id.
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    write_enabled = os.environ.get("DATAVERSE_ALLOW_WRITE", "").lower() == "true"
+    if not write_enabled:
+        return json.dumps({
+            "error": True,
+            "message": "dataverse_bulk_upsert requires DATAVERSE_ALLOW_WRITE=true.",
+        })
+
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # Build per-row operations, capturing build errors up front
+    operations: list[tuple[int, BatchOperationItem | None, str | None]] = []
+    for i, record in enumerate(params.records):
+        try:
+            rel_url, body = _build_upsert_url(
+                params.entity_set_name, record, params.key_columns
+            )
+            op = BatchOperationItem(method="PATCH", url=rel_url, body=body)
+            operations.append((i, op, None))
+        except (ValueError, KeyError) as exc:
+            operations.append((i, None, str(exc)))
+
+    results: list[dict] = []
+
+    # Rows that failed during URL-build
+    valid_ops: list[tuple[int, BatchOperationItem]] = []
+    for i, op, err in operations:
+        if op is None:
+            results.append({"row": i, "outcome": "failed", "error": err})
+        else:
+            valid_ops.append((i, op))
+
+    chunk = params.chunk_size
+    for chunk_start in range(0, len(valid_ops), chunk):
+        chunk_slice = valid_ops[chunk_start : chunk_start + chunk]
+        batch_ops = [op for _, op in chunk_slice]
+        row_indices = [i for i, _ in chunk_slice]
+
+        boundary = f"batch_{uuid.uuid4().hex}"
+        url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/$batch"
+
+        try:
+            batch_body = build_batch_body(batch_ops, base_url, boundary)
+            headers = await build_headers(app_ctx, base_url)
+            req_headers = {
+                **headers,
+                "Content-Type": f"multipart/mixed; boundary={boundary}",
+                "Accept": "multipart/mixed",
+            }
+            if params.continue_on_error:
+                req_headers["Prefer"] = "odata.continue-on-error"
+
+            response = await request_with_retry(
+                app_ctx.http_client,
+                "POST",
+                url,
+                headers=req_headers,
+                content=batch_body.encode("utf-8"),
+                timeout=_BATCH_TIMEOUT,
+            )
+
+            content_type = response.headers.get("Content-Type", "")
+            resp_boundary = boundary
+            if "boundary=" in content_type:
+                resp_boundary = content_type.split("boundary=")[1].split(";")[0].strip()
+
+            if response.status_code not in (200, 202):
+                # Whole chunk failed
+                for ri in row_indices:
+                    results.append({
+                        "row": ri,
+                        "outcome": "failed",
+                        "error": f"Batch HTTP {response.status_code}",
+                    })
+                continue
+
+            batch_results = parse_batch_response(response.text, resp_boundary)
+            for ri, br in zip(row_indices, batch_results):
+                status = br.get("status_code", 0)
+                if status in (200, 201, 204):
+                    outcome = "updated" if status in (200, 204) else "created"
+                    # Extract created record id from Location or OData-EntityId header
+                    record_id: str | None = None
+                    loc = br.get("headers", {}).get("OData-EntityId") or br.get("headers", {}).get("Location")
+                    if loc:
+                        m = _GUID_RE.search(loc)
+                        if m:
+                            record_id = m.group(0)
+                    results.append({"row": ri, "outcome": outcome, "id": record_id})
+                else:
+                    err_body = br.get("body") or {}
+                    err_msg = (
+                        err_body.get("error", {}).get("message")
+                        if isinstance(err_body, dict)
+                        else str(err_body)
+                    )
+                    results.append({"row": ri, "outcome": "failed", "error": err_msg})
+
+        except Exception as exc:
+            for ri in row_indices:
+                results.append({"row": ri, "outcome": "failed", "error": str(exc)})
+
+    results.sort(key=lambda r: r["row"])
+    succeeded = sum(1 for r in results if r["outcome"] in ("created", "updated"))
+    failed = sum(1 for r in results if r["outcome"] == "failed")
+
+    return json.dumps({
+        "total": len(params.records),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    })

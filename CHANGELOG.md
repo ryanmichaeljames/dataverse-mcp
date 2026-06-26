@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dataverse_analyze_dependencies` tool to retrieve solution component dependency graphs — supports three directions: `blocking_delete` (what blocks deletion), `dependents` (what depends on this component), and `required` (what this component needs); resolves component type codes to human-readable names
+- `dataverse_audit_user_access` composite tool that returns a full access report for a system user in one call — includes direct security roles, team memberships with their roles, effective privilege count, and an optional record-level access check; accepts `user_id` or `user_domain_name`
+- `dataverse_bulk_upsert` tool to upsert many records in a single call using OData `$batch` PATCH operations — auto-detects primary GUID key or uses caller-supplied `key_columns` for alternate-key upserts; returns per-row outcomes (created/updated/failed) with chunked batching up to 1,000 records
+- `web_resource_ids` parameter on `dataverse_publish_customizations` to publish specific web resources via targeted `PublishXml` instead of the slow `PublishAllXml`
+
 ## [3.3.0] - 2026-06-26
 
 ### Added

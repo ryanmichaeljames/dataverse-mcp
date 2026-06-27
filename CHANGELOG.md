@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `dataverse_stage_and_upgrade_solution` write tool: single-step true solution upgrade via `StageAndUpgradeAsync`
+  — stages the new version as a holding solution, deletes obsolete components (DeleteComponents phase),
+  and promotes the result in one async operation. Accepts `customization_file` (inline base64) or
+  `input_path` (local .zip); returns `import_job_id`, `async_operation_id`, and `import_job_key`.
+  Destructive (deletes removed components); gated behind `DATAVERSE_ALLOW_WRITE=true`.
+- `dataverse_delete_and_promote_solution` write tool: second step of the two-step upgrade path via
+  `DeleteAndPromote` — applies a solution upgrade by promoting the holding `_Upgrade` solution and deletes
+  all components absent from the new version. Synchronous, potentially long-running call. Returns
+  `solution_id` of the promoted solution. Destructive; gated behind `DATAVERSE_ALLOW_WRITE=true`.
+- `StageAndUpgradeSolutionInput` and `DeleteAndPromoteSolutionInput` input models added to `models.py`.
+
+### Changed
+- `dataverse_import_solution` description updated to clarify that `hold_for_upgrade=false` is an
+  in-place UPDATE (overlay) that does NOT delete removed components, and to document both the
+  single-step (`dataverse_stage_and_upgrade_solution`) and two-step (`hold_for_upgrade=true` then
+  `dataverse_delete_and_promote_solution`) true upgrade paths.
+- `dataverse_get_import_job` description updated to note that `include_data=true` surfaces
+  component-level errors from the DeleteComponents phase (e.g., `0x8004F037` image-column dependency
+  failures) in the result XML.
+- `dataverse_get_solution_history` and `dataverse_list_solution_histories` descriptions updated to
+  document `msdyn_suboperation` values: `3` = Import/Update (no deletion), `5` = Upgrade-with-deletion
+  (DeleteComponents phase).
+
 ## [3.4.0] - 2026-06-26
 
 ### Added

@@ -495,7 +495,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_solution` | default | Get a solution by unique name or GUID |
 | `dataverse_list_solution_components` | default | List components in a solution, optional type filter |
 | `dataverse_get_solution_history` | default | Get one solution history record (import/upgrade/export operation) by GUID |
-| `dataverse_list_solution_histories` | default | List solution history records, optional filter by solution GUID or unique name |
+| `dataverse_list_solution_histories` | default | List solution history records, optional filter by solution GUID or unique name; `msdyn_suboperation` distinguishes Update (`3`) from upgrade-with-deletion (`5`) |
 | `dataverse_create_publisher` | write | Create a publisher with customization prefixes |
 | `dataverse_update_publisher` | write | Update publisher fields by GUID |
 | `dataverse_create_solution` | write | Create a solution (publisher binding, version) |
@@ -504,8 +504,10 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_add_component_to_solution` | write | Add a component via `AddSolutionComponent` |
 | `dataverse_remove_component_from_solution` | delete | Remove a component via `RemoveSolutionComponent` |
 | `dataverse_export_solution` | default | Export a solution as a base64 zip; write to disk via `output_path` for large solutions (no org mutation — no write flag required) |
-| `dataverse_import_solution` | write | Import a solution asynchronously via `ImportSolutionAsync`; supply zip as inline base64 (`customization_file`) or a local path (`input_path`); returns `import_job_id` to poll |
-| `dataverse_get_import_job` | default | Get one importjob by GUID — returns progress, completedon, solutionname; add `include_data=true` for the result XML on failure |
+| `dataverse_import_solution` | write | Import a solution asynchronously via `ImportSolutionAsync`; supply zip as inline base64 (`customization_file`) or a local path (`input_path`); returns `import_job_id` to poll. `hold_for_upgrade=false` does an **UPDATE** (overlay — does NOT delete components removed in the new version). For a true upgrade use `dataverse_stage_and_upgrade_solution`, or `hold_for_upgrade=true` then `dataverse_delete_and_promote_solution` |
+| `dataverse_stage_and_upgrade_solution` | write | Single-step solution **upgrade** via `StageAndUpgradeAsync` — stages as holding, deletes obsolete components, and promotes in one async op; supply zip via `customization_file` or `input_path`; returns `import_job_id`, `async_operation_id`, `import_job_key` |
+| `dataverse_delete_and_promote_solution` | write | Two-step apply-upgrade via `DeleteAndPromote` — promotes the holding `_Upgrade` solution and deletes obsolete components (pair with `dataverse_import_solution` + `hold_for_upgrade=true`); synchronous, returns `solution_id` |
+| `dataverse_get_import_job` | default | Get one importjob by GUID — returns progress, completedon, solutionname; add `include_data=true` for the result XML (incl. deletion-phase component errors such as `8004F037`) on failure |
 | `dataverse_list_import_jobs` | default | List importjobs, optional filter by solution unique name, ordered by createdon desc |
 | `dataverse_clone_solution_as_patch` | write | Clone a solution as a patch via bound `CloneAsPatch` action; resolves parent by GUID or unique name |
 | `dataverse_analyze_dependencies` | default | Analyze component dependencies: `blocking_delete` (blocks deletion), `dependents` (what depends on it), or `required` (what it needs); resolves component type codes to names |

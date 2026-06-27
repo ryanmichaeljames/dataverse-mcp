@@ -31,6 +31,7 @@ from dataverse_mcp.client import (
 )
 from dataverse_mcp.models import (
     AddComponentToSolutionInput,
+    DeleteAndPromoteSolutionInput,
     BatchSetCloudFlowsStateInput,
     CloneSolutionAsPatchInput,
     CreatePublisherInput,
@@ -47,6 +48,7 @@ from dataverse_mcp.models import (
     ListSolutionsInput,
     RemoveComponentFromSolutionInput,
     SetCloudFlowStateInput,
+    StageAndUpgradeSolutionInput,
     UpdatePublisherInput,
     UpdateSolutionInput,
     UpdateSolutionVersionInput,
@@ -603,6 +605,10 @@ async def dataverse_get_solution_history(
 
     Returns import/upgrade/export operation details including result, timing,
     error messages, and publisher information from msdyn_solutionhistories.
+
+    The msdyn_suboperation field distinguishes operation sub-types:
+    - 3: Import/Update (in-place overlay; obsolete components are NOT deleted)
+    - 5: Upgrade-with-deletion (DeleteComponents phase; obsolete components ARE deleted)
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -647,6 +653,13 @@ async def dataverse_list_solution_histories(
     filter by solution_id or solution_unique_name (mutually exclusive).
     solution_id is resolved to the solution unique name first, then used to
     filter history records via msdyn_name. Omit both to list all.
+
+    The msdyn_suboperation field distinguishes operation sub-types:
+    - 3: Import/Update (in-place overlay; obsolete components are NOT deleted)
+    - 5: Upgrade-with-deletion (DeleteComponents phase; obsolete components ARE deleted)
+
+    Use msdyn_suboperation to determine whether a history record represents a
+    standard update or a true upgrade with component deletion.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1544,6 +1557,19 @@ async def dataverse_import_solution(params: ImportSolutionInput, ctx: Context) -
     filesystem path (input_path). Returns import_job_id, async_operation_id, and
     import_job_key immediately — poll dataverse_get_import_job with import_job_id
     to track progress and retrieve failure details. Requires DATAVERSE_ALLOW_WRITE=true.
+
+    IMPORTANT — import mode vs. upgrade mode:
+
+    - hold_for_upgrade=false (default): performs an in-place UPDATE (overlay).
+      Components removed from the new solution version are NOT deleted from the
+      environment. This is NOT a true upgrade.
+
+    - hold_for_upgrade=true: stages the solution as a holding ('_Upgrade') variant
+      without deleting anything yet. Follow up with dataverse_delete_and_promote_solution
+      to complete the upgrade and delete obsolete components (two-step path).
+
+    For a single-step true upgrade (stage + delete obsolete + promote in one call),
+    use dataverse_stage_and_upgrade_solution instead.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1633,8 +1659,13 @@ async def dataverse_get_import_job(params: GetImportJobInput, ctx: Context) -> s
 
     Returns progress (0–100), completedon, solutionname, and other tracking fields.
     The large result XML ('data' column) is excluded by default; set include_data=true
-    to fetch it when diagnosing import failures. Use dataverse_import_solution to
-    start an import and obtain the import_job_id.
+    to fetch it when diagnosing failures. Use dataverse_import_solution or
+    dataverse_stage_and_upgrade_solution to start an operation and obtain the import_job_id.
+
+    When include_data=true, the 'data' result XML contains component-level detail
+    for all import phases, including the DeleteComponents phase of an upgrade. Error
+    code 0x8004F037 (image-column dependency failures) and other component-level
+    errors from the deletion phase appear in this XML.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -1797,3 +1828,172 @@ async def dataverse_clone_solution_as_patch(
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_clone_solution_as_patch")
+
+
+@write_tool(
+    name="dataverse_stage_and_upgrade_solution",
+    annotations={
+        "title": "Stage and Upgrade Solution",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_stage_and_upgrade_solution(params: StageAndUpgradeSolutionInput, ctx: Context) -> str:
+    """Perform a single-step true solution upgrade via StageAndUpgradeAsync.
+
+    Stages the new solution version as a holding solution, deletes components
+    that are no longer present in the new version (DeleteComponents phase), and
+    promotes the result — all in one async operation. This is the correct tool
+    for a true upgrade that removes obsolete components.
+
+    Accepts the solution zip as inline base64 (customization_file) or a local
+    filesystem path (input_path). Returns import_job_id, async_operation_id, and
+    import_job_key immediately — poll dataverse_get_import_job with import_job_id
+    to track progress. Component-level deletion errors (e.g., 0x8004F037 image-column
+    dependency failures) surface in the importjob 'data' XML when include_data=true.
+
+    Compare to dataverse_import_solution (hold_for_upgrade=false): that tool performs
+    an in-place UPDATE (overlay) and does NOT delete removed components. For the
+    two-step path, use dataverse_import_solution with hold_for_upgrade=true, then
+    call dataverse_delete_and_promote_solution.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # Resolve the base64 payload from inline or local file.
+    if params.input_path:
+        try:
+            customization_b64 = _read_and_encode_zip(params.input_path)
+        except (FileNotFoundError, PermissionError, IsADirectoryError, OSError) as io_err:
+            logger.error("StageAndUpgrade read failed for '%s': %s", params.input_path, io_err)
+            return json.dumps({
+                "error": True,
+                "message": f"Failed to read solution zip from '{params.input_path}': {io_err}",
+            })
+        except Exception as io_err:
+            logger.error("StageAndUpgrade read unexpected error: %s", io_err)
+            return json.dumps({
+                "error": True,
+                "message": f"Unexpected error reading solution zip: {io_err}",
+            })
+    else:
+        # Inline base64 — guard against oversized payloads.
+        customization_b64 = params.customization_file or ""
+        if len(customization_b64) > _INLINE_FILE_MAX_BYTES:
+            size_mb = len(customization_b64) / 1_000_000
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Inline customization_file is {size_mb:.1f} MB; "
+                    "use input_path to supply the local .zip path instead."
+                ),
+            })
+
+    import_job_id = str(uuid.uuid4())
+
+    body: dict = {
+        "CustomizationFile": customization_b64,
+        "OverwriteUnmanagedCustomizations": params.overwrite_unmanaged_customizations,
+        "PublishWorkflows": params.publish_workflows,
+        "ImportJobId": import_job_id,
+        "SkipProductUpdateDependencies": params.skip_product_update_dependencies,
+    }
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/StageAndUpgradeAsync"
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            json=body,
+            headers=headers,
+            timeout=_SOLUTION_JOB_TIMEOUT,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return json.dumps({
+            "accepted": True,
+            "import_job_id": import_job_id,
+            "async_operation_id": result.get("AsyncOperationId"),
+            "import_job_key": result.get("ImportJobKey"),
+            "message": (
+                "Stage-and-upgrade started; poll dataverse_get_import_job with import_job_id."
+            ),
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_stage_and_upgrade_solution")
+
+
+@write_tool(
+    name="dataverse_delete_and_promote_solution",
+    annotations={
+        "title": "Apply Solution Upgrade (Delete and Promote)",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_and_promote_solution(
+    params: DeleteAndPromoteSolutionInput, ctx: Context
+) -> str:
+    """Apply a solution upgrade by promoting the holding _Upgrade solution and deleting obsolete components via DeleteAndPromote.
+
+    This is the second step of the two-step upgrade path. Use it after
+    dataverse_import_solution with hold_for_upgrade=true, which stages the new
+    version as a holding ('_Upgrade') solution without deleting anything.
+
+    Calling this tool applies the solution upgrade: it promotes the holding _Upgrade
+    solution over the base solution and deletes all components absent from the new
+    version (DeleteComponents phase). This is a synchronous, potentially long-running
+    call — the Web API blocks until the promotion is complete.
+
+    Returns solution_id (the GUID of the promoted solution) on success.
+
+    For a single-step alternative, use dataverse_stage_and_upgrade_solution instead.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    body: dict = {
+        "UniqueName": params.solution_unique_name,
+    }
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/DeleteAndPromote"
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client,
+            "POST",
+            url,
+            json=body,
+            headers=headers,
+            timeout=_SOLUTION_JOB_TIMEOUT,
+        )
+        resp.raise_for_status()
+        result = resp.json()
+        return json.dumps({
+            "upgraded": True,
+            "solution_id": result.get("SolutionId"),
+            "solution_unique_name": params.solution_unique_name,
+            "message": (
+                "Solution upgrade applied; obsolete components have been deleted."
+            ),
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_delete_and_promote_solution")

@@ -11,9 +11,9 @@ interpreter process.
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
    tools across all categories register (77 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 173 tools register.
+2. All allow flags set, DATAVERSE_TOOLS unset: all 175 tools register.
 3. DATAVERSE_TOOLS=security + both allow flags: only 18 core + 13 security = 31.
-4. DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 18 solutions = 36.
+4. DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 20 solutions = 38.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
    core tools in the registered set.
 6. Composition: DATAVERSE_TOOLS=security, no allow flags → 11 read core + 8 read
@@ -196,7 +196,7 @@ _CUSTOMAPIS_ALL_TOOLS = (
     _CUSTOMAPIS_READ_TOOLS | _CUSTOMAPIS_WRITE_TOOLS | _CUSTOMAPIS_DELETE_TOOLS
 )
 
-# Solutions tools (solutions category only, not flows): 9 read + 8 write + 1 delete = 18
+# Solutions tools (solutions category only, not flows): 9 read + 10 write + 1 delete = 20
 _SOLUTIONS_READ_TOOLS = {
     "dataverse_list_solutions",
     "dataverse_get_solution",
@@ -221,6 +221,8 @@ _SOLUTIONS_WRITE_TOOLS = {
     # ALM tools (issue #91)
     "dataverse_import_solution",
     "dataverse_clone_solution_as_patch",
+    "dataverse_stage_and_upgrade_solution",
+    "dataverse_delete_and_promote_solution",
 }
 
 _SOLUTIONS_DELETE_TOOLS = {
@@ -293,12 +295,12 @@ def test_default_no_env_vars():
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 173 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 175 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 173, f"Expected 173 tools, got {len(tools)}"
+    assert len(tools) == 175, f"Expected 175 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
@@ -318,7 +320,7 @@ def test_security_only_with_all_flags():
 
 
 def test_core_solutions_with_all_flags():
-    """DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 18 solutions = 36.
+    """DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 20 solutions = 38.
 
     Flows (a separate category) must NOT register.
     """
@@ -334,7 +336,7 @@ def test_core_solutions_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 36, f"Expected 36 tools, got {len(tools)}"
+    assert len(tools) == 38, f"Expected 38 tools, got {len(tools)}"
 
     # Flow tools must not be present
     assert not (tool_set & _FLOWS_ALL_TOOLS), (

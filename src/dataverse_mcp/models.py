@@ -791,6 +791,83 @@ class CloneSolutionAsPatchInput(_SolutionIdentifierInput):
     )
 
 
+class StageAndUpgradeSolutionInput(DataverseEnvironmentInput):
+    """Input for staging and upgrading a Dataverse solution via StageAndUpgradeAsync.
+
+    Performs a single-step true upgrade: stages the new solution version as a
+    holding solution, deletes obsolete components (those removed from the new
+    version), and promotes the result — all in one async operation.
+    """
+
+    customization_file: str | None = Field(
+        default=None,
+        description=(
+            "Base64-encoded solution .zip content to stage and upgrade inline. "
+            "Provide this XOR input_path — not both and not neither. "
+            "Rejected if the base64 string exceeds ~3 MB; use input_path instead."
+        ),
+    )
+    input_path: str | None = Field(
+        default=None,
+        description=(
+            "Local filesystem path to the solution .zip to stage and upgrade "
+            "(e.g., '/tmp/MySolution.zip'). "
+            "The server reads the file and base64-encodes it before posting. "
+            "Provide this XOR customization_file — not both and not neither."
+        ),
+    )
+    overwrite_unmanaged_customizations: bool = Field(
+        default=True,
+        description=(
+            "When True, overwrite existing unmanaged customizations with those "
+            "in the solution being upgraded."
+        ),
+    )
+    publish_workflows: bool = Field(
+        default=True,
+        description="When True, publish workflows (cloud flows) included in the solution.",
+    )
+    skip_product_update_dependencies: bool = Field(
+        default=False,
+        description=(
+            "When True, skip enforcing product update dependencies during the upgrade."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_exactly_one_source(self) -> "StageAndUpgradeSolutionInput":
+        has_inline = bool(self.customization_file)
+        has_path = bool(self.input_path)
+        if has_inline and has_path:
+            raise ValueError(
+                "Provide customization_file (inline base64) XOR input_path (local .zip path) — not both."
+            )
+        if not has_inline and not has_path:
+            raise ValueError(
+                "Provide customization_file (inline base64) or input_path (local .zip path)."
+            )
+        return self
+
+
+class DeleteAndPromoteSolutionInput(DataverseEnvironmentInput):
+    """Input for applying a staged solution upgrade via DeleteAndPromote.
+
+    Used in the two-step upgrade path after dataverse_import_solution with
+    hold_for_upgrade=true. Promotes the holding solution and deletes components
+    no longer present in the new version.
+    """
+
+    solution_unique_name: str = Field(
+        ...,
+        description=(
+            "Unique name of the solution to promote (e.g., 'MyCustomApp'). "
+            "This must be the base solution name — not the '_Upgrade' holding variant. "
+            "The holding solution (created by hold_for_upgrade=true) must already exist."
+        ),
+        min_length=1,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Table query tools
 # ---------------------------------------------------------------------------

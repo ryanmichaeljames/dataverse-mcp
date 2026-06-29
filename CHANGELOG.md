@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-06-29
+
 ### Fixed
 - `dataverse_execute_batch` now enforces the delete safeguard: batches containing `DELETE`
   operations require `DATAVERSE_ALLOW_DELETE=true`. Previously DELETE operations inside a batch

@@ -646,7 +646,8 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
     dataverse_delete_record instead. For metadata/schema changes use the
     dataverse_create_*/update_*/delete_* metadata tools.
 
-    Non-GET operations require DATAVERSE_ALLOW_WRITE=true. Group operations with the same
+    POST/PUT/PATCH operations require DATAVERSE_ALLOW_WRITE=true; DELETE operations require
+    DATAVERSE_ALLOW_DELETE=true. Group operations with the same
     change_set_id to run them atomically (all-or-nothing, up to 1,000 operations per request).
     Returns per-operation results [{index, status_code, body}].
     """
@@ -656,15 +657,27 @@ async def dataverse_execute_batch(params: ExecuteBatchInput, ctx: Context) -> st
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
-    has_mutations = any(op.method != "GET" for op in params.operations)
-    if has_mutations:
+    has_writes = any(op.method in ("POST", "PUT", "PATCH") for op in params.operations)
+    if has_writes:
         write_enabled = os.environ.get("DATAVERSE_ALLOW_WRITE", "").lower() == "true"
         if not write_enabled:
             return json.dumps({
                 "error": True,
                 "message": (
-                    "Batch operations containing non-GET methods require "
+                    "Batch operations containing POST/PUT/PATCH methods require "
                     "DATAVERSE_ALLOW_WRITE=true in the MCP server environment."
+                ),
+            })
+
+    has_deletes = any(op.method == "DELETE" for op in params.operations)
+    if has_deletes:
+        delete_enabled = os.environ.get("DATAVERSE_ALLOW_DELETE", "").lower() == "true"
+        if not delete_enabled:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "Batch operations containing DELETE methods require "
+                    "DATAVERSE_ALLOW_DELETE=true in the MCP server environment."
                 ),
             })
 

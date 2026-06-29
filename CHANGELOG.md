@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.4.1] - 2026-06-29
+
+### Fixed
+- `dataverse_execute_batch` now enforces the delete safeguard: batches containing `DELETE`
+  operations require `DATAVERSE_ALLOW_DELETE=true`. Previously DELETE operations inside a batch
+  were only gated by `DATAVERSE_ALLOW_WRITE`, allowing record deletion to bypass the delete
+  safeguard when write was enabled but delete was not. `POST`/`PUT`/`PATCH` continue to require
+  `DATAVERSE_ALLOW_WRITE=true`.
+
 ## [3.4.0] - 2026-06-26
 
 ### Added

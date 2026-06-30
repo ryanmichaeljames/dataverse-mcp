@@ -483,12 +483,12 @@ async def dataverse_assign_security_role(
         return tool_error_response(e, "dataverse_assign_security_role")
 
 
-@write_tool(
+@delete_tool(
     name="dataverse_remove_security_role",
     annotations={
         "title": "Remove Security Role",
         "readOnlyHint": False,
-        "destructiveHint": False,
+        "destructiveHint": True,
         "idempotentHint": True,
         "openWorldHint": True,
     },
@@ -501,7 +501,7 @@ async def dataverse_remove_security_role(
     Provide role_id and exactly one of user_id or team_id.
     For users: disassociates via systemuserroles_association on the systemusers entity.
     For teams: disassociates via teamroles_association on the teams entity.
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -615,12 +615,12 @@ async def dataverse_add_team_members(
         return tool_error_response(e, "dataverse_add_team_members")
 
 
-@write_tool(
+@delete_tool(
     name="dataverse_remove_team_members",
     annotations={
         "title": "Remove Team Members",
         "readOnlyHint": False,
-        "destructiveHint": False,
+        "destructiveHint": True,
         "idempotentHint": True,
         "openWorldHint": True,
     },
@@ -631,7 +631,7 @@ async def dataverse_remove_team_members(
     """Remove one or more system users from a Dataverse team.
 
     Issues one $ref DELETE per user against the teams(<teamId>)/teammembership_association
-    navigation property. Returns per-user results. Requires DATAVERSE_ALLOW_WRITE=true.
+    navigation property. Returns per-user results. Requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:

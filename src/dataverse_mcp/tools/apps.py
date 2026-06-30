@@ -6,6 +6,7 @@ including sitemap generation, component management, validation, and publishing.
 
 import json
 import logging
+import os
 import re
 import xml.etree.ElementTree as ET
 from urllib.parse import quote as _url_quote, urlencode
@@ -1044,7 +1045,7 @@ async def dataverse_publish_app(params: PublishAppInput, ctx: Context) -> str:
     annotations={
         "title": "Assign / Remove App Security Role",
         "readOnlyHint": False,
-        "destructiveHint": False,
+        "destructiveHint": True,
         "idempotentHint": True,
         "openWorldHint": True,
     },
@@ -1054,13 +1055,25 @@ async def dataverse_assign_app_role(params: AssignAppRoleInput, ctx: Context) ->
 
     action='add' grants users in the role access to the app; action='remove' revokes
     it. Use dataverse_query_table against the 'roles' entity set to find role IDs.
-    Requires DATAVERSE_ALLOW_WRITE=true.
+    Requires DATAVERSE_ALLOW_WRITE=true. The remove path (action='remove') issues a
+    DELETE and additionally requires DATAVERSE_ALLOW_DELETE=true.
     """
     app_ctx = get_app_ctx(ctx)
     try:
         base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
+
+    if params.action == "remove":
+        delete_enabled = os.environ.get("DATAVERSE_ALLOW_DELETE", "").lower() == "true"
+        if not delete_enabled:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "dataverse_assign_app_role with action='remove' issues a DELETE and "
+                    "requires DATAVERSE_ALLOW_DELETE=true in the MCP server environment."
+                ),
+            })
 
     try:
         headers = await build_headers(app_ctx, base_url)

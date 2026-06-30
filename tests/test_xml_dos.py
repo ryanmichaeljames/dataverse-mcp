@@ -20,10 +20,9 @@ Coverage:
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import defusedxml.ElementTree as DET
 import httpx
 import pytest
-
-import defusedxml.ElementTree as DET
 from defusedxml.common import DefusedXmlException
 
 from dataverse_mcp.client import AppContext

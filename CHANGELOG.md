@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-### Changed
-
 ## [3.5.0] - 2026-06-30
 
 ### Added
@@ -57,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `dataverse_get_solution_history` and `dataverse_list_solution_histories` descriptions updated to
   document `msdyn_suboperation` values: `3` = Import/Update (no deletion), `5` = Upgrade-with-deletion
   (DeleteComponents phase).
+
+## [3.4.1] - 2026-06-29
+
+### Fixed
+- `dataverse_execute_batch` now enforces the delete safeguard: batches containing `DELETE`
+  operations require `DATAVERSE_ALLOW_DELETE=true`. Previously DELETE operations inside a batch
+  were only gated by `DATAVERSE_ALLOW_WRITE`, allowing record deletion to bypass the delete
+  safeguard when write was enabled but delete was not. `POST`/`PUT`/`PATCH` continue to require
+  `DATAVERSE_ALLOW_WRITE=true`.
 
 ## [3.4.0] - 2026-06-26
 
@@ -602,7 +607,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
 [Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...HEAD
-[3.5.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.0...v3.5.0
+[3.5.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.1...v3.5.0
+[3.4.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.3.0...v3.4.0
 [3.3.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.1.0...v3.2.0

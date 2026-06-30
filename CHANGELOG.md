@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- `dataverse_remove_security_role` and `dataverse_remove_team_members` now correctly gate on
+  `DATAVERSE_ALLOW_DELETE=true` (previously used `@write_tool`, allowing execution when only write
+  was enabled). Both are promoted to `@delete_tool` and their annotations set `destructiveHint: true`.
+- `dataverse_assign_app_role` with `action='remove'` now requires `DATAVERSE_ALLOW_DELETE=true` in
+  addition to `DATAVERSE_ALLOW_WRITE=true`. The `action='add'` (POST) path is unaffected.
+- Caller-supplied FetchXml, LayoutXml (view create/update validation), and FormXml
+  (`dataverse_validate_formxml` dry-run path) now parse via `defusedxml.ElementTree.fromstring`
+  instead of stdlib `xml.etree.ElementTree.fromstring`, closing a billion-laughs entity-expansion
+  DoS vector. Server-returned XML (backup XML from Dataverse responses) is left as-is — it is
+  trusted server content, not caller input.
+
 ## [3.4.1] - 2026-06-29
 
 ### Fixed

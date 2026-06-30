@@ -421,7 +421,9 @@ def _validate_view_xml(fetchxml: str, layoutxml: str | None) -> list[str]:
 
     # Rule 1: Well-formed FetchXml
     try:
-        fetch_root = ET.fromstring(fetchxml)
+        fetch_root = DET.fromstring(fetchxml)
+    except DefusedXmlException:
+        return ["FetchXml contains forbidden XML constructs (entities/DTD) and was rejected."]
     except ET.ParseError as exc:
         return [f"FetchXml is not well-formed: {exc}"]
 
@@ -474,7 +476,10 @@ def _validate_view_xml(fetchxml: str, layoutxml: str | None) -> list[str]:
 
     # Rule 9: Well-formed LayoutXml
     try:
-        grid_root = ET.fromstring(layoutxml)
+        grid_root = DET.fromstring(layoutxml)
+    except DefusedXmlException:
+        errors.append("LayoutXml contains forbidden XML constructs (entities/DTD) and was rejected.")
+        return errors
     except ET.ParseError as exc:
         errors.append(f"LayoutXml is not well-formed: {exc}")
         return errors

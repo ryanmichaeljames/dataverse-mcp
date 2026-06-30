@@ -855,7 +855,15 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
                     "error_count": len(errors),
                     "errors": errors,
                 })
-            root = ET.fromstring(params.formxml)
+            try:
+                root = DET.fromstring(params.formxml)
+            except DefusedXmlException:
+                return json.dumps({
+                    "valid": False,
+                    "form_id": params.form_id,
+                    "error_count": 1,
+                    "errors": ["XML contains forbidden constructs (entities/DTD) and was rejected."],
+                })
             controls = [
                 ctrl.get("datafieldname")
                 for ctrl in root.iter("control")

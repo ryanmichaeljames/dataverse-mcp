@@ -9,12 +9,27 @@ Coverage:
       defusedxml.ElementTree.fromstring (the same path used by the views parse sites).
   (c) A normal valid minimal FormXml passes _validate_formxml with no errors.
   (d) A normal valid minimal FetchXml parses successfully via defusedxml.
+  (e) Billion-laughs payload in FetchXml fed to _validate_view_xml returns an error
+      mentioning the forbidden-constructs rejection; no hang, no uncaught exception.
+  (f) Billion-laughs payload in LayoutXml fed to _validate_view_xml returns an error
+      mentioning the forbidden-constructs rejection.
+  (g) Billion-laughs payload in the dataverse_validate_formxml dry-run path (caller
+      formxml param) returns a valid=false JSON response; no hang.
 """
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
 
 import defusedxml.ElementTree as DET
 from defusedxml.common import DefusedXmlException
 
-from dataverse_mcp.tools.forms import _validate_formxml
+from dataverse_mcp.client import AppContext
+from dataverse_mcp.models import ValidateFormInput
+from dataverse_mcp.tools.forms import _validate_formxml, dataverse_validate_formxml
+from dataverse_mcp.tools.views import _validate_view_xml
 
 # ---------------------------------------------------------------------------
 # Malicious payload — bounded entity nesting (5 levels, safe for test runner)
@@ -118,3 +133,92 @@ def test_valid_fetchxml_parses_successfully():
     element = DET.fromstring(_VALID_FETCHXML)
     assert element is not None
     assert element.tag == "filter"
+
+
+# ---------------------------------------------------------------------------
+# Minimal valid FetchXml and LayoutXml for view validation tests
+# ---------------------------------------------------------------------------
+
+_VALID_FETCH_FOR_VIEW = """\
+<fetch>
+  <entity name="account">
+    <attribute name="name" />
+    <order attribute="name" />
+  </entity>
+</fetch>"""
+
+_VALID_LAYOUT_FOR_VIEW = """\
+<grid name="resultset" object="1" select="1">
+  <row name="result">
+    <cell name="name" width="300" />
+  </row>
+</grid>"""
+
+
+# ---------------------------------------------------------------------------
+# (e) Billion-laughs in FetchXml fed to _validate_view_xml is rejected
+# ---------------------------------------------------------------------------
+
+
+def test_view_xml_billion_laughs_in_fetchxml_returns_error():
+    """Malicious FetchXml must not hang and must return a forbidden-constructs error."""
+    errors = _validate_view_xml(_BILLION_LAUGHS_XML, _VALID_LAYOUT_FOR_VIEW)
+    assert isinstance(errors, list), "expected a list return"
+    assert len(errors) > 0, "expected at least one error for a malicious FetchXml"
+    assert any("forbidden" in e.lower() or "entities" in e.lower() for e in errors), (
+        f"expected a forbidden-constructs error, got: {errors}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (f) Billion-laughs in LayoutXml fed to _validate_view_xml is rejected
+# ---------------------------------------------------------------------------
+
+
+def test_view_xml_billion_laughs_in_layoutxml_returns_error():
+    """Malicious LayoutXml must not hang and must return a forbidden-constructs error."""
+    errors = _validate_view_xml(_VALID_FETCH_FOR_VIEW, _BILLION_LAUGHS_XML)
+    assert isinstance(errors, list), "expected a list return"
+    assert len(errors) > 0, "expected at least one error for a malicious LayoutXml"
+    assert any("forbidden" in e.lower() or "entities" in e.lower() for e in errors), (
+        f"expected a forbidden-constructs error, got: {errors}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# (g) Billion-laughs in the dataverse_validate_formxml dry-run (caller formxml)
+# ---------------------------------------------------------------------------
+
+
+def _make_form_ctx() -> MagicMock:
+    """Return a mock FastMCP Context backed by a minimal AppContext."""
+    app_ctx = AppContext(
+        credential=None,
+        auth_type="azure_cli",
+        http_client=MagicMock(spec=httpx.AsyncClient),
+    )
+    ctx = MagicMock()
+    ctx.request_context.lifespan_context = app_ctx
+    return ctx
+
+
+@pytest.mark.asyncio
+async def test_validate_formxml_dryrun_billion_laughs_returns_error_json():
+    """Billion-laughs formxml in the dry-run path must return valid=false JSON, not hang."""
+    params = ValidateFormInput(
+        dataverse_url="https://yourorg.crm.dynamics.com",
+        form_id="aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+        formxml=_BILLION_LAUGHS_XML,
+    )
+    result = json.loads(await dataverse_validate_formxml(params, _make_form_ctx()))
+
+    assert result.get("valid") is False, f"expected valid=false, got: {result}"
+    assert "errors" in result, "expected 'errors' key in response"
+    errors = result["errors"]
+    assert len(errors) > 0, "expected at least one error"
+    # The error should mention forbidden constructs (from either _validate_formxml
+    # or the DET.fromstring guard in the dry-run path)
+    combined = " ".join(errors).lower()
+    assert "forbidden" in combined or "entities" in combined or "dtd" in combined, (
+        f"expected a forbidden-constructs message, got: {errors}"
+    )

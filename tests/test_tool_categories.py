@@ -116,7 +116,7 @@ _CORE_DELETE_TOOLS = {
 
 _CORE_ALL_TOOLS = _CORE_READ_TOOLS | _CORE_WRITE_TOOLS | _CORE_DELETE_TOOLS
 
-# Security tools: 8 read + 5 write = 13 total
+# Security tools: 8 read + 3 write + 2 delete = 13 total
 _SECURITY_READ_TOOLS = {
     "dataverse_list_security_roles",
     "dataverse_get_security_role",
@@ -130,13 +130,16 @@ _SECURITY_READ_TOOLS = {
 
 _SECURITY_WRITE_TOOLS = {
     "dataverse_assign_security_role",
-    "dataverse_remove_security_role",
     "dataverse_add_team_members",
-    "dataverse_remove_team_members",
     "dataverse_set_user_state",
 }
 
-_SECURITY_ALL_TOOLS = _SECURITY_READ_TOOLS | _SECURITY_WRITE_TOOLS
+_SECURITY_DELETE_TOOLS = {
+    "dataverse_remove_security_role",
+    "dataverse_remove_team_members",
+}
+
+_SECURITY_ALL_TOOLS = _SECURITY_READ_TOOLS | _SECURITY_WRITE_TOOLS | _SECURITY_DELETE_TOOLS
 
 # Jobs tools: 2 read + 1 write = 3 total
 _JOBS_READ_TOOLS = {
@@ -257,7 +260,7 @@ def test_default_no_env_vars():
     # Write/delete tools must NOT be present
     all_write_delete = (
         _CORE_WRITE_TOOLS | _CORE_DELETE_TOOLS
-        | _SECURITY_WRITE_TOOLS
+        | _SECURITY_WRITE_TOOLS | _SECURITY_DELETE_TOOLS
         | _SOLUTIONS_WRITE_TOOLS | _SOLUTIONS_DELETE_TOOLS
         | _FLOWS_WRITE_TOOLS
         | _JOBS_WRITE_TOOLS

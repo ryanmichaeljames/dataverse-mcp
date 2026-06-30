@@ -344,7 +344,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**173 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**184 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -363,16 +363,16 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | Category | Tools | Description |
 |----------|-------|-------------|
 | `core` | 18 | Environment introspection + all record CRUD (always registered) |
-| `schema` | 29 | Table/column/relationship/choice metadata |
-| `solutions` | 18 | Solution and publisher management, solution components, history, import/export ALM, dependency analysis |
-| `flows` | 5 | Cloud flow listing and enable/disable |
+| `schema` | 32 | Table/column/relationship/choice/alternate-key metadata |
+| `solutions` | 20 | Solution and publisher management, solution components, history, import/export ALM, dependency analysis |
+| `flows` | 8 | Cloud flow + classic process listing and activate/deactivate |
 | `forms` | 6 | Model-driven form management |
 | `views` | 7 | Saved query / view management |
 | `apps` | 10 | Canvas and model-driven app management |
 | `connections` | 5 | Connection reference management |
 | `variables` | 8 | Environment variable definitions and values |
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
-| `security` | 13 | Security roles, teams, users, business units, composite access audit |
+| `security` | 16 | Security roles, teams, users, business units, composite access audit, audit history |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 | `customapis` | 13 | Custom API, request parameter, and response property management |
@@ -401,6 +401,9 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_user` | default | Get one system user by GUID |
 | `dataverse_list_business_units` | default | List business units, optional filter and pagination |
 | `dataverse_audit_user_access` | default | Composite report: user identity, direct roles, team memberships + team roles, effective privileges, optional record-level access check |
+| `dataverse_list_audit` | default | Query the `audits` entity set with optional OData filter, select, orderby, and top; returns audit metadata rows |
+| `dataverse_get_audit_details` | default | Get full before/after detail for a single audit record via the bound `RetrieveAuditDetails` function |
+| `dataverse_retrieve_record_change_history` | default | Retrieve the full audit change history for a single record via `RetrieveRecordChangeHistory`; returns structured `AuditDetailCollection` |
 | `dataverse_assign_security_role` | write | Assign a security role to a user or team |
 | `dataverse_remove_security_role` | write | Remove a security role from a user or team |
 | `dataverse_add_team_members` | write | Add one or more users to a team |
@@ -487,6 +490,14 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_delete_choice` | delete | Delete a global choice by logical name |
 | `dataverse_delete_choice_option` | delete | Remove one option from a global or local choice |
 
+### Alternate keys
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_alternate_keys` | default | List `EntityKeyMetadata` definitions on a table; returns `SchemaName`, `LogicalName`, `KeyAttributes`, `EntityKeyIndexStatus`, and `IsManaged` |
+| `dataverse_create_alternate_key` | write | Create an alternate key by `SchemaName`, `DisplayName`, and attribute list; poll `EntityKeyIndexStatus` until `"Active"` before using for upserts |
+| `dataverse_delete_alternate_key` | delete | Remove an alternate key by logical name; drops the underlying SQL index |
+
 ### Solutions & publishers
 
 | Tool | Gate | Description |
@@ -517,7 +528,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 > supplied. Both paths are resolved on the machine running the MCP server. Use `output_path` / `input_path`
 > for solutions larger than ~3 MB (the inline base64 threshold).
 
-### Cloud flows
+### Cloud flows & processes
 
 | Tool | Gate | Description |
 |------|------|-------------|
@@ -526,6 +537,9 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_batch_enable_cloud_flows` | write | Enable many flows in one `$batch`, per-item results |
 | `dataverse_disable_cloud_flow` | write | Disable one flow by workflow ID |
 | `dataverse_batch_disable_cloud_flows` | write | Disable many flows in one `$batch`, per-item results |
+| `dataverse_list_processes` | default | List classic processes (workflows, business rules, actions, BPFs) from the `workflow` entity; filterable by category and type |
+| `dataverse_activate_process` | write | Activate a classic process (sets statecode=1/Activated); idempotent |
+| `dataverse_deactivate_process` | write | Deactivate a classic process (sets statecode=0/Draft); idempotent |
 
 ### Forms
 

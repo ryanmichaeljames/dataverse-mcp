@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+
+### Changed
+
+## [3.5.0] - 2026-06-30
+
+### Added
+- `dataverse_list_processes` read tool: list classic processes (workflows, business rules, actions,
+  BPFs) from the `workflow` entity. Filterable by `category` (0=Workflow, 1=Dialog, 2=Business Rule,
+  3=Action, 4=Business Process Flow) and `type` (1=Definition, 2=Activation). Defaults to
+  `type=1` (definition records only) and excludes cloud flows (category 5) unless explicitly
+  requested. Registered in the `flows` category alongside cloud flow tools.
+- `dataverse_activate_process` write tool: activate a classic process by setting `statecode=1`
+  (Activated) and `statuscode=2` (Activated) on the `workflow` record. Idempotent. Gated behind
+  `DATAVERSE_ALLOW_WRITE=true`.
+- `dataverse_deactivate_process` write tool: deactivate a classic process by setting `statecode=0`
+  (Draft) and `statuscode=1` (Draft) on the `workflow` record. Idempotent. Gated behind
+  `DATAVERSE_ALLOW_WRITE=true`.
+- `ListProcessesInput`, `ActivateProcessInput`, `DeactivateProcessInput` input models added to
+  `models.py`.
+- `dataverse_retrieve_record_change_history` read tool: retrieve the full audit change history for a single record via the unbound `RetrieveRecordChangeHistory` function; returns a structured `AuditDetailCollection` with `audit_details`, `count`, `has_more`, and optional `total_record_count`/`paging_cookie`. Requires auditing enabled on the org and the target table.
+- `dataverse_get_audit_details` read tool: retrieve full before/after details from a single audit record via the bound `RetrieveAuditDetails` function on the `audit` entity; passes through the polymorphic `AuditDetail` payload (including `AttributeAuditDetail` with `OldValue`/`NewValue`, `RelationshipAuditDetail`, `UserAccessAuditDetail`, etc.) unflattened for caller inspection.
+- `dataverse_list_audit` read tool: query the `audits` entity set with optional OData `$filter`, `$select`, `$orderby`, and `$top`; returns `records`, `count`, and `has_more`; supports all standard audit columns including `operation`, `action`, `objecttypecode`, `_userid_value`, `_objectid_value`, and `transactionid`.
+- `RetrieveRecordChangeHistoryInput`, `GetAuditDetailsInput`, `ListAuditInput` input models added to `models.py`.
+- `dataverse_list_alternate_keys` read tool: list `EntityKeyMetadata` definitions on a table — returns `SchemaName`, `LogicalName`, `KeyAttributes`, `EntityKeyIndexStatus`, and `IsManaged`. Use `EntityKeyIndexStatus` to track async index build progress.
+- `dataverse_create_alternate_key` write tool: create an alternate key on a table by `SchemaName`, `DisplayName`, and a list of attribute logical names. Key creation triggers an async SQL index build; the response surfaces `entity_key_index_status` (primary signal — poll until `"Active"` before using the key for upserts) and `async_job_id` (sourced from the `AsyncJob` navigation property when the create returns a body, not from an `AsyncJobId` scalar — may be absent on some org versions). Gated behind `DATAVERSE_ALLOW_WRITE=true`.
+- `dataverse_delete_alternate_key` delete tool: remove an alternate key by its logical name. Returns a structured 404 error (does not raise) when the key is not found. Gated behind `DATAVERSE_ALLOW_DELETE=true`.
+- `ListAlternateKeysInput`, `CreateAlternateKeyInput`, `DeleteAlternateKeyInput` input models added to `models.py`. `CreateAlternateKeyInput` normalises `key_attributes` to lowercase and validates they are non-blank.
 - `dataverse_stage_and_upgrade_solution` write tool: single-step true solution upgrade via `StageAndUpgradeAsync`
   — stages the new version as a holding solution, deletes obsolete components (DeleteComponents phase),
   and promotes the result in one async operation. Accepts `customization_file` (inline base64) or
@@ -574,7 +601,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...HEAD
+[3.5.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.0...v3.5.0
+[3.4.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.3.0...v3.4.0
+[3.3.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.2.0...v3.3.0
 [3.2.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.1.0...v3.2.0
 [3.1.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.0.0...v3.1.0
 [3.0.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v2.2.0...v3.0.0

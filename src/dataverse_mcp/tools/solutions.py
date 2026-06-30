@@ -30,12 +30,14 @@ from dataverse_mcp.client import (
     tool_error_response,
 )
 from dataverse_mcp.models import (
+    ActivateProcessInput,
     AddComponentToSolutionInput,
-    DeleteAndPromoteSolutionInput,
     BatchSetCloudFlowsStateInput,
     CloneSolutionAsPatchInput,
     CreatePublisherInput,
     CreateSolutionInput,
+    DeactivateProcessInput,
+    DeleteAndPromoteSolutionInput,
     ExportSolutionInput,
     GetImportJobInput,
     GetSolutionHistoryInput,
@@ -43,6 +45,7 @@ from dataverse_mcp.models import (
     ImportSolutionInput,
     ListCloudFlowsInput,
     ListImportJobsInput,
+    ListProcessesInput,
     ListSolutionComponentsInput,
     ListSolutionHistoriesInput,
     ListSolutionsInput,
@@ -134,6 +137,26 @@ _DEFAULT_SOLUTION_HISTORY_SELECT = [
 
 _CLOUD_FLOW_COMPONENT_TYPE = 29
 _CLOUD_FLOW_CATEGORY_FILTER = "category eq 5"
+
+_DEFAULT_PROCESS_SELECT = [
+    "workflowid",
+    "name",
+    "category",
+    "type",
+    "statecode",
+    "statuscode",
+    "mode",
+    "_ownerid_value",
+    "primaryentity",
+    "description",
+    "createdon",
+    "modifiedon",
+]
+
+# Classic process categories (workflow entity).
+# 0=Workflow, 1=Dialog, 2=Business Rule, 3=Action, 4=Business Process Flow.
+# 5=Modern Flow (cloud flow) — not a classic process; excluded by default.
+_CLASSIC_PROCESS_MAX_CATEGORY = 4
 
 # $batch requests and workflow state transitions need longer than the client default.
 _BATCH_TIMEOUT = 120.0
@@ -975,6 +998,197 @@ async def dataverse_batch_disable_cloud_flows(
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_batch_disable_cloud_flows")
+
+
+@flow_tool(
+    name="dataverse_list_processes",
+    annotations={
+        "title": "List Classic Processes",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_processes(params: ListProcessesInput, ctx: Context) -> str:
+    """List classic processes (workflows, business rules, actions, BPFs) from the workflow entity.
+
+    Classic process categories: 0=Workflow, 1=Dialog, 2=Business Rule,
+    3=Action, 4=Business Process Flow. Use the category parameter to filter
+    by a specific category. Cloud flows (category 5) are excluded by default
+    unless you explicitly set category=5.
+
+    By default returns only type=1 (definition) records to avoid duplicate
+    activation/template rows. Set type=None to return both types.
+
+    Use filter for additional OData conditions (e.g., \"statecode eq 1\" for
+    activated processes only, or \"primaryentity eq 'account'\").
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    select = params.select or _DEFAULT_PROCESS_SELECT
+    top = params.top
+
+    # Build category filter: if no category specified, exclude cloud flows (category 5)
+    if params.category is not None:
+        category_filter = f"category eq {params.category}"
+    else:
+        category_filter = f"category le {_CLASSIC_PROCESS_MAX_CATEGORY}"
+
+    # Build type filter
+    type_filter: str | None = None
+    if params.type is not None:
+        type_filter = f"type eq {params.type}"
+
+    odata_filter = _combine_filters(category_filter, type_filter, params.filter)
+
+    query_params: dict[str, str] = {
+        "$select": ",".join(select),
+        "$top": str(top),
+    }
+    if odata_filter:
+        query_params["$filter"] = odata_filter
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/workflows"
+    full_url = f"{url}?{urlencode(query_params, safe='$,')}"
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
+        return finalize_response({
+            "records": records,
+            "count": len(records),
+            "has_more": len(records) >= top,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_processes")
+
+
+@flow_write_tool(
+    name="dataverse_activate_process",
+    annotations={
+        "title": "Activate Classic Process",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_activate_process(params: ActivateProcessInput, ctx: Context) -> str:
+    """Activate a classic process (workflow, business rule, action, or BPF).
+
+    Sets statecode=1 (Activated) and statuscode=2 (Activated) on the workflow
+    record. This is idempotent — activating an already-activated process is safe.
+
+    Some processes (real-time workflows) require an ownerid set before activation.
+    Use dataverse_list_processes to inspect the current state.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    patch_url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/workflows({params.process_id})"
+    )
+    body = {"statecode": 1, "statuscode": 2}
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            patch_url,
+            json=body,
+            headers=headers,
+            timeout=_FLOW_STATE_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return json.dumps({
+            "updated": True,
+            "process_id": params.process_id,
+            "statecode": 1,
+            "statuscode": 2,
+        })
+    except httpx.HTTPStatusError as e:
+        message = extract_error_message(e.response)
+        return json.dumps({"error": True, "message": message})
+    except httpx.TimeoutException:
+        return json.dumps({
+            "error": True,
+            "is_transient": True,
+            "message": "Request timed out; verify process state before retrying",
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_activate_process")
+
+
+@flow_write_tool(
+    name="dataverse_deactivate_process",
+    annotations={
+        "title": "Deactivate Classic Process",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_deactivate_process(params: DeactivateProcessInput, ctx: Context) -> str:
+    """Deactivate a classic process (workflow, business rule, action, or BPF).
+
+    Sets statecode=0 (Draft) and statuscode=1 (Draft) on the workflow record.
+    This is idempotent — deactivating an already-draft process is safe.
+
+    Use dataverse_list_processes to inspect the current state before calling.
+
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    patch_url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/workflows({params.process_id})"
+    )
+    body = {"statecode": 0, "statuscode": 1}
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+        resp = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            patch_url,
+            json=body,
+            headers=headers,
+            timeout=_FLOW_STATE_TIMEOUT,
+        )
+        resp.raise_for_status()
+        return json.dumps({
+            "updated": True,
+            "process_id": params.process_id,
+            "statecode": 0,
+            "statuscode": 1,
+        })
+    except httpx.HTTPStatusError as e:
+        message = extract_error_message(e.response)
+        return json.dumps({"error": True, "message": message})
+    except httpx.TimeoutException:
+        return json.dumps({
+            "error": True,
+            "is_transient": True,
+            "message": "Request timed out; verify process state before retrying",
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_deactivate_process")
 
 
 @write_tool(

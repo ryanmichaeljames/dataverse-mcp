@@ -791,6 +791,83 @@ class CloneSolutionAsPatchInput(_SolutionIdentifierInput):
     )
 
 
+class StageAndUpgradeSolutionInput(DataverseEnvironmentInput):
+    """Input for staging and upgrading a Dataverse solution via StageAndUpgradeAsync.
+
+    Performs a single-step true upgrade: stages the new solution version as a
+    holding solution, deletes obsolete components (those removed from the new
+    version), and promotes the result — all in one async operation.
+    """
+
+    customization_file: str | None = Field(
+        default=None,
+        description=(
+            "Base64-encoded solution .zip content to stage and upgrade inline. "
+            "Provide this XOR input_path — not both and not neither. "
+            "Rejected if the base64 string exceeds ~3 MB; use input_path instead."
+        ),
+    )
+    input_path: str | None = Field(
+        default=None,
+        description=(
+            "Local filesystem path to the solution .zip to stage and upgrade "
+            "(e.g., '/tmp/MySolution.zip'). "
+            "The server reads the file and base64-encodes it before posting. "
+            "Provide this XOR customization_file — not both and not neither."
+        ),
+    )
+    overwrite_unmanaged_customizations: bool = Field(
+        default=True,
+        description=(
+            "When True, overwrite existing unmanaged customizations with those "
+            "in the solution being upgraded."
+        ),
+    )
+    publish_workflows: bool = Field(
+        default=True,
+        description="When True, publish workflows (cloud flows) included in the solution.",
+    )
+    skip_product_update_dependencies: bool = Field(
+        default=False,
+        description=(
+            "When True, skip enforcing product update dependencies during the upgrade."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_exactly_one_source(self) -> "StageAndUpgradeSolutionInput":
+        has_inline = bool(self.customization_file)
+        has_path = bool(self.input_path)
+        if has_inline and has_path:
+            raise ValueError(
+                "Provide customization_file (inline base64) XOR input_path (local .zip path) — not both."
+            )
+        if not has_inline and not has_path:
+            raise ValueError(
+                "Provide customization_file (inline base64) or input_path (local .zip path)."
+            )
+        return self
+
+
+class DeleteAndPromoteSolutionInput(DataverseEnvironmentInput):
+    """Input for applying a staged solution upgrade via DeleteAndPromote.
+
+    Used in the two-step upgrade path after dataverse_import_solution with
+    hold_for_upgrade=true. Promotes the holding solution and deletes components
+    no longer present in the new version.
+    """
+
+    solution_unique_name: str = Field(
+        ...,
+        description=(
+            "Unique name of the solution to promote (e.g., 'MyCustomApp'). "
+            "This must be the base solution name — not the '_Upgrade' holding variant. "
+            "The holding solution (created by hold_for_upgrade=true) must already exist."
+        ),
+        min_length=1,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Table query tools
 # ---------------------------------------------------------------------------
@@ -2548,6 +2625,112 @@ class AuditUserAccessInput(DataverseEnvironmentInput):
         if v is not None and not _GUID_PATTERN.match(v):
             raise ValueError("must be a valid GUID")
         return v
+
+
+class RetrieveRecordChangeHistoryInput(DataverseEnvironmentInput):
+    """Input for retrieving the full change history of a single record.
+
+    Calls the unbound RetrieveRecordChangeHistory function which returns an
+    AuditDetailCollection. Requires auditing enabled on the org and the table.
+    """
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the record's table (e.g., 'accounts', 'contacts'). "
+            "Use dataverse_get_entity_sets to discover the correct name."
+        ),
+        min_length=1,
+    )
+    record_id: str = Field(
+        ...,
+        description=(
+            "GUID of the record whose change history to retrieve "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789')."
+        ),
+        min_length=36,
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of audit detail entries to return.",
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("record_id")
+    @classmethod
+    def validate_record_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("record_id must be a valid GUID")
+        return v
+
+
+class GetAuditDetailsInput(DataverseEnvironmentInput):
+    """Input for retrieving full details from a single audit record.
+
+    Calls the bound RetrieveAuditDetails function on the audit entity.
+    Returns an AuditDetail (polymorphic) with OldValue/NewValue for attribute changes.
+    Requires auditing enabled on the org.
+    """
+
+    audit_id: str = Field(
+        ...,
+        description=(
+            "GUID of the audit record whose full details to retrieve "
+            "(e.g., 'a1b2c3d4-1234-5678-abcd-ef0123456789'). "
+            "Obtain audit record GUIDs from dataverse_list_audit or "
+            "dataverse_retrieve_record_change_history."
+        ),
+        min_length=36,
+    )
+
+    @field_validator("audit_id")
+    @classmethod
+    def validate_audit_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("audit_id must be a valid GUID")
+        return v
+
+
+class ListAuditInput(DataverseEnvironmentInput):
+    """Input for querying the audit table with optional OData filters.
+
+    The audit entity set is 'audits'. Useful columns: auditid, createdon,
+    operation, action, objecttypecode, _userid_value, _objectid_value,
+    transactionid. Requires auditing enabled on the org.
+    """
+
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "OData $filter expression to narrow results. Use lowercase logical names. "
+            "Examples: "
+            "\"operation eq 2\" (Updates only), "
+            "\"objecttypecode eq 'account'\", "
+            "\"createdon gt 2024-01-01T00:00:00Z\", "
+            "\"_userid_value eq '<guid>'\""
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to auditid, createdon, operation, action, "
+            "objecttypecode, _userid_value, _objectid_value, transactionid."
+        ),
+    )
+    orderby: list[str] | None = Field(
+        default=None,
+        description=(
+            "Sort order. Each entry is 'column_name asc' or 'column_name desc'. "
+            "Example: ['createdon desc']"
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of audit records to return.",
+        ge=1,
+        le=5000,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -6332,6 +6515,104 @@ class DeleteCustomApiResponsePropertyInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Alternate key metadata tools
+# ---------------------------------------------------------------------------
+
+
+class ListAlternateKeysInput(DataverseEnvironmentInput):
+    """Input for listing alternate keys defined on a Dataverse table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table whose alternate keys to list "
+            "(e.g., 'account', 'contact')."
+        ),
+        min_length=1,
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of alternate keys to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+class CreateAlternateKeyInput(DataverseEnvironmentInput):
+    """Input for creating an alternate key on a Dataverse table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table on which to create the alternate key "
+            "(e.g., 'account')."
+        ),
+        min_length=1,
+    )
+    schema_name: str = Field(
+        ...,
+        description=(
+            "Schema name for the new alternate key (e.g., 'new_AccountCode'). "
+            "Must include the publisher prefix."
+        ),
+        min_length=1,
+    )
+    display_name: str = Field(
+        ...,
+        description="Display label for the alternate key (English, language code 1033).",
+        min_length=1,
+    )
+    key_attributes: list[str] = Field(
+        ...,
+        description=(
+            "Ordered list of attribute logical names that form the key "
+            "(e.g., ['accountnumber'] or ['cr123_code', 'cr123_region']). "
+            "All attributes must already exist on the table."
+        ),
+        min_length=1,
+    )
+    solution_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional solution unique name to associate the key with a solution "
+            "(sets the MSCRM.SolutionUniqueName request header)."
+        ),
+    )
+
+    @field_validator("key_attributes")
+    @classmethod
+    def validate_key_attributes_nonempty(cls, v: list[str]) -> list[str]:
+        if not v:
+            raise ValueError("key_attributes must contain at least one attribute logical name.")
+        for attr in v:
+            if not attr or not attr.strip():
+                raise ValueError("key_attributes must not contain blank attribute names.")
+        return [a.strip().lower() for a in v]
+
+
+class DeleteAlternateKeyInput(DataverseEnvironmentInput):
+    """Input for deleting an alternate key from a Dataverse table."""
+
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the table that owns the alternate key "
+            "(e.g., 'account')."
+        ),
+        min_length=1,
+    )
+    key_logical_name: str = Field(
+        ...,
+        description=(
+            "Logical name of the alternate key to delete "
+            "(e.g., 'new_accountcode'). "
+            "Use dataverse_list_alternate_keys to discover the logical name."
+        ),
+        min_length=1,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Dependency analysis tools
 # ---------------------------------------------------------------------------
 
@@ -6374,4 +6655,100 @@ class AnalyzeDependenciesInput(DataverseEnvironmentInput):
     def validate_component_guid(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
             raise ValueError("component_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Classic process tools (workflow entity)
+# ---------------------------------------------------------------------------
+
+
+class ListProcessesInput(DataverseEnvironmentInput):
+    """Input for listing classic processes (workflows, business rules, actions, BPFs)."""
+
+    category: int | None = Field(
+        default=None,
+        description=(
+            "Optional category filter. Classic process categories: "
+            "0=Workflow (background/real-time), 1=Dialog (deprecated), "
+            "2=Business Rule, 3=Action, 4=Business Process Flow. "
+            "Omit to return all classic processes (categories 0–4). "
+            "Category 5 (Modern Flow / cloud flow) is excluded by default unless "
+            "explicitly requested."
+        ),
+        ge=0,
+        le=5,
+    )
+    type: int | None = Field(
+        default=1,
+        description=(
+            "Optional type filter. 1=Definition (the authored definition record), "
+            "2=Activation/template (the deployed activation record). "
+            "Defaults to 1 (definitions only) to avoid duplicates. "
+            "Set to None to return both types."
+        ),
+        ge=1,
+        le=2,
+    )
+    filter: str | None = Field(
+        default=None,
+        description=(
+            "Optional additional OData $filter expression applied alongside the "
+            "category/type filters (e.g., \"statecode eq 1\" or \"primaryentity eq 'account'\"). "
+            "Do not repeat category or type here — use the dedicated fields."
+        ),
+    )
+    select: list[str] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to a standard projection: workflowid, name, "
+            "category, type, statecode, statuscode, mode, _ownerid_value, primaryentity, "
+            "description, createdon, modifiedon."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description="Maximum number of process records to return.",
+        ge=1,
+        le=5000,
+    )
+
+
+class ActivateProcessInput(DataverseEnvironmentInput):
+    """Input for activating a classic process (set statecode=1, statuscode=2)."""
+
+    process_id: str = Field(
+        ...,
+        description=(
+            "GUID of the workflow record to activate "
+            "(workflowid from the workflows entity set)."
+        ),
+        min_length=36,
+    )
+
+    @field_validator("process_id")
+    @classmethod
+    def validate_process_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("process_id must be a valid GUID")
+        return v
+
+
+class DeactivateProcessInput(DataverseEnvironmentInput):
+    """Input for deactivating a classic process (set statecode=0, statuscode=1)."""
+
+    process_id: str = Field(
+        ...,
+        description=(
+            "GUID of the workflow record to deactivate "
+            "(workflowid from the workflows entity set)."
+        ),
+        min_length=36,
+    )
+
+    @field_validator("process_id")
+    @classmethod
+    def validate_process_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("process_id must be a valid GUID")
         return v

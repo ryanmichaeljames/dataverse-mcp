@@ -344,7 +344,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**173 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**184 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -363,16 +363,16 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | Category | Tools | Description |
 |----------|-------|-------------|
 | `core` | 18 | Environment introspection + all record CRUD (always registered) |
-| `schema` | 29 | Table/column/relationship/choice metadata |
-| `solutions` | 18 | Solution and publisher management, solution components, history, import/export ALM, dependency analysis |
-| `flows` | 5 | Cloud flow listing and enable/disable |
+| `schema` | 32 | Table/column/relationship/choice/alternate-key metadata |
+| `solutions` | 20 | Solution and publisher management, solution components, history, import/export ALM, dependency analysis |
+| `flows` | 8 | Cloud flow + classic process listing and activate/deactivate |
 | `forms` | 6 | Model-driven form management |
 | `views` | 7 | Saved query / view management |
 | `apps` | 10 | Canvas and model-driven app management |
 | `connections` | 5 | Connection reference management |
 | `variables` | 8 | Environment variable definitions and values |
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
-| `security` | 13 | Security roles, teams, users, business units, composite access audit |
+| `security` | 16 | Security roles, teams, users, business units, composite access audit, audit history |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 | `customapis` | 13 | Custom API, request parameter, and response property management |
@@ -401,6 +401,9 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_user` | default | Get one system user by GUID |
 | `dataverse_list_business_units` | default | List business units, optional filter and pagination |
 | `dataverse_audit_user_access` | default | Composite report: user identity, direct roles, team memberships + team roles, effective privileges, optional record-level access check |
+| `dataverse_list_audit` | default | Query the `audits` entity set with optional OData filter, select, orderby, and top; returns audit metadata rows |
+| `dataverse_get_audit_details` | default | Get full before/after detail for a single audit record via the bound `RetrieveAuditDetails` function |
+| `dataverse_retrieve_record_change_history` | default | Retrieve the full audit change history for a single record via `RetrieveRecordChangeHistory`; returns structured `AuditDetailCollection` |
 | `dataverse_assign_security_role` | write | Assign a security role to a user or team |
 | `dataverse_remove_security_role` | write | Remove a security role from a user or team |
 | `dataverse_add_team_members` | write | Add one or more users to a team |
@@ -487,6 +490,14 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_delete_choice` | delete | Delete a global choice by logical name |
 | `dataverse_delete_choice_option` | delete | Remove one option from a global or local choice |
 
+### Alternate keys
+
+| Tool | Gate | Description |
+|------|------|-------------|
+| `dataverse_list_alternate_keys` | default | List `EntityKeyMetadata` definitions on a table; returns `SchemaName`, `LogicalName`, `KeyAttributes`, `EntityKeyIndexStatus`, and `IsManaged` |
+| `dataverse_create_alternate_key` | write | Create an alternate key by `SchemaName`, `DisplayName`, and attribute list; poll `EntityKeyIndexStatus` until `"Active"` before using for upserts |
+| `dataverse_delete_alternate_key` | delete | Remove an alternate key by logical name; drops the underlying SQL index |
+
 ### Solutions & publishers
 
 | Tool | Gate | Description |
@@ -495,7 +506,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_solution` | default | Get a solution by unique name or GUID |
 | `dataverse_list_solution_components` | default | List components in a solution, optional type filter |
 | `dataverse_get_solution_history` | default | Get one solution history record (import/upgrade/export operation) by GUID |
-| `dataverse_list_solution_histories` | default | List solution history records, optional filter by solution GUID or unique name |
+| `dataverse_list_solution_histories` | default | List solution history records, optional filter by solution GUID or unique name; `msdyn_suboperation` distinguishes Update (`3`) from upgrade-with-deletion (`5`) |
 | `dataverse_create_publisher` | write | Create a publisher with customization prefixes |
 | `dataverse_update_publisher` | write | Update publisher fields by GUID |
 | `dataverse_create_solution` | write | Create a solution (publisher binding, version) |
@@ -504,8 +515,10 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_add_component_to_solution` | write | Add a component via `AddSolutionComponent` |
 | `dataverse_remove_component_from_solution` | delete | Remove a component via `RemoveSolutionComponent` |
 | `dataverse_export_solution` | default | Export a solution as a base64 zip; write to disk via `output_path` for large solutions (no org mutation — no write flag required) |
-| `dataverse_import_solution` | write | Import a solution asynchronously via `ImportSolutionAsync`; supply zip as inline base64 (`customization_file`) or a local path (`input_path`); returns `import_job_id` to poll |
-| `dataverse_get_import_job` | default | Get one importjob by GUID — returns progress, completedon, solutionname; add `include_data=true` for the result XML on failure |
+| `dataverse_import_solution` | write | Import a solution asynchronously via `ImportSolutionAsync`; supply zip as inline base64 (`customization_file`) or a local path (`input_path`); returns `import_job_id` to poll. `hold_for_upgrade=false` does an **UPDATE** (overlay — does NOT delete components removed in the new version). For a true upgrade use `dataverse_stage_and_upgrade_solution`, or `hold_for_upgrade=true` then `dataverse_delete_and_promote_solution` |
+| `dataverse_stage_and_upgrade_solution` | write | Single-step solution **upgrade** via `StageAndUpgradeAsync` — stages as holding, deletes obsolete components, and promotes in one async op; supply zip via `customization_file` or `input_path`; returns `import_job_id`, `async_operation_id`, `import_job_key` |
+| `dataverse_delete_and_promote_solution` | write | Two-step apply-upgrade via `DeleteAndPromote` — promotes the holding `_Upgrade` solution and deletes obsolete components (pair with `dataverse_import_solution` + `hold_for_upgrade=true`); synchronous, returns `solution_id` |
+| `dataverse_get_import_job` | default | Get one importjob by GUID — returns progress, completedon, solutionname; add `include_data=true` for the result XML (incl. deletion-phase component errors such as `8004F037`) on failure |
 | `dataverse_list_import_jobs` | default | List importjobs, optional filter by solution unique name, ordered by createdon desc |
 | `dataverse_clone_solution_as_patch` | write | Clone a solution as a patch via bound `CloneAsPatch` action; resolves parent by GUID or unique name |
 | `dataverse_analyze_dependencies` | default | Analyze component dependencies: `blocking_delete` (blocks deletion), `dependents` (what depends on it), or `required` (what it needs); resolves component type codes to names |
@@ -515,7 +528,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 > supplied. Both paths are resolved on the machine running the MCP server. Use `output_path` / `input_path`
 > for solutions larger than ~3 MB (the inline base64 threshold).
 
-### Cloud flows
+### Cloud flows & processes
 
 | Tool | Gate | Description |
 |------|------|-------------|
@@ -524,6 +537,9 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_batch_enable_cloud_flows` | write | Enable many flows in one `$batch`, per-item results |
 | `dataverse_disable_cloud_flow` | write | Disable one flow by workflow ID |
 | `dataverse_batch_disable_cloud_flows` | write | Disable many flows in one `$batch`, per-item results |
+| `dataverse_list_processes` | default | List classic processes (workflows, business rules, actions, BPFs) from the `workflow` entity; filterable by category and type |
+| `dataverse_activate_process` | write | Activate a classic process (sets statecode=1/Activated); idempotent |
+| `dataverse_deactivate_process` | write | Deactivate a classic process (sets statecode=0/Draft); idempotent |
 
 ### Forms
 

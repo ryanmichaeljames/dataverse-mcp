@@ -10,16 +10,16 @@ interpreter process.
 
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
-   tools across all categories register (77 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 173 tools register.
-3. DATAVERSE_TOOLS=security + both allow flags: only 18 core + 13 security = 31.
-4. DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 18 solutions = 36.
+   tools across all categories register (82 tools).
+2. All allow flags set, DATAVERSE_TOOLS unset: all 184 tools register.
+3. DATAVERSE_TOOLS=security + both allow flags: only 18 core + 16 security = 34.
+4. DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 20 solutions = 38.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
    core tools in the registered set.
-6. Composition: DATAVERSE_TOOLS=security, no allow flags → 11 read core + 8 read
-   security = 19 tools.
+6. Composition: DATAVERSE_TOOLS=security, no allow flags → 11 read core + 11 read
+   security = 22 tools.
 7. Unknown category: DATAVERSE_TOOLS=bogus,security + both allow flags → warning
-   logged, bogus ignored, security+core still register (31 tools).
+   logged, bogus ignored, security+core still register (34 tools).
 8. DATAVERSE_TOOLS=jobs + both allow flags: 18 core + 3 jobs = 21 tools.
 9. DATAVERSE_TOOLS=security (no jobs): jobs tools absent.
 10. DATAVERSE_TOOLS=webresources + both allow flags: 18 core + 5 webresources = 23.
@@ -116,7 +116,7 @@ _CORE_DELETE_TOOLS = {
 
 _CORE_ALL_TOOLS = _CORE_READ_TOOLS | _CORE_WRITE_TOOLS | _CORE_DELETE_TOOLS
 
-# Security tools: 8 read + 5 write = 13 total
+# Security tools: 11 read + 5 write = 16 total
 _SECURITY_READ_TOOLS = {
     "dataverse_list_security_roles",
     "dataverse_get_security_role",
@@ -126,6 +126,10 @@ _SECURITY_READ_TOOLS = {
     "dataverse_get_user",
     "dataverse_list_business_units",
     "dataverse_audit_user_access",
+    # Audit history tools (issue #97)
+    "dataverse_retrieve_record_change_history",
+    "dataverse_get_audit_details",
+    "dataverse_list_audit",
 }
 
 _SECURITY_WRITE_TOOLS = {
@@ -196,7 +200,7 @@ _CUSTOMAPIS_ALL_TOOLS = (
     _CUSTOMAPIS_READ_TOOLS | _CUSTOMAPIS_WRITE_TOOLS | _CUSTOMAPIS_DELETE_TOOLS
 )
 
-# Solutions tools (solutions category only, not flows): 9 read + 8 write + 1 delete = 18
+# Solutions tools (solutions category only, not flows): 9 read + 10 write + 1 delete = 20
 _SOLUTIONS_READ_TOOLS = {
     "dataverse_list_solutions",
     "dataverse_get_solution",
@@ -221,6 +225,8 @@ _SOLUTIONS_WRITE_TOOLS = {
     # ALM tools (issue #91)
     "dataverse_import_solution",
     "dataverse_clone_solution_as_patch",
+    "dataverse_stage_and_upgrade_solution",
+    "dataverse_delete_and_promote_solution",
 }
 
 _SOLUTIONS_DELETE_TOOLS = {
@@ -229,9 +235,10 @@ _SOLUTIONS_DELETE_TOOLS = {
 
 _SOLUTIONS_ALL_TOOLS = _SOLUTIONS_READ_TOOLS | _SOLUTIONS_WRITE_TOOLS | _SOLUTIONS_DELETE_TOOLS
 
-# Flows tools: 1 read + 4 write = 5
+# Flows tools: 2 read + 6 write = 8
 _FLOWS_READ_TOOLS = {
     "dataverse_get_cloud_flows",
+    "dataverse_list_processes",
 }
 
 _FLOWS_WRITE_TOOLS = {
@@ -239,6 +246,8 @@ _FLOWS_WRITE_TOOLS = {
     "dataverse_disable_cloud_flow",
     "dataverse_batch_enable_cloud_flows",
     "dataverse_batch_disable_cloud_flows",
+    "dataverse_activate_process",
+    "dataverse_deactivate_process",
 }
 
 _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
@@ -250,7 +259,7 @@ _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
 
 
 def test_default_no_env_vars():
-    """No env vars set: only read-only tools register across all categories (77 tools)."""
+    """No env vars set: only read-only tools register across all categories (82 tools)."""
     tools = _run_scenario({})
     tool_set = set(tools)
 
@@ -267,6 +276,14 @@ def test_default_no_env_vars():
     assert not (tool_set & all_write_delete), (
         f"Write/delete tools unexpectedly registered: {tool_set & all_write_delete}"
     )
+
+    # Alternate key read tool must be present (schema is always-on when DATAVERSE_TOOLS unset)
+    assert "dataverse_list_alternate_keys" in tool_set, (
+        "dataverse_list_alternate_keys missing from default read-only tool set"
+    )
+    # Alternate key write/delete tools must NOT be present
+    assert "dataverse_create_alternate_key" not in tool_set
+    assert "dataverse_delete_alternate_key" not in tool_set
 
     # All read-only core tools must be present
     assert _CORE_READ_TOOLS <= tool_set, (
@@ -288,21 +305,29 @@ def test_default_no_env_vars():
         f"Missing customapis read tools: {_CUSTOMAPIS_READ_TOOLS - tool_set}"
     )
 
-    # Total should be 77 (73 + 4 customapis read + 2 new: audit_user_access + analyze_dependencies)
-    assert len(tools) == 77, f"Expected 77 default tools, got {len(tools)}: {tools}"
+    # Classic process list tool must be present (flows is always-on when DATAVERSE_TOOLS unset)
+    assert "dataverse_list_processes" in tool_set, (
+        "dataverse_list_processes missing from default read-only tool set"
+    )
+    # Activate/deactivate process tools must NOT be present (gated behind DATAVERSE_ALLOW_WRITE)
+    assert "dataverse_activate_process" not in tool_set
+    assert "dataverse_deactivate_process" not in tool_set
+
+    # Total should be 82 (81 previous + 1 new classic process read: dataverse_list_processes)
+    assert len(tools) == 82, f"Expected 82 default tools, got {len(tools)}: {tools}"
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 173 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 184 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 173, f"Expected 173 tools, got {len(tools)}"
+    assert len(tools) == 184, f"Expected 184 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
-    """DATAVERSE_TOOLS=security + both allow flags: 18 core + 13 security = 31."""
+    """DATAVERSE_TOOLS=security + both allow flags: 18 core + 16 security = 34."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -314,11 +339,11 @@ def test_security_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 31, f"Expected 31 tools, got {len(tools)}"
+    assert len(tools) == 34, f"Expected 34 tools, got {len(tools)}"
 
 
 def test_core_solutions_with_all_flags():
-    """DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 18 solutions = 36.
+    """DATAVERSE_TOOLS=core,solutions + both allow flags: 18 core + 20 solutions = 38.
 
     Flows (a separate category) must NOT register.
     """
@@ -334,7 +359,7 @@ def test_core_solutions_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 36, f"Expected 36 tools, got {len(tools)}"
+    assert len(tools) == 38, f"Expected 38 tools, got {len(tools)}"
 
     # Flow tools must not be present
     assert not (tool_set & _FLOWS_ALL_TOOLS), (
@@ -356,7 +381,7 @@ def test_core_always_on_when_omitted():
 
 
 def test_composition_security_no_allow_flags():
-    """DATAVERSE_TOOLS=security, no allow flags: 11 read core + 8 read security = 19."""
+    """DATAVERSE_TOOLS=security, no allow flags: 11 read core + 11 read security = 22."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
     })
@@ -367,11 +392,11 @@ def test_composition_security_no_allow_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 19, f"Expected 19 tools, got {len(tools)}"
+    assert len(tools) == 22, f"Expected 22 tools, got {len(tools)}"
 
 
 def test_unknown_category_ignored():
-    """Unknown category 'bogus' is ignored; security+core still register (31 tools)."""
+    """Unknown category 'bogus' is ignored; security+core still register (34 tools)."""
     result = subprocess.run(
         [sys.executable, "-c", _HELPER_SCRIPT],
         capture_output=True,
@@ -401,7 +426,7 @@ def test_unknown_category_ignored():
         f"Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 31, f"Expected 31 tools, got {len(tools)}"
+    assert len(tools) == 34, f"Expected 34 tools, got {len(tools)}"
 
 
 def test_jobs_only_with_all_flags():

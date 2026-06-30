@@ -26,12 +26,14 @@ from dataverse_mcp.client import (
 from dataverse_mcp.models import (
     AddChoiceOptionInput,
     CheckRelationshipEligibilityInput,
+    CreateAlternateKeyInput,
     CreateChoiceInput,
     CreateColumnInput,
     CreateManyToManyRelationshipInput,
     CreateMultiTableLookupInput,
     CreateOneToManyRelationshipInput,
     CreateTableInput,
+    DeleteAlternateKeyInput,
     DeleteChoiceInput,
     DeleteChoiceOptionInput,
     DeleteColumnInput,
@@ -41,6 +43,7 @@ from dataverse_mcp.models import (
     GetColumnInput,
     GetRelationshipInput,
     GetTableMetadataInput,
+    ListAlternateKeysInput,
     ListChoiceColumnOptionsInput,
     ListChoicesInput,
     ListColumnsInput,
@@ -2118,6 +2121,252 @@ async def dataverse_reorder_choice_options(
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_reorder_choice_options")
+
+
+# ---------------------------------------------------------------------------
+# Alternate key metadata tools
+# ---------------------------------------------------------------------------
+
+_DEFAULT_KEY_SELECT = ",".join([
+    "MetadataId",
+    "SchemaName",
+    "LogicalName",
+    "DisplayName",
+    "KeyAttributes",
+    "EntityKeyIndexStatus",
+    "IsManaged",
+])
+
+
+@tool(
+    name="dataverse_list_alternate_keys",
+    annotations={
+        "title": "List Alternate Keys",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_alternate_keys(
+    params: ListAlternateKeysInput, ctx: Context
+) -> str:
+    """List alternate keys (EntityKeyMetadata) defined on a Dataverse table.
+
+    Alternate keys let integration tools upsert records by business values
+    instead of GUIDs. Returns SchemaName, LogicalName, KeyAttributes, and
+    EntityKeyIndexStatus (which tracks async index build progress).
+    Use the LogicalName with dataverse_delete_alternate_key to remove a key.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+        f"EntityDefinitions(LogicalName='{table_enc}')/Keys"
+        f"?$select={_DEFAULT_KEY_SELECT}"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        keys = await paginate_records(url, headers, params.top, app_ctx.http_client)
+        return finalize_response({
+            "alternate_keys": keys,
+            "count": len(keys),
+            "has_more": len(keys) >= params.top,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_alternate_keys")
+
+
+@write_tool(
+    name="dataverse_create_alternate_key",
+    annotations={
+        "title": "Create Alternate Key",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_create_alternate_key(
+    params: CreateAlternateKeyInput, ctx: Context
+) -> str:
+    """Create an alternate key on a Dataverse table.
+
+    Alternate keys let integration tools identify records by business values
+    (e.g., an account number or external ID) instead of GUIDs, which is
+    required for alternate-key upserts.
+
+    Key creation triggers an asynchronous SQL index build. The response
+    includes entity_key_index_status and async_job_id so callers can track
+    progress. Wait until EntityKeyIndexStatus='Active' before using the key
+    for upserts. Use dataverse_list_alternate_keys to poll status.
+    Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    body = {
+        "@odata.type": "Microsoft.Dynamics.CRM.EntityKeyMetadata",
+        "SchemaName": params.schema_name,
+        "DisplayName": _make_label(params.display_name),
+        "KeyAttributes": params.key_attributes,
+    }
+
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    table_enc = _url_quote(params.table_logical_name, safe="")
+
+    try:
+        headers = await build_headers(
+            app_ctx, base_url, include_content_type=True,
+            extra=_build_extra_headers(solution_unique_name=params.solution_unique_name),
+        )
+        response = await request_with_retry(app_ctx.http_client, "POST",
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')/Keys",
+            json=body,
+            headers=headers,
+            timeout=_METADATA_TIMEOUT,
+        )
+        response.raise_for_status()
+
+        # Attempt to parse the returned EntityKeyMetadata for async status
+        entity_key_index_status: str | None = None
+        async_job_id: str | None = None
+        metadata_id: str | None = None
+        try:
+            payload = response.json()
+            entity_key_index_status = payload.get("EntityKeyIndexStatus")
+            # AsyncJob is a navigation property (EntityReference), not a
+            # selectable scalar. It only appears when the POST returns a body;
+            # extract its id when present, otherwise leave None.
+            async_job = payload.get("AsyncJob")
+            async_job_id = async_job.get("Id") if isinstance(async_job, dict) else None
+            metadata_id = payload.get("MetadataId")
+        except Exception:
+            pass  # Body is optional; OData-EntityId header is the primary ID
+
+        location = response.headers.get("OData-EntityId") or response.headers.get("location", "")
+        logger.info(
+            "Created alternate key %s on table %s — status: %s",
+            params.schema_name, params.table_logical_name, entity_key_index_status,
+        )
+        return json.dumps({
+            "created": True,
+            "table_logical_name": params.table_logical_name,
+            "schema_name": params.schema_name,
+            "logical_name": params.schema_name.lower(),
+            "key_attributes": params.key_attributes,
+            "entity_key_index_status": entity_key_index_status,
+            "async_job_id": async_job_id,
+            "metadata_id": metadata_id,
+            "location": location,
+            "note": (
+                "Index build is asynchronous. Poll dataverse_list_alternate_keys "
+                "until EntityKeyIndexStatus='Active' before using the key for upserts."
+            ),
+        })
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_create_alternate_key — operation may have succeeded: %s", e
+        )
+        return json.dumps({
+            "error": True,
+            "created": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out before the server responded. The alternate key "
+                "may have been created. Use dataverse_list_alternate_keys to verify."
+            ),
+            "table_logical_name": params.table_logical_name,
+            "schema_name": params.schema_name,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_create_alternate_key")
+
+
+@delete_tool(
+    name="dataverse_delete_alternate_key",
+    annotations={
+        "title": "Delete Alternate Key",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_delete_alternate_key(
+    params: DeleteAlternateKeyInput, ctx: Context
+) -> str:
+    """Delete an alternate key from a Dataverse table by its logical name.
+
+    Removes the alternate key definition and drops the underlying SQL index.
+    Any upsert operations that reference this key will fail after deletion.
+    Use dataverse_list_alternate_keys to find the key_logical_name before deleting.
+    Requires DATAVERSE_ALLOW_DELETE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    table_enc = _url_quote(params.table_logical_name, safe="")
+    key_enc = _url_quote(params.key_logical_name, safe="")
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        response = await request_with_retry(app_ctx.http_client, "DELETE",
+            f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
+            f"EntityDefinitions(LogicalName='{table_enc}')"
+            f"/Keys(LogicalName='{key_enc}')",
+            headers=headers,
+            timeout=_METADATA_TIMEOUT,
+        )
+        response.raise_for_status()
+        logger.info(
+            "Deleted alternate key %s from table %s",
+            params.key_logical_name, params.table_logical_name,
+        )
+        return json.dumps({
+            "deleted": True,
+            "table_logical_name": params.table_logical_name,
+            "key_logical_name": params.key_logical_name,
+        })
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 404:
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Alternate key '{params.key_logical_name}' was not found on table "
+                    f"'{params.table_logical_name}'."
+                ),
+            })
+        return tool_error_response(e, "dataverse_delete_alternate_key")
+    except httpx.TimeoutException as e:
+        logger.warning(
+            "Timeout in dataverse_delete_alternate_key — operation may have succeeded: %s", e
+        )
+        return json.dumps({
+            "error": True,
+            "deleted": None,
+            "is_transient": True,
+            "message": (
+                "The request timed out. The alternate key may have been deleted. "
+                "Use dataverse_list_alternate_keys to verify."
+            ),
+            "table_logical_name": params.table_logical_name,
+            "key_logical_name": params.key_logical_name,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_delete_alternate_key")
 
 
 # ---------------------------------------------------------------------------

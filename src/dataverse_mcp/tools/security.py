@@ -28,15 +28,18 @@ from dataverse_mcp.models import (
     AddTeamMembersInput,
     AssignSecurityRoleInput,
     AuditUserAccessInput,
+    GetAuditDetailsInput,
     GetSecurityRoleInput,
     GetTeamInput,
     GetUserInput,
+    ListAuditInput,
     ListBusinessUnitsInput,
     ListSecurityRolesInput,
     ListTeamsInput,
     ListUsersInput,
     RemoveSecurityRoleInput,
     RemoveTeamMembersInput,
+    RetrieveRecordChangeHistoryInput,
     SetUserStateInput,
 )
 
@@ -905,3 +908,209 @@ async def dataverse_audit_user_access(
 
     except Exception as e:
         return tool_error_response(e, "dataverse_audit_user_access")
+
+
+# ---------------------------------------------------------------------------
+# Read-only audit history tools
+# ---------------------------------------------------------------------------
+
+_DEFAULT_AUDIT_SELECT = [
+    "auditid",
+    "createdon",
+    "operation",
+    "action",
+    "objecttypecode",
+    "_userid_value",
+    "_objectid_value",
+    "transactionid",
+]
+
+
+@tool(
+    name="dataverse_retrieve_record_change_history",
+    annotations={
+        "title": "Retrieve Record Change History",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_retrieve_record_change_history(
+    params: RetrieveRecordChangeHistoryInput, ctx: Context
+) -> str:
+    """Retrieve the full audit change history for a specific record.
+
+    Calls the unbound RetrieveRecordChangeHistory function which returns an
+    AuditDetailCollection. Each AuditDetail is polymorphic — the most common
+    subtype is AttributeAuditDetail (OldValue, NewValue per changed field).
+    All subtypes include an AuditRecord navigation property with the audit
+    metadata (who, when, what operation).
+
+    Note: requires auditing enabled on the org and the target table. If auditing
+    is disabled, Dataverse returns an HTTP error — check the error message for
+    audit configuration guidance.
+
+    URL form: GET /api/data/v9.2/RetrieveRecordChangeHistory(Target=@p1)
+              ?@p1={'@odata.id':'<entity_set_name>(<record_id>)'}
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    api_base = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+    # Build the alias value: relative @odata.id reference
+    target_ref = f"{params.entity_set_name}({params.record_id})"
+    alias_value = f"{{'@odata.id':'{target_ref}'}}"
+    url = (
+        f"{api_base}/RetrieveRecordChangeHistory(Target=@p1)"
+        f"?@p1={alias_value}"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
+
+        collection = body.get("AuditDetailCollection", body)
+        details = collection.get("AuditDetails", [])
+        more_records = collection.get("MoreRecords", False)
+        paging_cookie = collection.get("PagingCookie")
+        total = collection.get("TotalRecordCount")
+
+        # Cap to requested top
+        details = details[: params.top]
+
+        response: dict = {
+            "entity_set_name": params.entity_set_name,
+            "record_id": params.record_id,
+            "audit_details": details,
+            "count": len(details),
+            "has_more": more_records,
+        }
+        if total is not None:
+            response["total_record_count"] = total
+        if paging_cookie:
+            response["paging_cookie"] = paging_cookie
+
+        return finalize_response(response)
+    except Exception as e:
+        return tool_error_response(e, "dataverse_retrieve_record_change_history")
+
+
+@tool(
+    name="dataverse_get_audit_details",
+    annotations={
+        "title": "Get Audit Details",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_audit_details(
+    params: GetAuditDetailsInput, ctx: Context
+) -> str:
+    """Retrieve full details from a single audit record.
+
+    Calls the bound RetrieveAuditDetails function on the audit entity, returning
+    a polymorphic AuditDetail. The most common subtype is AttributeAuditDetail
+    which includes OldValue and NewValue (each containing the changed attribute
+    values keyed by logical name) plus InvalidNewValueAttributes.
+
+    Common AuditDetail subtypes (identified by @odata.type):
+      - AttributeAuditDetail — field changes with OldValue/NewValue
+      - RelationshipAuditDetail — relationship association/disassociation
+      - ShareAuditDetail — record sharing
+      - RolePrivilegeAuditDetail — role privilege changes
+      - UserAccessAuditDetail — user login/access events
+
+    Note: requires auditing enabled on the org. If auditing is disabled,
+    Dataverse returns an HTTP error — check the error message for guidance.
+
+    URL form: GET /api/data/v9.2/audits(<audit_id>)/Microsoft.Dynamics.CRM.RetrieveAuditDetails
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    api_base = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+    url = f"{api_base}/audits({params.audit_id})/Microsoft.Dynamics.CRM.RetrieveAuditDetails"
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
+        resp.raise_for_status()
+        body = resp.json()
+        body.pop("@odata.context", None)
+
+        audit_detail = body.get("AuditDetail", body)
+        return json.dumps({"audit_id": params.audit_id, "audit_detail": audit_detail})
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_audit_details")
+
+
+@tool(
+    name="dataverse_list_audit",
+    annotations={
+        "title": "List Audit Records",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_audit(params: ListAuditInput, ctx: Context) -> str:
+    """Query the audit table with optional OData filters.
+
+    Returns audit records from the 'audits' entity set. Common columns:
+    - auditid, createdon — record identity and timestamp
+    - operation — 1=Create, 2=Update, 3=Delete, 4=Access, 5=Upsert
+    - action — specific event code (e.g., 1=Create, 2=Update, 3=Delete,
+      64=User Access via Web, 65=User Access via Web Services)
+    - objecttypecode — logical name of the audited entity (e.g., 'account')
+    - _userid_value — GUID of the user who made the change
+    - _objectid_value — GUID of the audited record
+    - transactionid — groups related changes in one operation
+
+    Use dataverse_get_audit_details to fetch full before/after values for a
+    specific audit record.
+
+    Note: requires auditing enabled on the org. If auditing is disabled,
+    Dataverse may return an empty result set or an HTTP error.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    select = params.select or _DEFAULT_AUDIT_SELECT
+    top = params.top
+    query_params: dict[str, str] = {
+        "$select": ",".join(select),
+        "$top": str(top),
+    }
+    if params.filter:
+        query_params["$filter"] = params.filter
+    if params.orderby:
+        query_params["$orderby"] = ",".join(params.orderby)
+
+    url = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/audits"
+    full_url = f"{url}?{urlencode(query_params, safe='$,')}"
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        records = await paginate_records(full_url, headers, top, app_ctx.http_client)
+        return finalize_response({
+            "records": records,
+            "count": len(records),
+            "has_more": len(records) >= top,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_audit")

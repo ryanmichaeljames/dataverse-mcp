@@ -883,6 +883,7 @@ class QueryTableInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     select: list[str] | None = Field(
         default=None,
@@ -948,6 +949,7 @@ class ExecuteFetchXmlInput(DataverseEnvironmentInput):
             "Entity set (collection) name matching the FetchXML root entity, "
             "e.g. 'accounts'. Use dataverse_get_entity_sets to discover the correct name."
         ),
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     fetch_xml: str = Field(
         ...,
@@ -983,6 +985,7 @@ class GetRecordInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     record_id: str = Field(
         ...,
@@ -1025,6 +1028,7 @@ class AggregateTableInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     apply: str = Field(
         ...,
@@ -1055,6 +1059,7 @@ class CountRecordsInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     filter: str | None = Field(
         default=None,
@@ -2183,6 +2188,7 @@ class RetrievePrincipalAccessInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     record_id: str = Field(
         ...,
@@ -2590,6 +2596,7 @@ class AuditUserAccessInput(DataverseEnvironmentInput):
             "OData collection name of a specific record to check access against "
             "(e.g., 'accounts'). Requires target_record_id."
         ),
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     target_record_id: str | None = Field(
         default=None,
@@ -2641,6 +2648,7 @@ class RetrieveRecordChangeHistoryInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     record_id: str = Field(
         ...,
@@ -2797,6 +2805,7 @@ class AssociateRecordsInput(DataverseEnvironmentInput):
             "(e.g., 'accounts'). Use dataverse_get_entity_sets to discover."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     record_id: str = Field(
         ...,
@@ -2819,6 +2828,7 @@ class AssociateRecordsInput(DataverseEnvironmentInput):
             "(e.g., 'contacts')."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     related_record_id: str = Field(
         ...,
@@ -2844,6 +2854,7 @@ class DisassociateRecordsInput(DataverseEnvironmentInput):
             "(e.g., 'accounts')."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     record_id: str = Field(
         ...,
@@ -2889,6 +2900,7 @@ class CreateRecordInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     data: dict[str, Any] = Field(
         ...,
@@ -2915,6 +2927,7 @@ class UpdateRecordInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     record_id: str = Field(
         ...,
@@ -2952,6 +2965,7 @@ class DeleteRecordInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     record_id: str = Field(
         ...,
@@ -3048,10 +3062,11 @@ class BatchOperationItem(BaseModel):
         ...,
         description=(
             "Relative URL path for this operation (e.g., '/accounts(00000000-...)'). "
-            "Must start with '/'."
+            "Must start with '/'. An optional query string (e.g. '?$select=name') is "
+            "allowed; fragment identifiers (#) and whitespace are not."
         ),
         min_length=1,
-        pattern=r"^/[^\r\n]*$",
+        pattern=r"^/[^\s?#]*(\?[^\s#]*)?$",
     )
     body: dict | None = Field(
         default=None,
@@ -3133,6 +3148,7 @@ class BulkUpsertInput(DataverseEnvironmentInput):
             "Use dataverse_get_entity_sets to discover the correct name."
         ),
         min_length=1,
+        pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$",
     )
     records: list[dict[str, Any]] = Field(
         ...,

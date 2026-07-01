@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   instead of stdlib `xml.etree.ElementTree.fromstring`, closing a billion-laughs entity-expansion
   DoS vector. Server-returned XML (backup XML from Dataverse responses) is left as-is — it is
   trusted server content, not caller input.
+- All `entity_set_name` (and `related_entity_set_name`, `target_entity_set_name`) fields across
+  every input model in `models.py` now enforce `pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$"` (OData
+  collection-name grammar). This closes a path-traversal gap where a value like
+  `accounts/../<other-endpoint>` could be path-normalized by the HTTP client to reach a different
+  API endpoint under the same bearer token.
+- `BatchOperationItem.url` pattern tightened from `r"^/[^\r\n]*$"` to
+  `r"^/[^\s?#]*(\?[^\s#]*)?$"`. The new pattern continues to block CRLF header injection and
+  additionally rejects `#` fragment delimiters and whitespace anywhere in the URL. A single
+  well-formed query string (e.g. `?$select=name&$top=10`) remains permitted so that legitimate
+  GET batch operations with OData query options are not broken.
 
 ## [3.5.0] - 2026-06-30
 

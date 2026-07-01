@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-07-01
+
 ### Security
 - `dataverse_remove_security_role` and `dataverse_remove_team_members` now correctly gate on
   `DATAVERSE_ALLOW_DELETE=true` (previously used `@write_tool`, allowing execution when only write
@@ -628,7 +630,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.1...HEAD
+[3.5.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.1...v3.5.0
 [3.4.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.3.0...v3.4.0

@@ -638,7 +638,7 @@ async def dataverse_get_form(params: GetFormInput, ctx: Context) -> str:
 
         formxml = record.get("formxml") or ""
         try:
-            root = ET.fromstring(formxml)
+            root = DET.fromstring(formxml)
             layout = _form_to_structured(root)
         except ET.ParseError as exc:
             return json.dumps({"error": True, "message": f"Could not parse FormXml: {exc}"})
@@ -727,7 +727,7 @@ async def dataverse_add_form_control(params: AddFormControlInput, ctx: Context) 
 
         # 3. Parse XML
         try:
-            root = ET.fromstring(formxml)
+            root = DET.fromstring(formxml)
         except ET.ParseError as exc:
             return json.dumps({"error": True, "message": f"Could not parse FormXml: {exc}"})
 
@@ -895,7 +895,7 @@ async def dataverse_validate_formxml(params: ValidateFormInput, ctx: Context) ->
                 "errors": errors,
             })
 
-        root = ET.fromstring(formxml)
+        root = DET.fromstring(formxml)
         controls = [
             ctrl.get("datafieldname")
             for ctrl in root.iter("control")
@@ -956,7 +956,7 @@ async def dataverse_remove_form_control(params: RemoveFormControlInput, ctx: Con
 
         # 2. Parse XML
         try:
-            root = ET.fromstring(formxml)
+            root = DET.fromstring(formxml)
         except ET.ParseError as exc:
             return json.dumps({"error": True, "message": f"Could not parse FormXml: {exc}"})
 

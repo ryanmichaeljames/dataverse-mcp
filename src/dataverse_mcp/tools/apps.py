@@ -11,7 +11,9 @@ import re
 import xml.etree.ElementTree as ET
 from urllib.parse import quote as _url_quote, urlencode
 
+import defusedxml.ElementTree as DET
 import httpx
+from defusedxml.common import DefusedXmlException
 from mcp.server.fastmcp import Context
 
 from dataverse_mcp._app import category_tools
@@ -135,7 +137,9 @@ def _validate_sitemap_xml(xml: str) -> list[str]:
     """Validate SiteMap XML structure. Returns a list of error strings; empty = valid."""
     errors: list[str] = []
     try:
-        root = ET.fromstring(xml)
+        root = DET.fromstring(xml)
+    except DefusedXmlException:
+        return ["XML contains forbidden constructs (entities/DTD) and was rejected."]
     except ET.ParseError as exc:
         return [f"XML is not well-formed: {exc}"]
 

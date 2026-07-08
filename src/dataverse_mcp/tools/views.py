@@ -8,7 +8,7 @@ import json
 import logging
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote, urlencode
+from urllib.parse import urlencode
 
 import defusedxml.ElementTree as DET
 from defusedxml.common import DefusedXmlException
@@ -19,6 +19,7 @@ from dataverse_mcp._app import category_tools
 
 tool, write_tool, delete_tool = category_tools("views")
 from dataverse_mcp.client import (
+    encode_odata_literal,
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -142,7 +143,7 @@ async def _resolve_entity_view_info(
     table: str,
 ) -> dict:
     """Fetch ObjectTypeCode, PrimaryIdAttribute, PrimaryNameAttribute, EntitySetName."""
-    table_enc = _url_quote(table, safe="")
+    table_enc = encode_odata_literal(table)
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
         f"/EntityDefinitions(LogicalName='{table_enc}')"
@@ -169,7 +170,7 @@ async def _resolve_columns(
     """Confirm each column exists; return {logical_name: display_name}. Raise on missing."""
     if not names:
         return {}
-    table_enc = _url_quote(table, safe="")
+    table_enc = encode_odata_literal(table)
     name_filters = " or ".join(
         f"LogicalName eq '{odata_quote(n)}'" for n in names
     )

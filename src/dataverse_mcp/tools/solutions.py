@@ -3,6 +3,7 @@
 import base64
 import json
 import logging
+import os
 import uuid
 from pathlib import Path
 from types import SimpleNamespace
@@ -1605,20 +1606,50 @@ async def dataverse_remove_component_from_solution(
 # ---------------------------------------------------------------------------
 
 
+_FILE_BASE_DIR_VAR = "DATAVERSE_FILE_BASE_DIR"
+
+
+def _confined_target(path_str: str) -> Path:
+    """Resolve *path_str* to an absolute Path, confined to DATAVERSE_FILE_BASE_DIR.
+
+    Solution export/import take a caller-supplied filesystem path. When
+    ``DATAVERSE_FILE_BASE_DIR`` is set, the resolved path must stay inside that
+    directory; anything outside it (including ``..`` traversal or an absolute
+    path elsewhere) is rejected with ``ValueError``. This bounds the blast radius
+    of a caller — e.g. a prompt-injection payload steering an agent — that tries
+    to write a solution zip over an arbitrary file (a startup script, an SSH key)
+    or read an arbitrary file off the host.
+
+    When the env var is unset the path is resolved but not confined, preserving
+    prior behaviour — opt-in hardening that mirrors ``DATAVERSE_WHITELIST``.
+    """
+    target = Path(path_str).expanduser().resolve()
+    base_raw = os.environ.get(_FILE_BASE_DIR_VAR, "").strip()
+    if base_raw:
+        base = Path(base_raw).expanduser().resolve()
+        if target != base and not target.is_relative_to(base):
+            raise ValueError(
+                f"Path is outside the permitted {_FILE_BASE_DIR_VAR} directory "
+                f"({base}); refusing to access '{target}'."
+            )
+    return target
+
+
 def _decode_and_write_zip(b64_data: str, output_path: str) -> tuple[Path, int]:
     """Decode a base64 string and write the bytes to *output_path*.
 
-    Creates the parent directory if it does not exist.
+    Creates the parent directory if it does not exist. The path is confined to
+    ``DATAVERSE_FILE_BASE_DIR`` when that env var is set (see _confined_target).
 
     Returns (resolved_path, size_bytes).
 
     Raises:
-        ValueError: When output_path is empty.
+        ValueError: When output_path is empty or escapes DATAVERSE_FILE_BASE_DIR.
         OSError: On any OS-level I/O failure (PermissionError, etc.).
     """
     if not output_path or not output_path.strip():
         raise ValueError("output_path must be a non-empty string")
-    target = Path(output_path).expanduser().resolve()
+    target = _confined_target(output_path)
     target.parent.mkdir(parents=True, exist_ok=True)
     data = base64.b64decode(b64_data)
     target.write_bytes(data)
@@ -1628,14 +1659,17 @@ def _decode_and_write_zip(b64_data: str, output_path: str) -> tuple[Path, int]:
 def _read_and_encode_zip(input_path: str) -> str:
     """Read a .zip file from *input_path* and return its base64-encoded content.
 
+    The path is confined to ``DATAVERSE_FILE_BASE_DIR`` when that env var is set
+    (see _confined_target).
+
     Raises:
-        ValueError: When input_path is empty.
+        ValueError: When input_path is empty or escapes DATAVERSE_FILE_BASE_DIR.
         FileNotFoundError: When the file does not exist.
         OSError: On any other OS-level I/O failure.
     """
     if not input_path or not input_path.strip():
         raise ValueError("input_path must be a non-empty string")
-    source = Path(input_path).expanduser().resolve()
+    source = _confined_target(input_path)
     data = source.read_bytes()
     return base64.b64encode(data).decode("ascii")
 

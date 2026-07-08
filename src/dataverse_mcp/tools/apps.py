@@ -9,7 +9,7 @@ import logging
 import os
 import re
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote, urlencode
+from urllib.parse import urlencode
 
 import defusedxml.ElementTree as DET
 import httpx
@@ -20,6 +20,7 @@ from dataverse_mcp._app import category_tools
 
 tool, write_tool, delete_tool = category_tools("apps")
 from dataverse_mcp.client import (
+    encode_odata_literal,
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -197,7 +198,7 @@ async def _resolve_entity_metadata_id(
     headers: dict,
     logical_name: str,
 ) -> str | None:
-    enc = _url_quote(logical_name, safe="")
+    enc = encode_odata_literal(logical_name)
     resp = await request_with_retry(app_ctx.http_client, "GET",
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
         f"/EntityDefinitions(LogicalName='{enc}')?$select=MetadataId",

@@ -517,9 +517,34 @@ def _normalize_org_url(url: str) -> str:
     return f"https://{canonical_host}"
 
 
+def _get_require_whitelist() -> bool:
+    """Return whether an empty DATAVERSE_WHITELIST should fail closed.
+
+    Reads DATAVERSE_REQUIRE_WHITELIST (default: false).  Accepts 'true' or
+    'false' case-insensitively; any other non-empty value is rejected with a
+    logged warning and falls back to the default (false).  When true, tool
+    calls are rejected whenever DATAVERSE_WHITELIST is empty, so a bearer token
+    is never minted for an unapproved host — the recommended posture for
+    shared/multi-tenant deployments.
+    """
+    raw = os.environ.get("DATAVERSE_REQUIRE_WHITELIST", "").strip().lower()
+    if not raw:
+        return False
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    logger.warning(
+        "DATAVERSE_REQUIRE_WHITELIST=%r is not 'true' or 'false'; using default (false)",
+        os.environ.get("DATAVERSE_REQUIRE_WHITELIST", ""),
+    )
+    return False
+
+
 # Read once at import: normalize_dataverse_url is lru_cached, so the whitelist
 # must not vary per call.
 _URL_WHITELIST = _load_url_whitelist()
+_REQUIRE_WHITELIST = _get_require_whitelist()
 
 
 @functools.lru_cache(maxsize=64)
@@ -527,20 +552,29 @@ def normalize_dataverse_url(url: str) -> str:
     """Validate, normalize, and authorize a Dataverse organization URL.
 
     When DATAVERSE_WHITELIST is configured, URLs whose host is outside the
-    whitelist are rejected. When it is empty, any environment is permitted.
+    whitelist are rejected. When it is empty, any environment is permitted
+    unless DATAVERSE_REQUIRE_WHITELIST is set, which fails closed (rejects
+    every call) so a token is never minted for an unapproved host.
 
     The host extracted from the already-canonical normalized URL is compared
     against the canonical allowlist set.  Both sides went through
     :func:`_canonicalize_host`, so trailing-dot and IDN forms match correctly.
     """
     normalized = _normalize_org_url(url)
-    if _URL_WHITELIST:
-        # _normalize_org_url already canonicalizes the host and drops the port,
-        # so urlparse(normalized).hostname is already canonical.  Pass it
-        # through _canonicalize_host once more to keep the comparison provably
-        # consistent without relying on implementation ordering.
-        host = _canonicalize_host(urlparse(normalized).hostname or "")
-        if host not in _URL_WHITELIST:
+    if not _URL_WHITELIST:
+        if _REQUIRE_WHITELIST:
+            raise ValueError(
+                "DATAVERSE_REQUIRE_WHITELIST is set but DATAVERSE_WHITELIST is empty; "
+                "refusing to mint a token for an unapproved host. Populate "
+                "DATAVERSE_WHITELIST with the allowed environment hostname(s)."
+            )
+        return normalized
+    # _normalize_org_url already canonicalizes the host and drops the port,
+    # so urlparse(normalized).hostname is already canonical.  Pass it
+    # through _canonicalize_host once more to keep the comparison provably
+    # consistent without relying on implementation ordering.
+    host = _canonicalize_host(urlparse(normalized).hostname or "")
+    if host not in _URL_WHITELIST:
             raise ValueError(
                 f"dataverse_url host '{host}' is not in the configured DATAVERSE_WHITELIST. "
                 "Add it to DATAVERSE_WHITELIST to permit access to this environment."
@@ -874,11 +908,18 @@ async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
             len(_URL_WHITELIST),
             ", ".join(sorted(_URL_WHITELIST)),
         )
+    elif _REQUIRE_WHITELIST:
+        logger.error(
+            "DATAVERSE_REQUIRE_WHITELIST is set but DATAVERSE_WHITELIST is empty; "
+            "ALL tool calls will be rejected until DATAVERSE_WHITELIST is populated "
+            "with approved environment hostname(s)."
+        )
     else:
         logger.warning(
             "DATAVERSE_WHITELIST is not set; tool calls may target ANY environment URL "
             "and bearer tokens will be minted for it. Set DATAVERSE_WHITELIST to restrict "
-            "access to approved Dataverse environments."
+            "access to approved Dataverse environments, and DATAVERSE_REQUIRE_WHITELIST=true "
+            "to fail closed on shared/multi-tenant deployments."
         )
 
     auth_type = os.environ.get("DATAVERSE_AUTH_TYPE", "interactive").lower().strip()

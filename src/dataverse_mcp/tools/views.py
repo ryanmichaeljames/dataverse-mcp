@@ -321,7 +321,7 @@ def _build_fetchxml(
 def _parse_fetch(fetchxml: str) -> dict:
     """Parse FetchXml into structured dict with columns, sort, filters, quick_find_fields."""
     try:
-        root = ET.fromstring(fetchxml)
+        root = DET.fromstring(fetchxml)
     except ET.ParseError:
         return {"table": None, "columns": [], "sort": [], "filters": [], "quick_find_fields": []}
 
@@ -364,7 +364,7 @@ def _parse_layout(layoutxml: str | None) -> dict:
     if not layoutxml:
         return {"grid_name": None, "row_name": None, "object": None, "columns": []}
     try:
-        root = ET.fromstring(layoutxml)
+        root = DET.fromstring(layoutxml)
     except ET.ParseError:
         return {"grid_name": None, "row_name": None, "object": None, "columns": []}
     row = root.find("row")
@@ -973,7 +973,7 @@ async def dataverse_update_view(params: UpdateViewInput, ctx: Context) -> str:
         parsed = _parse_fetch(backup_fetchxml)
 
         # 4. Strip Quick Find filters from the entity element (can't send these in a PATCH)
-        fetch_root = ET.fromstring(backup_fetchxml)
+        fetch_root = DET.fromstring(backup_fetchxml)
         entity = fetch_root.find("entity")
         qf_dropped = _strip_quickfind_filters(entity)
 
@@ -1137,9 +1137,9 @@ async def dataverse_add_view_column(params: AddViewColumnInput, ctx: Context) ->
             return json.dumps({"error": True, "message": str(e)})
 
         # 3. Parse XML trees
-        fetch_root = ET.fromstring(backup_fetchxml)
+        fetch_root = DET.fromstring(backup_fetchxml)
         entity = fetch_root.find("entity")
-        grid_root = ET.fromstring(backup_layoutxml)
+        grid_root = DET.fromstring(backup_layoutxml)
         row = grid_root.find("row")
 
         if entity is None:
@@ -1288,9 +1288,9 @@ async def dataverse_remove_view_column(params: RemoveViewColumnInput, ctx: Conte
             })
 
         # 2. Parse XML trees
-        fetch_root = ET.fromstring(backup_fetchxml)
+        fetch_root = DET.fromstring(backup_fetchxml)
         entity = fetch_root.find("entity")
-        grid_root = ET.fromstring(backup_layoutxml)
+        grid_root = DET.fromstring(backup_layoutxml)
         row = grid_root.find("row")
 
         if entity is None:

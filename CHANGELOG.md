@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.6.0] - 2026-07-08
+
+### Security
+- Closed an OData string-literal injection in the schema-plane tools. Values interpolated into
+  key predicates such as `EntityDefinitions(LogicalName='...')`, `Attributes(LogicalName='...')`,
+  `RelationshipDefinitions(SchemaName='...')`, `GlobalOptionSetDefinitions(Name='...')`, and
+  `Keys(LogicalName='...')` were percent-encoded with `urllib.parse.quote(..., safe="")` only.
+  Because Dataverse percent-decodes the whole URL *before* OData parsing, a lone `%27` decoded back
+  to `'` and terminated the literal, letting a caller-supplied value break out of the predicate and
+  navigate to an arbitrary metadata resource (confirmed against a live org: a `table_logical_name`
+  of `account')/Attributes(LogicalName='createdon` returned the `createdon` attribute metadata with
+  HTTP 200). Fixed at two layers:
+  - New `client.encode_odata_literal` doubles single quotes (OData escaping) *before*
+    percent-encoding, so the decoded form is an escaped `''` that stays inside the literal. Every
+    `_url_quote(... , safe="")` literal site in `metadata.py`, `forms.py`, `views.py`, and `apps.py`
+    now uses it. Legitimate names are unchanged (identity for quote-free input).
+  - All logical-name / schema-name / alternate-key-name / global-choice-name fields in `models.py`
+    now enforce `pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$"` (`_DATAVERSE_NAME_PATTERN`), rejecting the
+    payload at the input boundary as well — mirroring the guard already on `entity_set_name`. The
+    data plane was already safe (record CRUD uses the validated `entity_set_name` plus a GUID key).
+- Added `tests/test_odata_literal_encoding.py` (network-free regression guard for both the encoder
+  and the model validation) and `tests/integration/test_odata_injection_integration.py` (live proof
+  that the old encoding breaks out and `encode_odata_literal` blocks the same payload against a real
+  org, plus a no-regression check through `dataverse_get_column`).
+- `solution_unique_name` now enforces the `_DATAVERSE_NAME_PATTERN` identifier grammar on every
+  input model. The value is passed through to the `MSCRM.SolutionUniqueName` request header
+  (`connection_references.py`, `environment_variables.py`, `metadata.py`); the grammar forbids CR/LF,
+  so a caller can no longer attempt header injection via this field. (The httpx transport already
+  rejected bare CR/LF in header values; this closes it at the input boundary as defence in depth.)
+- New `DATAVERSE_FILE_BASE_DIR` env flag (default unset). When set, the solution export/import file
+  paths (`output_path` / `input_path` on `dataverse_export_solution`, `dataverse_import_solution`,
+  `dataverse_stage_and_upgrade_solution`) are confined to that directory — a resolved path outside it,
+  including `..` traversal or an absolute path elsewhere, is rejected with an actionable error. This
+  bounds the blast radius of an arbitrary-location file write/read (e.g. a prompt-injection payload
+  steering an agent to overwrite a startup script or read an SSH key). Unset preserves prior behaviour
+  — opt-in hardening that mirrors `DATAVERSE_WHITELIST`.
+- Added `tests/test_solution_hardening.py` (network-free guards for the `solution_unique_name` pattern
+  and the `DATAVERSE_FILE_BASE_DIR` path confinement).
+
 ## [3.5.1] - 2026-07-08
 
 ### Security

@@ -9,7 +9,7 @@ import logging
 import re
 import uuid
 import xml.etree.ElementTree as ET
-from urllib.parse import quote as _url_quote, urlencode
+from urllib.parse import urlencode
 
 import defusedxml.ElementTree as DET
 from defusedxml.common import DefusedXmlException
@@ -20,6 +20,7 @@ from dataverse_mcp._app import category_tools
 
 tool, write_tool, delete_tool = category_tools("forms")
 from dataverse_mcp.client import (
+    encode_odata_literal,
     AppContext,
     _DATAVERSE_API_VERSION,
     build_headers,
@@ -474,7 +475,7 @@ async def _resolve_column_info(
     datafieldname: str,
 ) -> dict | None:
     """Return {attribute_type, display_name, format_name_value} for a column, or None."""
-    table_enc = _url_quote(table_logical_name, safe="")
+    table_enc = encode_odata_literal(table_logical_name)
     field_filter = f"LogicalName eq '{odata_quote(datafieldname)}'"
 
     # Basic metadata (works for all types)

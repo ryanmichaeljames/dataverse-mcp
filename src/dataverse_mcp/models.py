@@ -11,6 +11,19 @@ _GUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
+# OData identifier grammar for Dataverse logical names, schema names, alternate-key
+# names, global-choice names, and solution unique names. Two attack surfaces are
+# guarded:
+#   * logical/schema/key/choice names are interpolated into OData string literals
+#     in request URLs (e.g. EntityDefinitions(LogicalName='...')); restricting them
+#     is a fail-fast boundary on top of the output encoding in
+#     client.encode_odata_literal, closing the literal-breakout / navigation
+#     injection at the input layer as well.
+#   * solution_unique_name is placed in the MSCRM.SolutionUniqueName request header;
+#     the identifier grammar forbids CR/LF and so rules out header injection.
+# Mirrors the pattern already enforced on entity_set_name.
+_DATAVERSE_NAME_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
+
 
 # ---------------------------------------------------------------------------
 # Solution tools
@@ -70,6 +83,7 @@ class GetSolutionInput(DataverseEnvironmentInput):
             "The unique name of the solution (e.g., 'MyCustomApp'). "
             "Provide either this or solution_id, not both."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     solution_id: str | None = Field(
         default=None,
@@ -220,6 +234,7 @@ class _SolutionIdentifierInput(DataverseEnvironmentInput):
         description=(
             "Solution unique name. Provide either this or solution_id, not both."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     solution_id: str | None = Field(
         default=None,
@@ -291,6 +306,7 @@ class ListSolutionHistoriesInput(DataverseEnvironmentInput):
             "(e.g., 'MyCustomApp'). "
             "Provide either this or solution_id, not both."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     select: list[str] | None = Field(
         default=None,
@@ -328,6 +344,7 @@ class CreateSolutionInput(DataverseEnvironmentInput):
         ...,
         description="Unique name for the solution (e.g., 'contoso_core')",
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     display_name: str = Field(
         ...,
@@ -487,6 +504,7 @@ class ListCloudFlowsInput(DataverseEnvironmentInput):
             "Optional solution unique name to scope flows to a specific solution. "
             "Provide either this or solution_id, not both."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @field_validator("solution_id")
@@ -865,6 +883,7 @@ class DeleteAndPromoteSolutionInput(DataverseEnvironmentInput):
             "The holding solution (created by hold_for_upgrade=true) must already exist."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1100,6 +1119,7 @@ class MetadataWriteInput(DataverseEnvironmentInput):
             "created or updated component to that solution. Leave unset to create "
             "components outside of any solution."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1140,6 +1160,7 @@ class GetTableMetadataInput(MetadataReadInput):
             "'new_customtable'). Use lowercase logical names."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1153,6 +1174,7 @@ class ListColumnsInput(MetadataReadInput):
             "(e.g., 'account', 'contact', 'new_customtable'). Use lowercase."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     attribute_type: str | None = Field(
         default=None,
@@ -1185,6 +1207,7 @@ class GetColumnInput(MetadataReadInput):
             "Use lowercase."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     column_logical_name: str = Field(
         ...,
@@ -1193,6 +1216,7 @@ class GetColumnInput(MetadataReadInput):
             "'new_customfield'). Use lowercase."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1206,6 +1230,7 @@ class ListChoiceColumnOptionsInput(MetadataReadInput):
             "Use lowercase."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     column_logical_name: str = Field(
         ...,
@@ -1214,6 +1239,7 @@ class ListChoiceColumnOptionsInput(MetadataReadInput):
             "(e.g., 'statuscode', 'new_category'). Use lowercase."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1234,6 +1260,7 @@ class ListRelationshipsInput(MetadataReadInput):
             "(e.g., 'account', 'contact'). "
             "If omitted, all relationships in the environment are returned."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     relationship_type: str | None = Field(
         default=None,
@@ -1273,6 +1300,7 @@ class GetRelationshipInput(MetadataReadInput):
             "defined. Always match the SchemaName value exactly."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1286,6 +1314,7 @@ class CheckRelationshipEligibilityInput(DataverseEnvironmentInput):
             "Use lowercase."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     check_type: str = Field(
         ...,
@@ -1343,6 +1372,7 @@ class GetChoiceInput(MetadataReadInput):
             "(e.g., 'incident_prioritycode', 'new_my_globalchoice'). "
             "Use lowercase. Either name or metadata_id must be provided."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     metadata_id: str | None = Field(
         default=None,
@@ -1399,6 +1429,7 @@ class CreateTableInput(MetadataWriteInput):
             "version of this value."
         ),
         min_length=3,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     ownership_type: str = Field(
         default="UserOwned",
@@ -1440,6 +1471,7 @@ class UpdateTableInput(MetadataWriteInput):
             "Use lowercase."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     display_name: str | None = Field(
         default=None,
@@ -1461,6 +1493,7 @@ class DeleteTableInput(DataverseEnvironmentInput):
             "Use lowercase. Only custom tables (IsCustomEntity=true) can be deleted."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1493,6 +1526,7 @@ class CreateColumnInput(MetadataWriteInput):
             "(e.g., 'account', 'cr123_widget')."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     schema_name: str = Field(
         ...,
@@ -1502,6 +1536,7 @@ class CreateColumnInput(MetadataWriteInput):
             "derived as the lowercase version of this value."
         ),
         min_length=3,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     attribute_type: str = Field(
         ...,
@@ -1552,6 +1587,7 @@ class CreateColumnInput(MetadataWriteInput):
             "Only used when attribute_type is 'Picklist' or 'MultiSelectPicklist'. "
             "When set, the column references the global choice instead of having a local option set."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @field_validator("attribute_type")
@@ -1588,6 +1624,7 @@ class UpdateColumnInput(MetadataWriteInput):
         ...,
         description="Logical name of the table that owns the column.",
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     column_logical_name: str = Field(
         ...,
@@ -1596,6 +1633,7 @@ class UpdateColumnInput(MetadataWriteInput):
             "Fetch the current definition first with dataverse_get_column."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     full_definition: dict = Field(
         ...,
@@ -1614,6 +1652,7 @@ class DeleteColumnInput(DataverseEnvironmentInput):
         ...,
         description="Logical name of the table that owns the column.",
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     column_logical_name: str = Field(
         ...,
@@ -1622,6 +1661,7 @@ class DeleteColumnInput(DataverseEnvironmentInput):
             "Only custom columns can be deleted."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -1640,6 +1680,7 @@ class CreateOneToManyRelationshipInput(MetadataWriteInput):
             "Must include a publisher prefix."
         ),
         min_length=3,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     referenced_entity: str = Field(
         ...,
@@ -1682,6 +1723,7 @@ class CreateManyToManyRelationshipInput(MetadataWriteInput):
             "Must include a publisher prefix."
         ),
         min_length=3,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     entity1_logical_name: str = Field(
         ...,
@@ -1872,6 +1914,7 @@ class DeleteChoiceInput(DataverseEnvironmentInput):
             "via dataverse_get_choice."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -3223,6 +3266,7 @@ class ListViewsInput(DataverseEnvironmentInput):
             "Logical name of the table to list views for (e.g. 'account'). "
             "Omit to list views for all tables."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     query_type: int | None = Field(
         default=None,
@@ -3279,6 +3323,7 @@ class CreateViewInput(DataverseEnvironmentInput):
     table_logical_name: str = Field(
         description="Logical name of the target table.",
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     name: str = Field(
         description="View name shown in the view selector.",
@@ -3316,6 +3361,7 @@ class CreateViewInput(DataverseEnvironmentInput):
     solution_unique_name: str | None = Field(
         default=None,
         description="Add the new view to this solution.",
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -3353,6 +3399,7 @@ class UpdateViewInput(DataverseEnvironmentInput):
     solution_unique_name: str | None = Field(
         default=None,
         description="Add the view to this solution.",
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @field_validator("view_id")
@@ -3470,6 +3517,7 @@ class SetFormXmlInput(DataverseEnvironmentInput):
             "If provided, adds the form to this solution after the update via "
             "AddSolutionComponent (component type 60 — System Form)."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @field_validator("form_id")
@@ -3489,6 +3537,7 @@ class ListFormsInput(DataverseEnvironmentInput):
             "Logical name of the table to filter forms by (e.g., 'account'). "
             "Omit to return forms for all tables."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     form_type: int | None = Field(
         default=None,
@@ -3537,6 +3586,7 @@ class AddFormControlInput(DataverseEnvironmentInput):
             "Used to look up column metadata to determine the correct control type."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     datafieldname: str = Field(
         description="Logical name of the column to add (e.g., 'cr123_description').",
@@ -3594,6 +3644,7 @@ class AddFormControlInput(DataverseEnvironmentInput):
             "If provided, adds the form to this solution after the update via "
             "AddSolutionComponent (component type 60 — System Form)."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @field_validator("form_id")
@@ -3622,6 +3673,7 @@ class RemoveFormControlInput(DataverseEnvironmentInput):
             "If provided, adds the form to this solution after the update via "
             "AddSolutionComponent (component type 60 — System Form)."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @field_validator("form_id")
@@ -4187,6 +4239,7 @@ class CreateConnectionReferenceInput(DataverseEnvironmentInput):
             "Unique name of the solution to associate this connection reference with. "
             "Passed as the MSCRM.SolutionUniqueName request header."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -4220,6 +4273,7 @@ class UpdateConnectionReferenceInput(DataverseEnvironmentInput):
             "Unique name of the solution to associate this connection reference with. "
             "Passed as the MSCRM.SolutionUniqueName request header on the PATCH."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @model_validator(mode="after")
@@ -4301,6 +4355,7 @@ class GetEnvironmentVariablesInput(DataverseEnvironmentInput):
             "Cannot be combined with name."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     top: int = Field(
         default=50,
@@ -4343,6 +4398,7 @@ class CreateEnvironmentVariableInput(DataverseEnvironmentInput):
             "(e.g., 'new_MyVariable'). Must include a publisher prefix and be unique."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     display_name: str = Field(
         description="Display name for the environment variable.",
@@ -4382,6 +4438,7 @@ class CreateEnvironmentVariableInput(DataverseEnvironmentInput):
             "Unique name of the solution to associate the new definition with. "
             "Passed as the MSCRM.SolutionUniqueName request header."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 
@@ -6545,6 +6602,7 @@ class ListAlternateKeysInput(DataverseEnvironmentInput):
             "(e.g., 'account', 'contact')."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     top: int = Field(
         default=50,
@@ -6564,6 +6622,7 @@ class CreateAlternateKeyInput(DataverseEnvironmentInput):
             "(e.g., 'account')."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     schema_name: str = Field(
         ...,
@@ -6572,6 +6631,7 @@ class CreateAlternateKeyInput(DataverseEnvironmentInput):
             "Must include the publisher prefix."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     display_name: str = Field(
         ...,
@@ -6593,6 +6653,7 @@ class CreateAlternateKeyInput(DataverseEnvironmentInput):
             "Optional solution unique name to associate the key with a solution "
             "(sets the MSCRM.SolutionUniqueName request header)."
         ),
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
     @field_validator("key_attributes")
@@ -6616,6 +6677,7 @@ class DeleteAlternateKeyInput(DataverseEnvironmentInput):
             "(e.g., 'account')."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
     key_logical_name: str = Field(
         ...,
@@ -6625,6 +6687,7 @@ class DeleteAlternateKeyInput(DataverseEnvironmentInput):
             "Use dataverse_list_alternate_keys to discover the logical name."
         ),
         min_length=1,
+        pattern=_DATAVERSE_NAME_PATTERN,
     )
 
 

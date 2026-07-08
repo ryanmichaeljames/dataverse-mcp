@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import httpx
 from azure.core.exceptions import ClientAuthenticationError
@@ -802,6 +802,24 @@ async def paginate_records(
 def odata_quote(value: str) -> str:
     """Escape a value for use inside an OData single-quoted string literal."""
     return value.replace("'", "''")
+
+
+def encode_odata_literal(value: str) -> str:
+    """Escape *value* for a single-quoted OData literal embedded in a request URL.
+
+    Two independent layers are required and BOTH matter:
+
+    1. ``odata_quote`` doubles single quotes — the OData string-literal escape.
+    2. ``quote(..., safe="")`` percent-encodes the result for the URL.
+
+    Percent-encoding alone is NOT sufficient: Dataverse percent-decodes the whole
+    URL *before* the OData expression is parsed, so a lone ``%27`` decodes back to
+    ``'`` and terminates the literal early, letting a caller-supplied value break
+    out of a key predicate such as ``EntityDefinitions(LogicalName='...')`` and
+    navigate to an arbitrary resource. Doubling the quote first means the decoded
+    form is ``''`` (an escaped quote) and stays inside the literal.
+    """
+    return quote(odata_quote(value), safe="")
 
 
 def _truncate_message(text: str) -> str:

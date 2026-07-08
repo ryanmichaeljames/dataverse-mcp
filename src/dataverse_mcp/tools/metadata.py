@@ -3,7 +3,7 @@
 import asyncio
 import json
 import logging
-from urllib.parse import quote as _url_quote, urlencode
+from urllib.parse import urlencode
 from xml.etree import ElementTree as ET
 
 import httpx
@@ -13,6 +13,7 @@ from dataverse_mcp._app import category_tools
 
 tool, write_tool, delete_tool = category_tools("schema")
 from dataverse_mcp.client import (
+    encode_odata_literal,
     _DATAVERSE_API_VERSION,
     build_headers,
     finalize_response,
@@ -196,7 +197,7 @@ async def dataverse_get_table_metadata(
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
-    table_enc = _url_quote(params.table_name, safe="")
+    table_enc = encode_odata_literal(params.table_name)
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')"
@@ -248,7 +249,7 @@ async def dataverse_list_columns(params: ListColumnsInput, ctx: Context) -> str:
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
     select = params.select or _DEFAULT_COLUMN_SELECT
     query_params: dict[str, str] = {"$select": ",".join(select)}
     if params.attribute_type:
@@ -298,7 +299,7 @@ async def dataverse_get_column(params: GetColumnInput, ctx: Context) -> str:
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
     col_filter = (
         "LogicalName eq "
         f"'{odata_quote(params.column_logical_name)}'"
@@ -364,7 +365,7 @@ async def _fetch_picklist_options(
     http_client: httpx.AsyncClient,
 ) -> list[dict]:
     """Fetch option values for a Picklist or MultiSelectPicklist column."""
-    table_enc = _url_quote(table, safe="")
+    table_enc = encode_odata_literal(table)
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')"
@@ -541,7 +542,7 @@ async def dataverse_list_relationships(
         )
 
         if params.table_logical_name:
-            table_enc = _url_quote(params.table_logical_name, safe="")
+            table_enc = encode_odata_literal(params.table_logical_name)
             base_entity = f"EntityDefinitions(LogicalName='{table_enc}')"
             types_to_fetch = (
                 [params.relationship_type]
@@ -602,7 +603,7 @@ async def dataverse_get_relationship(
         base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
-    schema_enc = _url_quote(params.schema_name, safe="")
+    schema_enc = encode_odata_literal(params.schema_name)
 
     try:
         headers = await build_headers(
@@ -712,7 +713,7 @@ async def dataverse_get_choice(params: GetChoiceInput, ctx: Context) -> str:
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
     if params.name:
-        name_enc = _url_quote(params.name, safe="")
+        name_enc = encode_odata_literal(params.name)
         path = f"GlobalOptionSetDefinitions(Name='{name_enc}')"
     else:
         path = f"GlobalOptionSetDefinitions({params.metadata_id})"
@@ -924,7 +925,7 @@ async def dataverse_update_table(params: UpdateTableInput, ctx: Context) -> str:
         base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
-    table_enc = _url_quote(params.table_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
 
     try:
         headers = await build_headers(app_ctx, base_url)
@@ -994,7 +995,7 @@ async def dataverse_delete_table(params: DeleteTableInput, ctx: Context) -> str:
         base_url = resolve_base_url(params.dataverse_url)
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
-    table_enc = _url_quote(params.table_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
 
     try:
         headers = await build_headers(app_ctx, base_url)
@@ -1146,7 +1147,7 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
 
     try:
         headers = await build_headers(
@@ -1158,7 +1159,7 @@ async def dataverse_create_column(params: CreateColumnInput, ctx: Context) -> st
         # @odata.bind requires a GUID key; Name= is not supported by the metadata API.
         if params.global_choice_name and params.attribute_type in ("Picklist", "MultiSelectPicklist"):
             lookup_headers = await build_headers(app_ctx, base_url)
-            choice_name_enc = _url_quote(params.global_choice_name, safe="")
+            choice_name_enc = encode_odata_literal(params.global_choice_name)
             lookup_resp = await request_with_retry(
                 app_ctx.http_client, "GET",
                 f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
@@ -1235,8 +1236,8 @@ async def dataverse_update_column(params: UpdateColumnInput, ctx: Context) -> st
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
-    column_enc = _url_quote(params.column_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
+    column_enc = encode_odata_literal(params.column_logical_name)
 
     try:
         definition = dict(params.full_definition)
@@ -1289,8 +1290,8 @@ async def dataverse_delete_column(params: DeleteColumnInput, ctx: Context) -> st
     except ValueError as e:
         return json.dumps({'error': True, 'message': str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
-    column_enc = _url_quote(params.column_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
+    column_enc = encode_odata_literal(params.column_logical_name)
 
     try:
         headers = await build_headers(app_ctx, base_url)
@@ -1903,7 +1904,7 @@ async def dataverse_delete_choice(
         headers = await build_headers(app_ctx, base_url)
         response = await request_with_retry(app_ctx.http_client, "DELETE",
             f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-            f"/GlobalOptionSetDefinitions(Name='{_url_quote(params.name)}')",
+            f"/GlobalOptionSetDefinitions(Name='{encode_odata_literal(params.name)}')",
             headers=headers,
         )
         response.raise_for_status()
@@ -2164,7 +2165,7 @@ async def dataverse_list_alternate_keys(
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
     url = (
         f"{base_url}/api/data/{_DATAVERSE_API_VERSION}/"
         f"EntityDefinitions(LogicalName='{table_enc}')/Keys"
@@ -2221,7 +2222,7 @@ async def dataverse_create_alternate_key(
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
 
     try:
         headers = await build_headers(
@@ -2318,8 +2319,8 @@ async def dataverse_delete_alternate_key(
     except ValueError as e:
         return json.dumps({"error": True, "message": str(e)})
 
-    table_enc = _url_quote(params.table_logical_name, safe="")
-    key_enc = _url_quote(params.key_logical_name, safe="")
+    table_enc = encode_odata_literal(params.table_logical_name)
+    key_enc = encode_odata_literal(params.key_logical_name)
 
     try:
         headers = await build_headers(app_ctx, base_url)

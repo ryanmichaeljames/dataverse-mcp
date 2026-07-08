@@ -7,17 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.5.1] - 2026-07-08
+
 ### Security
 - `dataverse_remove_security_role` and `dataverse_remove_team_members` now correctly gate on
   `DATAVERSE_ALLOW_DELETE=true` (previously used `@write_tool`, allowing execution when only write
   was enabled). Both are promoted to `@delete_tool` and their annotations set `destructiveHint: true`.
 - `dataverse_assign_app_role` with `action='remove'` now requires `DATAVERSE_ALLOW_DELETE=true` in
   addition to `DATAVERSE_ALLOW_WRITE=true`. The `action='add'` (POST) path is unaffected.
-- Caller-supplied FetchXml, LayoutXml (view create/update validation), and FormXml
-  (`dataverse_validate_formxml` dry-run path) now parse via `defusedxml.ElementTree.fromstring`
-  instead of stdlib `xml.etree.ElementTree.fromstring`, closing a billion-laughs entity-expansion
-  DoS vector. Server-returned XML (backup XML from Dataverse responses) is left as-is — it is
-  trusted server content, not caller input.
+- Every stdlib `xml.etree.ElementTree.fromstring` parse site in `views.py`, `forms.py`, and
+  `apps.py` now uses `defusedxml.ElementTree.fromstring`, closing a billion-laughs entity-expansion
+  DoS vector. This covers caller-supplied FetchXml/LayoutXml (view create/update validation) and
+  FormXml (`dataverse_validate_formxml`) as well as XML read back from Dataverse records
+  (`dataverse_get_view`, `dataverse_get_form`, view/form column edits) — the latter defended in
+  depth in case a malicious payload was planted in a stored view/form outside this server.
+  `_validate_sitemap_xml` (`apps.py`) also gains explicit `DefusedXmlException` handling.
 - All `entity_set_name` (and `related_entity_set_name`, `target_entity_set_name`) fields across
   every input model in `models.py` now enforce `pattern=r"^[a-zA-Z_][a-zA-Z0-9_]*$"` (OData
   collection-name grammar). This closes a path-traversal gap where a value like
@@ -28,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   additionally rejects `#` fragment delimiters and whitespace anywhere in the URL. A single
   well-formed query string (e.g. `?$select=name&$top=10`) remains permitted so that legitimate
   GET batch operations with OData query options are not broken.
+- New `DATAVERSE_REQUIRE_WHITELIST` env flag (default `false`). When `true` and `DATAVERSE_WHITELIST`
+  is empty, every tool call is rejected so a bearer token is never minted for a caller-supplied host
+  — a fail-closed posture for shared/multi-tenant deployments (SSRF hardening). README documents
+  `DATAVERSE_WHITELIST` as a required hardening step and the fail-closed option; startup logs an
+  error when the flag is set but the whitelist is empty.
 
 ## [3.5.0] - 2026-06-30
 
@@ -628,7 +637,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.1...HEAD
+[3.5.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.1...v3.5.0
 [3.4.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.0...v3.4.1
 [3.4.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.3.0...v3.4.0

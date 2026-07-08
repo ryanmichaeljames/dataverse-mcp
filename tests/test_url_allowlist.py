@@ -43,9 +43,23 @@ def _reload_with_whitelist(monkeypatch, value: str):
     return reloaded
 
 
-def _patch_whitelist(hosts: frozenset[str]):
-    """Directly patch the module-level _URL_WHITELIST and clear the lru_cache."""
+@pytest.fixture(autouse=True)
+def _restore_whitelist_globals():
+    """Save/restore module-level whitelist globals so mutations don't leak across tests."""
+    saved_hosts = client_mod._URL_WHITELIST
+    saved_require = client_mod._REQUIRE_WHITELIST
+    try:
+        yield
+    finally:
+        client_mod._URL_WHITELIST = saved_hosts
+        client_mod._REQUIRE_WHITELIST = saved_require
+        client_mod.normalize_dataverse_url.cache_clear()
+
+
+def _patch_whitelist(hosts: frozenset[str], require: bool = False):
+    """Directly patch _URL_WHITELIST / _REQUIRE_WHITELIST and clear the lru_cache."""
     client_mod._URL_WHITELIST = hosts
+    client_mod._REQUIRE_WHITELIST = require
     client_mod.normalize_dataverse_url.cache_clear()
 
 
@@ -173,6 +187,43 @@ def test_empty_whitelist_permits_all(monkeypatch):
     # Both an 'approved' and a totally arbitrary host should pass
     assert normalize_dataverse_url("https://anyorg.crm.dynamics.com").startswith("https://")
     assert normalize_dataverse_url("https://another.example.com").startswith("https://")
+
+
+# ---------------------------------------------------------------------------
+# 7b. DATAVERSE_REQUIRE_WHITELIST fails closed when whitelist is empty (issue #122)
+# ---------------------------------------------------------------------------
+
+def test_require_whitelist_empty_fails_closed(monkeypatch):
+    """Empty whitelist + require flag rejects every host (no token minted)."""
+    _patch_whitelist(frozenset(), require=True)
+    with pytest.raises(ValueError, match=r"DATAVERSE_REQUIRE_WHITELIST"):
+        normalize_dataverse_url("https://anyorg.crm.dynamics.com")
+
+
+def test_require_whitelist_with_populated_list_allows_approved(monkeypatch):
+    """Require flag has no effect once the whitelist is populated: approved host passes."""
+    _patch_whitelist(frozenset({"approved.crm.dynamics.com"}), require=True)
+    result = normalize_dataverse_url("https://approved.crm.dynamics.com")
+    assert result == "https://approved.crm.dynamics.com"
+
+
+def test_require_whitelist_with_populated_list_rejects_unapproved(monkeypatch):
+    """Require flag + populated whitelist still rejects an unapproved host."""
+    _patch_whitelist(frozenset({"approved.crm.dynamics.com"}), require=True)
+    with pytest.raises(ValueError, match=r"DATAVERSE_WHITELIST"):
+        normalize_dataverse_url("https://notapproved.crm.dynamics.com")
+
+
+def test_require_flag_reader_defaults_false(monkeypatch):
+    """_get_require_whitelist defaults to False and parses 'true'/'false' case-insensitively."""
+    monkeypatch.delenv("DATAVERSE_REQUIRE_WHITELIST", raising=False)
+    assert client_mod._get_require_whitelist() is False
+    monkeypatch.setenv("DATAVERSE_REQUIRE_WHITELIST", "TRUE")
+    assert client_mod._get_require_whitelist() is True
+    monkeypatch.setenv("DATAVERSE_REQUIRE_WHITELIST", "False")
+    assert client_mod._get_require_whitelist() is False
+    monkeypatch.setenv("DATAVERSE_REQUIRE_WHITELIST", "garbage")
+    assert client_mod._get_require_whitelist() is False
 
 
 # ---------------------------------------------------------------------------

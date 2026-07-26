@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.7.0] - 2026-07-26
+
+### Added
+- `dataverse_swap_flow_connection_reference` (`core`, write): swaps a connection reference logical
+  name inside a cloud flow's `clientdata` entirely server-side — GET, literal string replace-all,
+  PATCH — so the multi-KB `clientdata` JSON never travels as a tool-call argument in either
+  direction. Avoids the `HTTP 400 [0x80060468] Flow clientdata is in invalid format` error caused by
+  `clientdata` truncation at the agent/transport boundary when round-tripped through
+  `dataverse_update_record`. Returns `updated: false` without issuing a PATCH when
+  `old_logical_name` is not found.
+
 ## [3.6.0] - 2026-07-08
 
 ### Security
@@ -676,7 +687,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.1...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...HEAD
+[3.7.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.6.0...v3.7.0
+[3.6.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.1...v3.6.0
 [3.5.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...v3.5.1
 [3.5.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.1...v3.5.0
 [3.4.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.4.0...v3.4.1

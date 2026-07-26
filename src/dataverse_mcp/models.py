@@ -2996,6 +2996,43 @@ class UpdateRecordInput(DataverseEnvironmentInput):
         return v
 
 
+class SwapFlowConnectionReferenceInput(DataverseEnvironmentInput):
+    """Input for swapping a connection reference logical name inside a cloud
+    flow's clientdata, entirely server-side (the clientdata JSON never
+    travels as a tool argument in either direction)."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    workflow_id: str = Field(
+        ...,
+        description="The GUID of the cloud flow (workflows entity) to update.",
+        min_length=1,
+    )
+    old_logical_name: str = Field(
+        ...,
+        description=(
+            "Connection reference logical name to replace in the flow's "
+            "clientdata (e.g., 'courts_Decisions_MicrosoftDataverse')."
+        ),
+        min_length=1,
+    )
+    new_logical_name: str = Field(
+        ...,
+        description=(
+            "Replacement connection reference logical name "
+            "(e.g., 'courts_Core_MicrosoftDataverse')."
+        ),
+        min_length=1,
+    )
+
+    @field_validator("workflow_id")
+    @classmethod
+    def validate_workflow_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError(f"Invalid GUID format: '{v}'")
+        return v
+
+
 class DeleteRecordInput(DataverseEnvironmentInput):
     """Input for deleting a single record from a Dataverse table."""
 

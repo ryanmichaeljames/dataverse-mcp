@@ -16,10 +16,16 @@ import httpx
 import pytest
 
 from dataverse_mcp.client import AppContext
-from dataverse_mcp.models import CreateRecordInput, DeleteRecordInput, UpdateRecordInput
+from dataverse_mcp.models import (
+    CreateRecordInput,
+    DeleteRecordInput,
+    SwapFlowConnectionReferenceInput,
+    UpdateRecordInput,
+)
 from dataverse_mcp.tools.tables import (
     dataverse_create_record,
     dataverse_delete_record,
+    dataverse_swap_flow_connection_reference,
     dataverse_update_record,
 )
 
@@ -30,6 +36,7 @@ from dataverse_mcp.tools.tables import (
 _BASE_URL = "https://yourorg.crm.dynamics.com"
 _ENTITY_SET = "accounts"
 _RECORD_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+_WORKFLOW_ID = "bbbbbbbb-cccc-dddd-eeee-ffffffffffff"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -327,6 +334,114 @@ async def test_update_record_success() -> None:
     result = json.loads(result_str)
     assert result.get("updated") is True
     assert result.get("id") == _RECORD_ID
+
+
+# ---------------------------------------------------------------------------
+# dataverse_swap_flow_connection_reference — server-side GET + replace + PATCH
+# ---------------------------------------------------------------------------
+
+
+def _mock_get_response(clientdata: str) -> MagicMock:
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 200
+    resp.raise_for_status = MagicMock()
+    resp.json = MagicMock(return_value={"clientdata": clientdata})
+    return resp
+
+
+def _mock_patch_response() -> MagicMock:
+    resp = MagicMock(spec=httpx.Response)
+    resp.status_code = 204
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+@pytest.mark.asyncio
+async def test_swap_flow_connection_reference_replaces_all_occurrences() -> None:
+    """Replaces every literal occurrence of old_logical_name, leaves the rest of
+    the clientdata bytes untouched, and PATCHes the swapped body back."""
+    app_ctx = _make_app_ctx()
+    ctx = _make_ctx(app_ctx)
+
+    params = SwapFlowConnectionReferenceInput(
+        dataverse_url=_BASE_URL,
+        workflow_id=_WORKFLOW_ID,
+        old_logical_name="courts_Decisions_MicrosoftDataverse",
+        new_logical_name="courts_Core_MicrosoftDataverse",
+    )
+
+    original_clientdata = (
+        '{"connectionReferences":{"courts_Decisions_MicrosoftDataverse":{'
+        '"connection":{"id":"/providers/x"}}},'
+        '"other":"courts_Decisions_MicrosoftDataverse used twice, untouched: unrelated_value"}'
+    )
+    expected_clientdata = (
+        '{"connectionReferences":{"courts_Core_MicrosoftDataverse":{'
+        '"connection":{"id":"/providers/x"}}},'
+        '"other":"courts_Core_MicrosoftDataverse used twice, untouched: unrelated_value"}'
+    )
+
+    get_resp = _mock_get_response(original_clientdata)
+    patch_resp = _mock_patch_response()
+
+    with (
+        patch(
+            "dataverse_mcp.tools.tables.build_headers",
+            new=AsyncMock(return_value={"Authorization": "Bearer token", "Content-Type": "application/json"}),
+        ),
+        patch(
+            "dataverse_mcp.tools.tables.request_with_retry",
+            new=AsyncMock(side_effect=[get_resp, patch_resp]),
+        ) as mock_request,
+    ):
+        result_str = await dataverse_swap_flow_connection_reference(params, ctx)
+
+    result = json.loads(result_str)
+    assert result.get("updated") is True
+    assert result.get("workflow_id") == _WORKFLOW_ID
+    assert result.get("replacements") == 2
+
+    # Verify the PATCH call received the literally-replaced clientdata.
+    assert mock_request.await_count == 2
+    patch_call = mock_request.await_args_list[1]
+    assert patch_call.args[1] == "PATCH"
+    assert patch_call.kwargs["json"] == {"clientdata": expected_clientdata}
+
+
+@pytest.mark.asyncio
+async def test_swap_flow_connection_reference_not_found_skips_patch() -> None:
+    """When old_logical_name is absent from clientdata, no PATCH is issued and
+    updated is False."""
+    app_ctx = _make_app_ctx()
+    ctx = _make_ctx(app_ctx)
+
+    params = SwapFlowConnectionReferenceInput(
+        dataverse_url=_BASE_URL,
+        workflow_id=_WORKFLOW_ID,
+        old_logical_name="courts_Decisions_MicrosoftDataverse",
+        new_logical_name="courts_Core_MicrosoftDataverse",
+    )
+
+    get_resp = _mock_get_response('{"connectionReferences":{"some_other_ref":{}}}')
+
+    with (
+        patch(
+            "dataverse_mcp.tools.tables.build_headers",
+            new=AsyncMock(return_value={"Authorization": "Bearer token", "Content-Type": "application/json"}),
+        ),
+        patch(
+            "dataverse_mcp.tools.tables.request_with_retry",
+            new=AsyncMock(return_value=get_resp),
+        ) as mock_request,
+    ):
+        result_str = await dataverse_swap_flow_connection_reference(params, ctx)
+
+    result = json.loads(result_str)
+    assert result.get("updated") is False
+    assert result.get("replacements") == 0
+
+    # Only the GET should have been issued — no PATCH.
+    assert mock_request.await_count == 1
 
 
 # ---------------------------------------------------------------------------

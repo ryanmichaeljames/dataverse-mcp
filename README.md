@@ -346,7 +346,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**184 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**185 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -364,7 +364,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| `core` | 18 | Environment introspection + all record CRUD (always registered) |
+| `core` | 19 | Environment introspection + all record CRUD (always registered) |
 | `schema` | 32 | Table/column/relationship/choice/alternate-key metadata |
 | `solutions` | 20 | Solution and publisher management, solution components, history, import/export ALM, dependency analysis |
 | `flows` | 8 | Cloud flow + classic process listing and activate/deactivate |
@@ -443,6 +443,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_bulk_upsert` | write | Upsert many records via `$batch` PATCH; auto-detects primary GUID key or uses `key_columns` for alternate-key upserts; per-row outcomes |
 | `dataverse_create_record` | write | Create a record and return its new GUID |
 | `dataverse_update_record` | write | Partially update a record (PATCH) |
+| `dataverse_swap_flow_connection_reference` | write | Swap a connection reference logical name inside a cloud flow's `clientdata` server-side (GET, literal string replace, PATCH) — avoids sending the multi-KB `clientdata` blob as a tool argument |
 | `dataverse_associate_records` | write | Associate two records via a collection-valued navigation property |
 | `dataverse_merge_records` | write | Merge a subordinate record into a target (account, contact, lead, incident) |
 | `dataverse_delete_record` | delete | Permanently delete a record |

@@ -37,6 +37,7 @@ from dataverse_mcp.models import (
     GetRecordInput,
     MergeRecordsInput,
     QueryTableInput,
+    SwapFlowConnectionReferenceInput,
     UpdateRecordInput,
 )
 
@@ -348,6 +349,93 @@ async def dataverse_update_record(params: UpdateRecordInput, ctx: Context) -> st
         return finalize_response({"updated": True, "id": params.record_id})
     except Exception as e:
         return tool_error_response(e, "dataverse_update_record")
+
+
+@write_tool(
+    name="dataverse_swap_flow_connection_reference",
+    annotations={
+        "title": "Swap Flow Connection Reference",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_swap_flow_connection_reference(
+    params: SwapFlowConnectionReferenceInput, ctx: Context
+) -> str:
+    """Swap a connection reference logical name inside a cloud flow's clientdata.
+
+    Reads the flow's clientdata, replaces every literal occurrence of
+    old_logical_name with new_logical_name, and PATCHes the result back — all
+    server-side, so the multi-KB clientdata JSON never travels as a tool
+    argument (which would otherwise risk truncation at the transport boundary
+    and a "Flow clientdata is in invalid format" error from Dataverse). This
+    is a literal string replace, not a JSON reparse, so unrelated formatting
+    is preserved byte-for-byte. Requires DATAVERSE_ALLOW_WRITE=true.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    get_url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/workflows({params.workflow_id})?$select=clientdata"
+    )
+    patch_url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/workflows({params.workflow_id})"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url, include_content_type=True)
+
+        get_resp = await request_with_retry(
+            app_ctx.http_client, "GET", get_url, headers=headers
+        )
+        get_resp.raise_for_status()
+        clientdata = get_resp.json().get("clientdata") or ""
+
+        replacements = clientdata.count(params.old_logical_name)
+        if replacements == 0:
+            return finalize_response({
+                "updated": False,
+                "workflow_id": params.workflow_id,
+                "replacements": 0,
+                "message": "old_logical_name not found in clientdata",
+            })
+
+        new_clientdata = clientdata.replace(
+            params.old_logical_name, params.new_logical_name
+        )
+
+        patch_resp = await request_with_retry(
+            app_ctx.http_client,
+            "PATCH",
+            patch_url,
+            headers=headers,
+            json={"clientdata": new_clientdata},
+        )
+        patch_resp.raise_for_status()
+
+        logger.info(
+            "Swapped connection reference in workflow %s: %s -> %s (%d replacement(s))",
+            params.workflow_id,
+            params.old_logical_name,
+            params.new_logical_name,
+            replacements,
+        )
+        return finalize_response({
+            "updated": True,
+            "workflow_id": params.workflow_id,
+            "replacements": replacements,
+            "old_logical_name": params.old_logical_name,
+            "new_logical_name": params.new_logical_name,
+        })
+    except Exception as e:
+        return tool_error_response(e, "dataverse_swap_flow_connection_reference")
 
 
 @delete_tool(

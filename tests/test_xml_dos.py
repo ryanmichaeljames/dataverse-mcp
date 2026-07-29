@@ -190,7 +190,7 @@ def test_view_xml_billion_laughs_in_layoutxml_returns_error():
 
 
 def _make_form_ctx() -> MagicMock:
-    """Return a mock FastMCP Context backed by a minimal AppContext."""
+    """Return a mock MCPServer Context backed by a minimal AppContext."""
     app_ctx = AppContext(
         credential=None,
         auth_type="azure_cli",

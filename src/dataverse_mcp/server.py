@@ -1,4 +1,4 @@
-"""FastMCP server for Dataverse MCP tools."""
+"""MCPServer entry point for Dataverse MCP tools."""
 
 import logging
 import sys

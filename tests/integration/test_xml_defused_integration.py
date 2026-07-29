@@ -40,7 +40,7 @@ _INTEGRATION_TOKEN_VAR = "DATAVERSE_INTEGRATION_TOKEN"
 
 
 def _make_live_ctx(client: httpx.AsyncClient) -> MagicMock:
-    """Build a FastMCP-style ctx backed by an AppContext seeded with the sandbox token.
+    """Build a MCPServer-style ctx backed by an AppContext seeded with the sandbox token.
 
     Pre-seeding ``_token_cache`` for the resolved scope means ``build_headers``
     returns the supplied bearer token without exercising any credential flow.

@@ -1,4 +1,4 @@
-"""FastMCP application instance.
+"""MCPServer application instance.
 
 This module exists to avoid circular imports between server.py and tool
 modules.  Tool modules import ``mcp`` from here; server.py imports ``mcp``
@@ -8,13 +8,13 @@ from here and registers tool modules.
 import logging
 import os
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from dataverse_mcp.client import dataverse_lifespan
 
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP(
+mcp = MCPServer(
     "dataverse_mcp",
     instructions=(
         "Dataverse MCP server for interacting with Microsoft Dataverse "

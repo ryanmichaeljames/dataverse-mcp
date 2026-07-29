@@ -6,7 +6,7 @@
 
 An [MCP](https://modelcontextprotocol.io/) server that gives AI agents structured access to Microsoft Dataverse — query records, bulk upsert data, inspect metadata, manage schema, analyze component dependencies, manage model-driven app forms, views, and apps, administer security roles, teams, and users, audit user access, manage plug-in trace logging, manage custom APIs, and explore Power Platform environments.
 
-Built with [FastMCP](https://github.com/modelcontextprotocol/python-sdk), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** and works with Claude, GitHub Copilot, and any MCP-compatible client.
+Built with [MCPServer](https://github.com/modelcontextprotocol/python-sdk) (`mcp.server.mcpserver`), `httpx`, and the Dataverse OData v4.0 Web API. Communicates over **stdio** and works with Claude, GitHub Copilot, and any MCP-compatible client.
 
 ---
 
@@ -72,6 +72,8 @@ That's it. Your AI agent can now query your Dataverse environments.
 ```bash
 pip install uv
 ```
+
+> **Requires the MCP Python SDK `>=2.0.0`.** Versions up to and including 3.7.0 require SDK 1.x and will not start against 2.x — the SDK removed `mcp.server.fastmcp` in 2.0.0, so an older release installed today fails at import with `ModuleNotFoundError: No module named 'mcp.server.fastmcp'`. Because `uvx` ignores lockfiles and resolves the latest SDK, use 3.8.0 or later.
 
 ### Run from PyPI (recommended)
 

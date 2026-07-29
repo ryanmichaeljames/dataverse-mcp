@@ -45,7 +45,7 @@ _ROLE_ID = "11111111-2222-3333-4444-555555555555"
 
 
 def _make_ctx() -> MagicMock:
-    """Return a mock FastMCP Context backed by a minimal AppContext."""
+    """Return a mock MCPServer Context backed by a minimal AppContext."""
     app_ctx = AppContext(
         credential=None,
         auth_type="azure_cli",

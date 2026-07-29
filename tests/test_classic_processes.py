@@ -51,7 +51,7 @@ def _make_app_ctx() -> AppContext:
 
 
 def _make_ctx(app_ctx: AppContext) -> MagicMock:
-    """Return a mock FastMCP Context backed by *app_ctx*."""
+    """Return a mock MCPServer Context backed by *app_ctx*."""
     ctx = MagicMock()
     ctx.request_context.lifespan_context = app_ctx
     return ctx

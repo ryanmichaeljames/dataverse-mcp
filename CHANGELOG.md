@@ -5,7 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [3.8.0] - 2026-07-29
+
+### Fixed
+- Pinned `mcp[cli]>=2.0.0,<3.0.0` (was an unbounded `>=1.27.0` floor) and migrated off
+  `mcp.server.fastmcp.FastMCP`, which the SDK renamed to `mcp.server.mcpserver.MCPServer` in
+  `2.0.0`. A fresh install of the unbounded floor resolved to 2.0.0 and crashed at import with
+  `ModuleNotFoundError: No module named 'mcp.server.fastmcp'` before serving a single request —
+  including via `uvx`, which ignores the lockfile. No tool behavior, response shapes, or
+  annotations changed.
 
 ## [3.7.0] - 2026-07-26
 

@@ -14,7 +14,7 @@ from urllib.parse import urlencode
 import defusedxml.ElementTree as DET
 import httpx
 from defusedxml.common import DefusedXmlException
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from dataverse_mcp._app import category_tools
 

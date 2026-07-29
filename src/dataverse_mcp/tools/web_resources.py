@@ -21,7 +21,7 @@ import re
 from urllib.parse import urlencode
 
 import httpx  # noqa: F401  (used in tool_error_response)
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from dataverse_mcp._app import category_tools
 

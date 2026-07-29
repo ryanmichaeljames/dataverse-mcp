@@ -30,7 +30,7 @@ _RECORD_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
 def _make_ctx() -> MagicMock:
-    """Return a mock FastMCP Context backed by a minimal AppContext."""
+    """Return a mock MCPServer Context backed by a minimal AppContext."""
     app_ctx = AppContext(
         credential=None,
         auth_type="azure_cli",

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repository is a Python FastMCP server for Microsoft Dataverse (Web API v9.2), with tools implemented under `src/dataverse_mcp/tools/`.
+This repository is a Python MCPServer (`mcp.server.mcpserver`) server for Microsoft Dataverse (Web API v9.2), with tools implemented under `src/dataverse_mcp/tools/`.
 
 ## Keep These Invariants
 

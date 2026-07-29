@@ -4,7 +4,7 @@ import json
 import logging
 from urllib.parse import urlencode
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 
 from dataverse_mcp._app import category_tools
 

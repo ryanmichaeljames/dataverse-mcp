@@ -15,7 +15,7 @@ second** — never trade away a disambiguating sentence to save tokens.
 
 ## Context & problem
 
-- FastMCP uses the **function docstring** as the tool `description` (no explicit `description=` is
+- MCPServer uses the **function docstring** as the tool `description` (no explicit `description=` is
   passed to the decorators). The docstring's **first sentence** dominates tool selection.
 - The current corpus is generally good — most docstrings already do action-summary-first and many
   already cross-reference sibling tools ("Use dataverse_list_views to discover view IDs"). The

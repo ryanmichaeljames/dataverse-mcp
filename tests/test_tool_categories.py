@@ -4,7 +4,7 @@ Strategy: each scenario is driven in a subprocess that sets the env vars, import
 ``dataverse_mcp.server``, and prints the sorted registered tool names (one per line)
 to stdout.  The parent process asserts on the printed list.
 
-This avoids the FastMCP singleton / importlib.reload fragility: the MCP ``mcp``
+This avoids the MCPServer singleton / importlib.reload fragility: the MCP ``mcp``
 object registers tools at module-import time, so each scenario needs a fresh
 interpreter process.
 

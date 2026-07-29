@@ -845,7 +845,7 @@ def extract_error_message(response: httpx.Response) -> str:
 
 
 def get_app_ctx(ctx: Any) -> AppContext:
-    """Return the application context from a FastMCP request context."""
+    """Return the application context from an MCPServer request context."""
     return ctx.request_context.lifespan_context
 
 
@@ -919,7 +919,7 @@ def finalize_response(payload: dict, *, max_bytes: int = _RESPONSE_MAX_BYTES) ->
 
 @asynccontextmanager
 async def dataverse_lifespan(server) -> AsyncIterator[AppContext]:
-    """FastMCP lifespan that initializes shared auth state."""
+    """MCPServer lifespan that initializes shared auth state."""
     if _URL_WHITELIST:
         logger.info(
             "DATAVERSE_WHITELIST active: restricting tool calls to %d environment(s): %s",

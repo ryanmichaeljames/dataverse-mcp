@@ -54,7 +54,7 @@ def _url() -> str:
 
 
 def _make_live_ctx(client: httpx.AsyncClient) -> MagicMock:
-    """FastMCP-style ctx backed by an AppContext pre-seeded with the sandbox token."""
+    """MCPServer-style ctx backed by an AppContext pre-seeded with the sandbox token."""
     base_url = resolve_base_url(os.environ[_INTEGRATION_URL_VAR])
     token = os.environ[_INTEGRATION_TOKEN_VAR]
     app_ctx = AppContext(credential=None, auth_type="azure_cli", http_client=client)

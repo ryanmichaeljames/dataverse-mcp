@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from typing import Any
 from urllib.parse import urlencode
 from xml.etree import ElementTree as ET
 
@@ -44,6 +45,7 @@ from dataverse_mcp.models import (
     GetColumnInput,
     GetRelationshipInput,
     GetTableMetadataInput,
+    IsComponentCustomizableInput,
     ListAlternateKeysInput,
     ListChoiceColumnOptionsInput,
     ListChoicesInput,
@@ -58,6 +60,7 @@ from dataverse_mcp.models import (
     UpdateRelationshipInput,
     UpdateTableInput,
 )
+from dataverse_mcp.tools.solutions import COMPONENT_TYPE_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -2494,3 +2497,204 @@ async def dataverse_publish_customizations(
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_publish_customizations")
+
+
+# ---------------------------------------------------------------------------
+# Component customizability tools
+# ---------------------------------------------------------------------------
+
+
+def _resolve_component_type(code: int) -> str:
+    """Human-readable name for a solution component type code."""
+    return COMPONENT_TYPE_NAMES.get(code, f"ComponentType({code})")
+
+
+# Confirmed live shape of IsComponentCustomizableResponse: flat, with exactly one
+# property whose name matches the function name — {"IsComponentCustomizable": true}
+# — observed for component types 1 (Entity), 2 (Attribute) and 61 (Web Resource).
+_CUSTOMIZABLE_PROPERTY = "IsComponentCustomizable"
+
+
+def _extract_verdict(payload: Any) -> tuple[str, bool] | None:
+    """Return the customizability verdict as ``(source, value)``, or None.
+
+    Two tiers, mirroring ``_extract_version`` in tools/environments.py:
+
+    1. ``IsComponentCustomizable`` is the confirmed property name (verified live
+       against a real org), so it is read directly.
+    2. A defensive fallback for a differently-shaped payload: a lone boolean —
+       either the body itself or the payload's single boolean-valued property —
+       is unambiguous, so it is accepted with its source recorded.
+
+    Zero booleans (nothing to report), two or more without the confirmed property
+    (no way to tell which is the verdict), or a non-object payload all return None
+    so the caller can OMIT ``is_customizable`` rather than guess.
+
+    ``isinstance(v, bool)`` is deliberately the test, and it is the safe direction
+    of the bool/int subclass trap: it matches real booleans only, so an integer
+    flag such as ``1`` or ``0`` is never promoted to a verdict. (The dangerous
+    direction — ``isinstance(v, int)`` silently matching ``True``/``False`` —
+    is the one dataverse_get_total_record_counts had to exclude.)
+    """
+    if isinstance(payload, bool):
+        return ("<response body>", payload)
+    if not isinstance(payload, dict):
+        return None
+    verdict = payload.get(_CUSTOMIZABLE_PROPERTY)
+    if isinstance(verdict, bool):
+        return (_CUSTOMIZABLE_PROPERTY, verdict)
+    booleans = [(k, v) for k, v in payload.items() if isinstance(v, bool)]
+    if len(booleans) != 1:
+        return None
+    return booleans[0]
+
+
+@tool(
+    name="dataverse_is_component_customizable",
+    annotations={
+        "title": "Is Component Customizable",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_is_component_customizable(
+    params: IsComponentCustomizableInput, ctx: Context
+) -> str:
+    """Check whether a solution component can be customized BEFORE trying to edit it.
+
+    Calls the unbound IsComponentCustomizable function. Nothing is read or
+    modified — it is a cheap pre-flight check for the metadata write tools
+    (dataverse_update_table, dataverse_update_column, dataverse_update_relationship,
+    dataverse_update_choice, dataverse_delete_column, ...), which otherwise fail
+    late and opaquely when the target belongs to a managed solution that locked it
+    down. Run this first when editing anything you did not create yourself.
+
+    Pass the component's own GUID (a table's or column's MetadataId, a form's or
+    web resource's record id — NOT a solution id) plus the integer component_type
+    code that says what the GUID refers to. The codes are the same set
+    dataverse_analyze_dependencies uses (1=Entity, 2=Attribute, 3=Relationship,
+    9=OptionSet, 60=SystemForm, 61=WebResource, 300=CanvasApp, ...); the resolved
+    name is echoed back as component_type_name so a mismatched code is easy to
+    spot.
+
+    The verdict is returned as a top-level is_customizable boolean. Dataverse's
+    response was verified live and is flat, carrying exactly one property named
+    after the function itself — {"IsComponentCustomizable": true} — which is read
+    directly; is_customizable_source names the property the value came from. If a
+    future platform version answers in some other shape, a lone boolean anywhere
+    in the payload is still accepted as a fallback, and when no verdict can be
+    identified unambiguously the key is OMITTED rather than guessed or returned as
+    null, with normalized false and a message saying so. Never read a missing
+    is_customizable as false. The payload is always echoed unchanged under
+    raw_response (minus the @odata.* envelope).
+
+    A false answer means the component belongs to a managed solution whose
+    publisher locked it down. A true answer is not a guarantee that every edit will
+    succeed: individual managed properties (for example IsRenameable or
+    IsValidForAdvancedFind) can still block a specific change on an otherwise
+    customizable component.
+
+    DO NOT ASSUME SYSTEM COMPONENTS ANSWER false. Core out-of-the-box tables
+    report true (systemuser, component type 1, was verified as true) because the
+    platform permits customizations such as adding columns even though the base
+    asset itself is managed. The tool does discriminate — a managed web resource
+    (type 61) returned false while an unmanaged one returned true.
+
+    A well-formed GUID that matches no component is an HTTP 400 carrying
+    [0x80040216] "There should be at least one metadata entity returned for
+    EntityName: ...", surfaced through the standard {"error": true, "message": ...}
+    envelope: it means the component id (or the component_type paired with it) is
+    wrong, not that the component is locked.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # Parameter aliases, mirroring the RetrieveDependenciesForDelete call in
+    # tools/dependencies.py. ComponentId is Edm.Guid and ComponentType is
+    # Edm.Int32: an OData Guid literal is written BARE — no surrounding quotes and
+    # no guid'...' prefix — so there is no string literal to break out of and
+    # encode_odata_literal deliberately does NOT apply here (unlike
+    # dataverse_validate_fetchxml, whose Edm.String parameter does need it). The
+    # entire defence is the input model: component_id must match _GUID_PATTERN and
+    # component_type is a bounded int, so neither value can carry a character that
+    # is significant in a URL.
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/IsComponentCustomizable(ComponentId=@cid,ComponentType=@ct)"
+        f"?@cid={params.component_id}&@ct={params.component_type}"
+    )
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_is_component_customizable")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_is_component_customizable")
+
+    # Parse defensively: a non-JSON or empty body is surfaced as-is rather than
+    # raising.
+    try:
+        payload: Any = response.json()
+    except ValueError:
+        logger.warning("IsComponentCustomizable returned a non-JSON body")
+        payload = response.text or None
+
+    body: Any = payload
+    if isinstance(payload, dict):
+        body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+    type_name = _resolve_component_type(params.component_type)
+    result: dict[str, Any] = {
+        "component_id": params.component_id,
+        "component_type": params.component_type,
+        "component_type_name": type_name,
+    }
+
+    found = _extract_verdict(body)
+    if found is None:
+        logger.warning(
+            "IsComponentCustomizable response carried neither a %s property nor a "
+            "single boolean value; returning it raw without a verdict",
+            _CUSTOMIZABLE_PROPERTY,
+        )
+        result["normalized"] = False
+        result["message"] = (
+            "Dataverse answered successfully, but the payload carried neither an "
+            f"{_CUSTOMIZABLE_PROPERTY} boolean nor exactly one boolean value, so "
+            "the customizability verdict could not be identified. "
+            "is_customizable is OMITTED rather than guessed — do not read its "
+            "absence as 'not customizable'. The full payload is under "
+            "raw_response; read the verdict from there."
+        )
+    else:
+        source, value = found
+        result["normalized"] = True
+        result["is_customizable"] = value
+        result["is_customizable_source"] = source
+        result["message"] = (
+            (
+                f"{type_name} {params.component_id} is customizable. Edits are "
+                "expected to be accepted, though individual managed properties "
+                "can still block a specific change."
+            )
+            if value
+            else (
+                f"{type_name} {params.component_id} is NOT customizable — it "
+                "belongs to a managed solution whose publisher locked it down. "
+                "Attempting to update or delete it will fail; change a component "
+                "you own, or ask the publisher for an unmanaged/customizable "
+                "version."
+            )
+        )
+
+    result["raw_response"] = body
+    return finalize_response(result)

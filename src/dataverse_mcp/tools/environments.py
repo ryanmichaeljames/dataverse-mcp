@@ -22,7 +22,7 @@ from dataverse_mcp.client import (
     resolve_base_url,
     tool_error_response,
 )
-from dataverse_mcp.models import GetEntitySetsInput, ListEnvironmentsInput, RetrievePrincipalAccessInput, RetrieveUserPrivilegesInput, WhoAmIInput
+from dataverse_mcp.models import GetEntitySetsInput, GetOrganizationInfoInput, ListEnvironmentsInput, RetrievePrincipalAccessInput, RetrieveUserPrivilegesInput, WhoAmIInput
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +177,243 @@ async def dataverse_whoami(params: WhoAmIInput, ctx: Context) -> str:
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_whoami")
+
+
+# Members of the Microsoft.Dynamics.CRM.EndpointAccessType enum accepted by
+# RetrieveCurrentOrganization. The member name is interpolated into the request
+# URL as an OData enum literal, so it is re-checked here even though the input
+# model already constrains it: the URL must never carry an unvalidated string.
+_ENDPOINT_ACCESS_TYPES = frozenset({"Default", "Internet", "Intranet"})
+
+
+def _strip_odata_envelope(payload: Any) -> dict[str, Any]:
+    """Return *payload* without its top-level ``@odata.*`` envelope keys.
+
+    Only the envelope is dropped. Property names, nesting, and values are passed
+    through untouched because the exact response shapes of these functions vary by
+    org and platform version and must not be guessed at.
+    """
+    if not isinstance(payload, dict):
+        return {"value": payload}
+    return {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+
+def _extract_version(payload: dict[str, Any]) -> str | None:
+    """Return the server version from a RetrieveVersion payload.
+
+    ``Version`` is the confirmed property name, so it is read directly. The
+    lone-string fallback is retained for an org that names it otherwise: the
+    payload carries exactly one string property, which is unambiguous. Returns
+    None when neither applies so the caller can omit the convenience field
+    rather than emit a guess or a null.
+    """
+    version = payload.get("Version")
+    if isinstance(version, str) and version:
+        return version
+    strings = [v for v in payload.values() if isinstance(v, str) and v]
+    if len(strings) == 1:
+        return strings[0]
+    return None
+
+
+# Confirmed shape of RetrieveOrganizationInfo: {"organizationInfo": {..., "Solutions": [...]}}.
+# The solution list runs to several hundred entries on a real org, so it is
+# summarized to a count unless the caller explicitly opts in.
+_ORG_INFO_CONTAINER_KEY = "organizationinfo"
+_SOLUTIONS_KEY = "Solutions"
+
+
+def _summarize_solutions(
+    payload: dict[str, Any], *, include_solutions: bool
+) -> dict[str, Any]:
+    """Replace the ``Solutions`` array with ``solutions_count`` unless opted in.
+
+    Every other property is passed through in its original order. The payload is
+    returned untouched when the container or the ``Solutions`` array is missing or
+    is not the expected type — ``solutions_count`` is omitted rather than guessed.
+    """
+    container_key = next(
+        (
+            key
+            for key, value in payload.items()
+            if key.lower() == _ORG_INFO_CONTAINER_KEY and isinstance(value, dict)
+        ),
+        None,
+    )
+    if container_key is None:
+        return payload
+
+    container: dict[str, Any] = payload[container_key]
+    solutions = container.get(_SOLUTIONS_KEY)
+    if not isinstance(solutions, list):
+        if solutions is not None:
+            logger.warning(
+                "RetrieveOrganizationInfo returned %s of unexpected type %s; "
+                "passing it through without solutions_count",
+                _SOLUTIONS_KEY,
+                type(solutions).__name__,
+            )
+        return payload
+
+    summarized: dict[str, Any] = {}
+    for key, value in container.items():
+        if key == _SOLUTIONS_KEY:
+            summarized["solutions_count"] = len(value)
+            if include_solutions:
+                summarized[key] = value
+        else:
+            summarized[key] = value
+    return {**payload, container_key: summarized}
+
+
+async def _call_org_function(
+    app_ctx: Any,
+    headers: dict[str, str],
+    function_name: str,
+    url: str,
+    partial_errors: list[dict[str, str]],
+) -> dict[str, Any] | None:
+    """GET an unbound function, recording a partial error instead of propagating.
+
+    Returns the envelope-stripped payload, or None when the call failed — in which
+    case an entry is appended to *partial_errors* so one unavailable or
+    privilege-gated function cannot fail the whole tool.
+    """
+    try:
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+        return _strip_odata_envelope(response.json())
+    except httpx.HTTPStatusError as e:
+        message = (
+            f"Dataverse returned HTTP {e.response.status_code}: "
+            f"{extract_error_message(e.response)}"
+        )
+    except Exception as e:  # network, JSON decode, auth — never fatal for one call
+        message = f"{type(e).__name__}: {e}"
+    logger.warning(
+        "%s failed during dataverse_get_organization_info: %s", function_name, message
+    )
+    partial_errors.append({"function": function_name, "message": message})
+    return None
+
+
+@tool(
+    name="dataverse_get_organization_info",
+    annotations={
+        "title": "Get Organization Info",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_organization_info(
+    params: GetOrganizationInfoInput, ctx: Context
+) -> str:
+    """Fingerprint a Dataverse environment: server version, organization identity, endpoints.
+
+    Merges three unbound Web API functions — RetrieveVersion,
+    RetrieveCurrentOrganization, and RetrieveOrganizationInfo. Call this before any
+    risky operation to confirm which environment you are pointed at.
+
+    To tell a non-production environment from production, read
+    organization_info.organizationInfo.InstanceType or
+    current_organization.Detail.OrganizationType. Both are strings, and their values
+    are distinct per tier — a developer-tier org reports "Developer", not "Sandbox" —
+    so never test only for "Sandbox" when deciding whether an environment is safe to
+    change. Identity lives alongside them: Detail.UniqueName, Detail.FriendlyName,
+    Detail.EnvironmentId, Detail.Geo, and Detail.State.
+
+    RetrieveOrganizationInfo also returns every installed solution. That list runs to
+    several hundred entries, so it is replaced by
+    organization_info.organizationInfo.solutions_count. Set include_solutions=true to
+    get the full Solutions array as well, but prefer dataverse_list_solutions for
+    browsing solutions.
+
+    Each function is called independently. If one is unavailable or privilege-gated
+    its failure is reported in partial_errors and the remaining data is still
+    returned; only a failure of all three yields an error response. Apart from the
+    solution summarization, payloads are returned as Dataverse produced them, minus
+    the @odata envelope keys.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    access_type = params.access_type
+    if access_type not in _ENDPOINT_ACCESS_TYPES:
+        return json.dumps({
+            "error": True,
+            "message": (
+                f"access_type must be one of "
+                f"{', '.join(sorted(_ENDPOINT_ACCESS_TYPES))}; got {access_type!r}."
+            ),
+        })
+
+    api_root = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+    partial_errors: list[dict[str, str]] = []
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+
+        version_payload = await _call_org_function(
+            app_ctx,
+            headers,
+            "RetrieveVersion",
+            f"{api_root}/RetrieveVersion()",
+            partial_errors,
+        )
+        current_org_payload = await _call_org_function(
+            app_ctx,
+            headers,
+            "RetrieveCurrentOrganization",
+            f"{api_root}/RetrieveCurrentOrganization"
+            f"(AccessType=Microsoft.Dynamics.CRM.EndpointAccessType'{access_type}')",
+            partial_errors,
+        )
+        org_info_payload = await _call_org_function(
+            app_ctx,
+            headers,
+            "RetrieveOrganizationInfo",
+            f"{api_root}/RetrieveOrganizationInfo()",
+            partial_errors,
+        )
+    except Exception as e:
+        # Only reached for failures outside the per-function calls (e.g. token
+        # acquisition), which affect all three equally.
+        return tool_error_response(e, "dataverse_get_organization_info")
+
+    if len(partial_errors) == 3:
+        details = "; ".join(
+            f"{entry['function']}: {entry['message']}" for entry in partial_errors
+        )
+        return json.dumps({
+            "error": True,
+            "message": (
+                "Could not retrieve organization information: all three functions "
+                f"failed. {details}"
+            ),
+        })
+
+    result: dict[str, Any] = {"access_type": access_type}
+    if version_payload is not None:
+        version = _extract_version(version_payload)
+        if version is not None:
+            result["version"] = version
+        result["retrieve_version"] = version_payload
+    if current_org_payload is not None:
+        result["current_organization"] = current_org_payload
+    if org_info_payload is not None:
+        result["organization_info"] = _summarize_solutions(
+            org_info_payload, include_solutions=params.include_solutions
+        )
+    result["partial_errors"] = partial_errors
+
+    return finalize_response(result)
 
 
 @tool(

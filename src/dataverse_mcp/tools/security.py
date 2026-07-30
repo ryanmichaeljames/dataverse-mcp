@@ -5,6 +5,8 @@ Covers security roles, teams, users, and business units.
 
 import json
 import logging
+from collections import Counter
+from typing import Any
 from urllib.parse import urlencode
 
 import httpx
@@ -16,6 +18,7 @@ tool, write_tool, delete_tool = category_tools("security")
 from dataverse_mcp.client import (
     _DATAVERSE_API_VERSION,
     build_headers,
+    encode_odata_literal,
     extract_error_message,
     finalize_response,
     get_app_ctx,
@@ -29,6 +32,7 @@ from dataverse_mcp.models import (
     AssignSecurityRoleInput,
     AuditUserAccessInput,
     GetAuditDetailsInput,
+    GetRolePrivilegesInput,
     GetSecurityRoleInput,
     GetTeamInput,
     GetUserInput,
@@ -39,6 +43,7 @@ from dataverse_mcp.models import (
     ListUsersInput,
     RemoveSecurityRoleInput,
     RemoveTeamMembersInput,
+    RetrieveAccessOriginInput,
     RetrieveRecordChangeHistoryInput,
     SetUserStateInput,
 )
@@ -176,6 +181,521 @@ async def dataverse_get_security_role(
         return json.dumps({"record": record})
     except Exception as e:
         return tool_error_response(e, "dataverse_get_security_role")
+
+
+# ---------------------------------------------------------------------------
+# Role privileges (RetrieveRolePrivilegesRole)
+# ---------------------------------------------------------------------------
+
+# Property name of RetrieveRolePrivilegesRoleResponse's collection. VERIFIED LIVE:
+# the response body carries exactly this one top-level key holding a JSON list,
+# with no wrapper around it. It stays the FIRST thing tried rather than the only
+# thing — the function's inner shape is undocumented on Microsoft Learn, so
+# _extract_privileges keeps its by-shape fallbacks as cheap insurance (see below).
+_ROLE_PRIVILEGES_KEY = "RolePrivileges"
+
+# Property names a privilege entry may carry its depth under. Checked in order;
+# the first one present with a usable value wins. Live payloads use "Depth"; the
+# lowercase form is kept because Dataverse mixes PascalCase (function/complex-type
+# properties) with lowercase (entity attributes).
+_DEPTH_KEYS = ("Depth", "depth")
+
+
+def _first_present(entry: dict[str, Any], keys: tuple[str, ...]) -> Any:
+    """Return the first non-None value among *keys*, else None."""
+    for key in keys:
+        value = entry.get(key)
+        if value is not None:
+            return value
+    return None
+
+
+def _is_privilege_list(value: Any) -> bool:
+    """True when *value* looks like a collection of privilege entries.
+
+    An empty list qualifies: a role with no privileges is a real answer, not a
+    shape mismatch. A non-empty list must be all objects, otherwise it is some
+    other array that happens to sit in the payload.
+    """
+    if not isinstance(value, list):
+        return False
+    return all(isinstance(item, dict) for item in value)
+
+
+def _extract_privileges(payload: Any) -> tuple[str, list[dict[str, Any]]] | None:
+    """Locate the privilege collection as ``(source, entries)``, or None.
+
+    ``RetrieveRolePrivilegesRoleResponse``'s inner properties are undocumented, so
+    the list is found by shape as well as by name, in three tiers:
+
+    1. The documented-by-convention ``RolePrivileges`` property at the top level.
+    2. Exactly one object-list among the top-level properties.
+    3. Exactly one object-list one level down, inside a named wrapper — the shape
+       ``dataverse_retrieve_record_change_history`` actually met
+       (``AuditDetailCollection.AuditDetails``) and the one
+       ``dataverse_get_total_record_counts`` met
+       (``EntityRecordCountCollection.*``).
+
+    A bare top-level array is accepted too. Ambiguity — two or more candidate
+    lists at the same tier — returns None rather than picking one, so the caller
+    degrades to raw pass-through instead of reporting privileges that may not be
+    privileges.
+    """
+    if _is_privilege_list(payload):
+        return ("<response body>", payload)
+    if not isinstance(payload, dict):
+        return None
+
+    named = payload.get(_ROLE_PRIVILEGES_KEY)
+    if _is_privilege_list(named):
+        return (_ROLE_PRIVILEGES_KEY, named)
+
+    top_level = [(k, v) for k, v in payload.items() if _is_privilege_list(v)]
+    if len(top_level) == 1:
+        return top_level[0]
+    if len(top_level) > 1:
+        logger.warning(
+            "RetrieveRolePrivilegesRole returned %d candidate lists at the top "
+            "level (%s); refusing to pick one",
+            len(top_level),
+            ", ".join(k for k, _ in top_level),
+        )
+        return None
+
+    nested = [
+        (f"{outer}.{inner}", value)
+        for outer, container in payload.items()
+        if isinstance(container, dict)
+        for inner, value in container.items()
+        if _is_privilege_list(value)
+    ]
+    if len(nested) == 1:
+        return nested[0]
+    if len(nested) > 1:
+        logger.warning(
+            "RetrieveRolePrivilegesRole returned %d candidate nested lists (%s); "
+            "refusing to pick one",
+            len(nested),
+            ", ".join(k for k, _ in nested),
+        )
+    return None
+
+
+def _summarize_depths(entries: list[dict[str, Any]]) -> dict[str, int] | None:
+    """Count entries by their raw ``Depth`` value, or None when none carry one.
+
+    The value is stringified and otherwise passed through UNCHANGED. VERIFIED
+    LIVE: Dataverse serializes this OData enum as its member NAME, so this reads
+    ``{"Global": 4090, "Basic": 42}`` and is already human-readable — no numeric
+    PrivilegeDepth code was observed in any sampled payload. Should one ever
+    arrive, the code is reported as-is: no numeric-to-label mapping is applied,
+    because that mapping is not confirmed for this function and a wrong
+    access-level label is worse than a raw one.
+    """
+    counter: Counter[str] = Counter()
+    for entry in entries:
+        depth = _first_present(entry, _DEPTH_KEYS)
+        if depth is not None:
+            counter[str(depth)] += 1
+    return dict(counter) if counter else None
+
+
+@tool(
+    name="dataverse_get_role_privileges",
+    annotations={
+        "title": "Get Role Privileges",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_role_privileges(
+    params: GetRolePrivilegesInput, ctx: Context
+) -> str:
+    """Answer "what can this security role actually DO?" — list a role's privileges.
+
+    Calls the unbound RetrieveRolePrivilegesRole function. This is the companion to
+    dataverse_get_security_role, which returns the role RECORD (name, business
+    unit, managed flag) and says nothing about what the role permits. Use
+    dataverse_list_security_roles to find a role id by name.
+
+    Scope: this is the role's OWN privilege set. For a specific person's effective
+    privileges across all their roles and teams use
+    dataverse_retrieve_user_privileges, or dataverse_audit_user_access for the full
+    access report.
+
+    RESPONSE SHAPE (verified live). Dataverse returns one top-level property,
+    RolePrivileges, holding the whole list with no wrapper; privileges_source
+    reports where the collection was found. Every entry carries all six of:
+      - PrivilegeName   — the familiar 'prvReadAccount' form. Already present on
+                          every entry, so NO extra lookup against the privileges
+                          table is made or needed.
+      - PrivilegeId     — GUID of the privilege.
+      - Depth           — the access level (see below).
+      - BusinessUnitId  — GUID of the business unit the depth is scoped to.
+      - RecordFilterId, RecordFilterUniqueName — record-filter binding; empty on
+                          ordinary privileges.
+    Entries are passed through exactly as Dataverse sent them: nothing is added,
+    renamed or dropped.
+
+    Depth arrives HUMAN-READABLE and is never relabelled. OData serializes the
+    PrivilegeDepth enum as its member NAME, and only member names were observed
+    live ("Basic", "Local", "Deep", "Global" — increasing scope, Global being
+    org-wide; "Basic" is the user's own records). Should a numeric PrivilegeDepth
+    code ever arrive instead, it is reported raw: that mapping is not confirmed for
+    this function, and a wrong access-level label is more dangerous than an
+    unlabelled one. depth_summary counts every entry by its Depth value.
+
+    THE LIST IS BIG AND IS TRIMMED BY DEFAULT. The function has no server-side
+    paging — it returns every privilege in one response. Measured live: a System
+    Administrator role carries 4,132 privileges in a ~1 MB raw response. That is
+    why top defaults to 50 (~14 KB) and why the raw payload is never echoed back on
+    the normalized path. The magnitude is never hidden: total_count is always the
+    full number Dataverse returned regardless of trimming, has_more says whether
+    anything was trimmed, and depth_summary is computed over ALL entries rather
+    than just the returned page. Raise top (max 1000) to see more.
+
+    A well-formed but nonexistent role id returns an ERROR, not an empty list:
+    Dataverse answers HTTP 404 [0x80040217] "Entity 'role' With Id = ... Does Not
+    Exist", surfaced through the standard {"error": true, "message": ...} envelope.
+    An empty privileges list therefore means a real role that grants nothing.
+
+    The function's inner properties are undocumented on Microsoft Learn, so the
+    collection is still located by shape as well as by name (RolePrivileges first,
+    then a lone object-list at the top level, then one level down inside a named
+    wrapper) as insurance against a future platform change. If it cannot be
+    identified unambiguously, nothing is guessed: normalized is false, no counts
+    are reported, and the payload comes back unchanged under raw_response (minus
+    the @odata.* envelope) for you to read yourself.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # Parameter alias, mirroring dataverse_is_component_customizable in
+    # tools/metadata.py. RoleId is Edm.Guid: an OData Guid literal is written BARE
+    # — no surrounding quotes and no guid'...' prefix — so there is no string
+    # literal to break out of and encode_odata_literal deliberately does NOT apply
+    # here. The entire defence is the input model: role_id must match
+    # _GUID_PATTERN, so it cannot carry a character that is significant in a URL.
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/RetrieveRolePrivilegesRole(RoleId=@rid)?@rid={params.role_id}"
+    )
+
+    # The whole body is guarded, not just the HTTP call: CLAUDE.md's "do not raise
+    # uncaught exceptions from tools" is unconditional, and the shape-location and
+    # summary steps below read an undocumented payload.
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+
+        # Parse defensively: a non-JSON or empty body is surfaced as-is rather than
+        # raising.
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning("RetrieveRolePrivilegesRole returned a non-JSON body")
+            payload = response.text or None
+
+        body: Any = payload
+        if isinstance(payload, dict):
+            body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+        found = _extract_privileges(body)
+        if found is None:
+            logger.warning(
+                "RetrieveRolePrivilegesRole response carried no unambiguous "
+                "privilege collection; returning it raw"
+            )
+            return finalize_response({
+                "role_id": params.role_id,
+                "normalized": False,
+                "message": (
+                    "Dataverse answered successfully, but no unambiguous privilege "
+                    "collection could be located in the payload, so no count is "
+                    "reported and none is guessed. The response is returned "
+                    "unchanged (minus the @odata.* envelope) under raw_response — "
+                    "read the privileges from there."
+                ),
+                "raw_response": body,
+            })
+
+        source, all_entries = found
+        total_count = len(all_entries)
+        page = all_entries[: params.top]
+
+        result: dict[str, Any] = {
+            "role_id": params.role_id,
+            "normalized": True,
+            "privileges_source": source,
+            "count": len(page),
+            "total_count": total_count,
+            "has_more": total_count > len(page),
+            "privileges": page,
+        }
+
+        depth_summary = _summarize_depths(all_entries)
+        if depth_summary is not None:
+            result["depth_summary"] = depth_summary
+
+        if result["has_more"]:
+            result["message"] = (
+                f"This role carries {total_count} privileges; the first "
+                f"{len(page)} are returned. RetrieveRolePrivilegesRole has no "
+                "server-side paging, so the list is trimmed here — raise top "
+                "(max 1000) to see more, and read depth_summary for the "
+                f"access-level breakdown across ALL {total_count} entries."
+            )
+
+        return finalize_response(result)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_get_role_privileges")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_role_privileges")
+
+
+# ---------------------------------------------------------------------------
+# Access origin (RetrieveAccessOrigin)
+# ---------------------------------------------------------------------------
+
+# Property name RetrieveAccessOriginResponse carries its answer under. VERIFIED
+# LIVE: once the @odata.* envelope is stripped the body is exactly
+# {"Response": "<string>"} — ONE scalar string property, never a collection, in a
+# raw body of roughly 286 bytes. Every sampled call took this path.
+_ACCESS_ORIGIN_KEY = "Response"
+
+# Scalar JSON types. ``bool`` is listed explicitly for readers even though
+# isinstance(True, int) is already True — harmless here, since every scalar is
+# accepted and none is compared against another type.
+_SCALAR_TYPES = (str, int, float, bool)
+
+
+def _is_scalar(value: Any) -> bool:
+    """True for a JSON scalar. ``None`` is deliberately NOT one.
+
+    An explicit null is "nothing to report", not an access origin, and a missing
+    property reads as None too — so treating null as an answer would let an
+    absent ``Response`` normalize into ``access_origin: null``.
+    """
+    return isinstance(value, _SCALAR_TYPES)
+
+
+def _extract_access_origin(payload: Any) -> tuple[str, Any] | None:
+    """Return the access-origin answer as ``(source, value)``, or None.
+
+    Two tiers, mirroring ``_extract_version`` (tools\\environments.py) and
+    ``_extract_verdict`` (tools\\metadata.py):
+
+    1. ``Response`` is the confirmed property name — verified live against a real
+       org, where the whole body was ``{"Response": "<string>"}`` on every call —
+       so it is read directly.
+    2. A defensive fallback for a differently-named property: a body carrying
+       exactly one scalar value is unambiguous, so it is accepted with its source
+       recorded.
+
+    Membership is tested with ``_is_scalar``, never truthiness: an origin
+    reported as an empty string, ``0`` or ``False`` is still what the platform
+    said and must not fall through to the raw path. Anything else — no scalar at
+    all, two or more scalars without a ``Response`` among them, or a non-object
+    body — returns None so the caller degrades to raw pass-through rather than
+    being told an origin that may not be the origin.
+
+    There is no ``count``: this answer is never list-shaped.
+    """
+    if not isinstance(payload, dict):
+        return None
+    answer = payload.get(_ACCESS_ORIGIN_KEY)
+    if _is_scalar(answer):
+        return (_ACCESS_ORIGIN_KEY, answer)
+    scalars = [(k, v) for k, v in payload.items() if _is_scalar(v)]
+    if len(scalars) != 1:
+        return None
+    return scalars[0]
+
+
+@tool(
+    name="dataverse_retrieve_access_origin",
+    annotations={
+        "title": "Retrieve Access Origin",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_retrieve_access_origin(
+    params: RetrieveAccessOriginInput, ctx: Context
+) -> str:
+    """Answer "WHY does this principal have access to this record?".
+
+    Calls the unbound RetrieveAccessOrigin function, which explains where a
+    principal's rights over one specific row come from — object ownership, or the
+    Principal Object Access (POA) table that backs explicit shares and team or
+    hierarchy grants.
+
+    This is the companion to dataverse_retrieve_principal_access, which returns
+    only the access MASK (which rights: Read, Write, Delete, …) and cannot say
+    where those rights came from. When you are debugging "why can this user see
+    this record?" or "why can't they?", the mask is the symptom and this is the
+    cause. Use dataverse_audit_user_access for the wider picture (roles, teams,
+    effective privileges) and dataverse_get_role_privileges for what one role
+    permits in general rather than on one row.
+
+    Inputs:
+      - object_id    — the record's own GUID.
+      - logical_name — the SINGULAR lowercase logical name of that record's table
+                       ('account', not 'accounts'). This is deliberately not the
+                       entity set name the record-access tools take.
+      - principal_id — a systemuser id or a team id. No other principal type is
+                       accepted; use dataverse_list_users / dataverse_list_teams.
+
+    RESPONSE SHAPE (verified live). Dataverse answers with ONE scalar string
+    property, Response — never a collection, in a raw body of roughly 286 bytes.
+    It is surfaced as access_origin, with access_origin_source naming the property
+    it was read from, and the payload (minus the @odata.* envelope) rides along
+    under raw_response so you can check that for yourself. There is no count:
+    the answer is never list-shaped. Should a future platform change move the
+    answer somewhere unrecognizable, normalized is false, nothing is fabricated,
+    and raw_response is the whole answer.
+
+    HTTP 200 DOES NOT MEAN "HAS ACCESS" — READ THE STRING. Three materially
+    different outcomes all come back as a successful call with normalized true,
+    and they are distinguishable ONLY by the English prose inside the string. The
+    text is passed through verbatim and deliberately NOT classified into a
+    boolean: pattern-matching platform prose is fragile and locale-dependent, and
+    a wrong security verdict is worse than none. Observed live in ONE org —
+    these wordings are observations, not a documented platform contract, so
+    treat the list as incomplete and never match on it:
+      1. Access exists, with the reason. Two forms seen, both meaning "owner" —
+         "PrincipalId is object owner (<guid>)" on a user- or team-owned row,
+         and "PrincipalId is member of organization (<guid>) who is object owner
+         (<guid>)" on an ORGANIZATION-owned row (see the org-owned note below
+         for why that answer is the same for every principal).
+      2. NO access at all —
+         "Access origin could not be found. Access does not come from POA table
+          or object ownership."
+      3. The record DOES NOT EXIST — still HTTP 200, carrying the platform's
+         "Does Not Exist" exception text inside the Response string. A bad
+         object_id is NOT a 404 from this function, so an unread string looks
+         exactly like a successful answer.
+    Do not report that the principal has access unless the string says so.
+
+    Other live-confirmed behaviour:
+      - An unknown but grammar-valid logical_name is a clean HTTP 400
+        [0x80041102] "... was not found in the MetadataCache", surfaced through
+        the standard {"error": true, "message": ...} envelope. Confirm the name
+        with dataverse_list_tables.
+      - On an ORGANIZATION-owned table (solution, role, …) the answer is the same
+        for every principal, because ownership resolves at organization level.
+        That is correct platform behaviour, not a defect — discrimination between
+        principals shows up on user- and team-owned rows.
+      - A nonexistent principal_id is not validated against an org-owned row: it
+        returned the same generic ownership text as a real one. Confirm the
+        principal exists with dataverse_get_user / dataverse_get_team first.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # The three parameters are NOT escaped alike, because their OData types differ.
+    #
+    #   ObjectId, PrincipalId (Edm.Guid)  — a Guid literal is written BARE: no
+    #       surrounding quotes and no guid'...' prefix. There is therefore no
+    #       string literal to break out of and encode_odata_literal deliberately
+    #       does NOT apply; the whole defence is _GUID_PATTERN on the input model,
+    #       which leaves no character that is significant in a URL. Live-confirmed
+    #       by IsComponentCustomizable and RetrieveRolePrivilegesRole.
+    #
+    #   LogicalName (Edm.String) — a single-quoted OData string literal, so it DOES
+    #       need encode_odata_literal: single quotes doubled, then percent-encoded.
+    #       Percent-encoding alone is not enough, because Dataverse percent-decodes
+    #       the URL before parsing the OData expression, so a lone %27 would decode
+    #       back to a quote and terminate the literal early. Live-confirmed by
+    #       ValidateFetchXmlExpression. This is defence in depth, not the only
+    #       defence: RetrieveAccessOriginInput already restricts logical_name to the
+    #       Dataverse identifier grammar, which cannot express a quote at all.
+    logical_name_enc = encode_odata_literal(params.logical_name)
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/RetrieveAccessOrigin(ObjectId=@oid,LogicalName=@ln,PrincipalId=@pid)"
+        f"?@oid={params.object_id}&@ln='{logical_name_enc}'&@pid={params.principal_id}"
+    )
+
+    # The whole body is guarded, not just the HTTP call: CLAUDE.md's "do not raise
+    # uncaught exceptions from tools" is unconditional, and the extraction step
+    # below reads a payload whose inner properties Microsoft Learn does not
+    # document (they are live-verified here, not contractual).
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+
+        # Parse defensively: a non-JSON or empty body is surfaced as-is rather than
+        # raising.
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning("RetrieveAccessOrigin returned a non-JSON body")
+            payload = response.text or None
+
+        body: Any = payload
+        if isinstance(payload, dict):
+            body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+        result: dict[str, Any] = {
+            "object_id": params.object_id,
+            "logical_name": params.logical_name,
+            "principal_id": params.principal_id,
+        }
+
+        found = _extract_access_origin(body)
+        if found is None:
+            logger.warning(
+                "RetrieveAccessOrigin response carried neither a %s property nor "
+                "exactly one scalar value; returning it raw",
+                _ACCESS_ORIGIN_KEY,
+            )
+            result["normalized"] = False
+            result["message"] = (
+                "Dataverse answered successfully, but the payload carried neither "
+                f"a {_ACCESS_ORIGIN_KEY} property nor exactly one scalar value, so "
+                "the access origin could not be identified. access_origin is "
+                "OMITTED rather than guessed — do not read its absence as 'no "
+                "access'. The response is returned unchanged (minus the @odata.* "
+                "envelope) under raw_response; read the origin from there."
+            )
+        else:
+            source, value = found
+            result["normalized"] = True
+            result["access_origin_source"] = source
+            result["access_origin"] = value
+            result["message"] = (
+                "A successful call does NOT mean the principal has access — read "
+                "access_origin. The same shape carries 'no access' ("
+                '"Access origin could not be found...") and "that record id does '
+                "not exist\" as ordinary HTTP 200 prose. The text is passed "
+                "through unclassified on purpose."
+            )
+        # raw_response rides along on both paths: the payload is one record's
+        # access explanation, so it is small (~286 bytes), and it is the only way
+        # a caller can check the extraction for themselves.
+        result["raw_response"] = body
+        return finalize_response(result)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_retrieve_access_origin")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_retrieve_access_origin")
 
 
 # ---------------------------------------------------------------------------

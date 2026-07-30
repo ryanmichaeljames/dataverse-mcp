@@ -348,7 +348,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**185 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**193 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -366,9 +366,9 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| `core` | 19 | Environment introspection + all record CRUD (always registered) |
-| `schema` | 32 | Table/column/relationship/choice/alternate-key metadata |
-| `solutions` | 20 | Solution and publisher management, solution components, history, import/export ALM, dependency analysis |
+| `core` | 23 | Environment introspection, all record CRUD, and unpublished-customization reads (always registered) |
+| `schema` | 33 | Table/column/relationship/choice/alternate-key metadata, component customizability pre-flight |
+| `solutions` | 21 | Solution and publisher management, solution components, history, import/export ALM, import diagnostics, dependency analysis |
 | `flows` | 8 | Cloud flow + classic process listing and activate/deactivate |
 | `forms` | 6 | Model-driven form management |
 | `views` | 7 | Saved query / view management |
@@ -376,7 +376,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `connections` | 5 | Connection reference management |
 | `variables` | 8 | Environment variable definitions and values |
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
-| `security` | 16 | Security roles, teams, users, business units, composite access audit, audit history |
+| `security` | 18 | Security roles and their privileges, teams, users, business units, record access origin, composite access audit, audit history |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 | `customapis` | 13 | Custom API, request parameter, and response property management |
@@ -389,6 +389,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 |------|------|-------------|
 | `dataverse_list_environments` | default | List Power Platform environments accessible to the caller |
 | `dataverse_whoami` | default | Return the caller's `UserId`, `BusinessUnitId`, `OrganizationId` |
+| `dataverse_get_organization_info` | default | Fingerprint the environment — server version, organization identity, instance type, service endpoints, installed-solution count |
 | `dataverse_get_entity_sets` | default | List OData EntitySet names from the service document |
 | `dataverse_retrieve_user_privileges` | default | List security privileges assigned to a user |
 | `dataverse_retrieve_principal_access` | default | Check a user's access rights to a specific record |
@@ -399,6 +400,8 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 |------|------|-------------|
 | `dataverse_list_security_roles` | default | List security roles, optional filter and pagination |
 | `dataverse_get_security_role` | default | Get one security role by GUID |
+| `dataverse_get_role_privileges` | default | List the privileges assigned to a security role via `RetrieveRolePrivilegesRole` — the "what can this role actually **do**?" companion to `dataverse_get_security_role`, which returns only the role record. A System Administrator role carries thousands of privileges (~4,100, ~1 MB), so entries are trimmed to `top` (default 50, max 1000) while `total_count` and `depth_summary` report the true magnitude |
+| `dataverse_retrieve_access_origin` | default | Answer **why** a principal has access to one record — role, ownership, share, business-unit hierarchy, team membership — via `RetrieveAccessOrigin`, where `dataverse_retrieve_principal_access` returns only the access *mask*. Takes the **singular lowercase** table `logical_name`, not the entity set name. **HTTP 200 does not mean "has access"** — no access and a nonexistent record are also successful calls, distinguishable only by the prose in `access_origin` |
 | `dataverse_list_teams` | default | List teams, optional filter and pagination |
 | `dataverse_get_team` | default | Get one team by GUID |
 | `dataverse_list_users` | default | List system users, optional filter and pagination |
@@ -409,10 +412,10 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_audit_details` | default | Get full before/after detail for a single audit record via the bound `RetrieveAuditDetails` function |
 | `dataverse_retrieve_record_change_history` | default | Retrieve the full audit change history for a single record via `RetrieveRecordChangeHistory`; returns structured `AuditDetailCollection` |
 | `dataverse_assign_security_role` | write | Assign a security role to a user or team |
-| `dataverse_remove_security_role` | write | Remove a security role from a user or team |
 | `dataverse_add_team_members` | write | Add one or more users to a team |
-| `dataverse_remove_team_members` | write | Remove one or more users from a team |
 | `dataverse_set_user_state` | write | Enable or disable a system user (`isdisabled`) |
+| `dataverse_remove_security_role` | delete | Remove a security role from a user or team |
+| `dataverse_remove_team_members` | delete | Remove one or more users from a team |
 
 ### Async jobs
 
@@ -438,8 +441,11 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 |------|------|-------------|
 | `dataverse_query_table` | default | Query records with filter, select, orderby, expand, top |
 | `dataverse_execute_fetchxml` | default | Execute a FetchXML query (joins, aggregation, paging cookie) |
+| `dataverse_validate_fetchxml` | default | Pre-flight a FetchXML query via `ValidateFetchXmlExpression`: Dataverse parses and analyses the expression and reports errors plus performance suggestions **without executing it**. **HTTP 200 does not mean the query is valid** — an unknown table or attribute returns 200 with an error-severity message — so the findings are lifted to `has_errors`, `error_count`, `warning_count` and `errors`. Max 2000 characters (the query travels in the request URL) |
 | `dataverse_get_record` | default | Get one record by entity set name and GUID |
+| `dataverse_retrieve_unpublished` | default | Read the **unpublished (draft)** definition of one customization record via `RetrieveUnpublished` — a normal GET returns the *published* row, so a read-back after a form or view edit is stale until `dataverse_publish_customizations` runs. Limited to `savedqueries`, `systemforms`, `appmodules` and `webresourceset` (`sitemap` is refused by the platform). Returns one record, large XML/binary columns excluded unless requested via `select`; NULL columns are omitted |
 | `dataverse_count_records` | default | Count rows in a table, optional filter |
+| `dataverse_get_total_record_counts` | default | Approximate row counts for up to 50 tables in one call (`RetrieveTotalRecordCount`). Counts come from a snapshot up to 24 hours old and can be stale — or uniformly `0` where the snapshot job has not run — so use `dataverse_count_records` for an exact, live count. All-or-nothing: one unrecognized logical name fails the whole batch with HTTP 400 |
 | `dataverse_aggregate_table` | default | Aggregate (sum, avg, min, max, countdistinct) with optional grouping |
 | `dataverse_execute_batch` | default | Run up to 1,000 OData operations in one `$batch` (GET-only unless write enabled) |
 | `dataverse_bulk_upsert` | write | Upsert many records via `$batch` PATCH; auto-detects primary GUID key or uses `key_columns` for alternate-key upserts; per-row outcomes |
@@ -459,6 +465,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_table_metadata` | default | Get full schema details for a table |
 | `dataverse_list_columns` | default | List columns for a table, optional type filter |
 | `dataverse_get_column` | default | Get full metadata for one column, including type-specific properties |
+| `dataverse_is_component_customizable` | default | Pre-flight check via `IsComponentCustomizable`: can this solution component be edited, before an update is attempted? Takes the component's own GUID plus the same integer component-type codes as `dataverse_analyze_dependencies`. **Do not assume system components answer `false`** — core tables such as `systemuser` report `true` because customizations like adding columns are permitted |
 | `dataverse_create_table` | write | Create a custom table (ownership type, primary name attribute) |
 | `dataverse_update_table` | write | Update a table's display name or description |
 | `dataverse_create_column` | write | Add a typed column to a table (supports Memo, Boolean with custom labels, and Picklist/MultiSelectPicklist bound to a global choice) |
@@ -524,6 +531,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_stage_and_upgrade_solution` | write | Single-step solution **upgrade** via `StageAndUpgradeAsync` — stages as holding, deletes obsolete components, and promotes in one async op; supply zip via `customization_file` or `input_path`; returns `import_job_id`, `async_operation_id`, `import_job_key` |
 | `dataverse_delete_and_promote_solution` | write | Two-step apply-upgrade via `DeleteAndPromote` — promotes the holding `_Upgrade` solution and deletes obsolete components (pair with `dataverse_import_solution` + `hold_for_upgrade=true`); synchronous, returns `solution_id` |
 | `dataverse_get_import_job` | default | Get one importjob by GUID — returns progress, completedon, solutionname; add `include_data=true` for the result XML (incl. deletion-phase component errors such as `8004F037`) on failure |
+| `dataverse_get_import_job_results` | default | **Why did the import fail?** — the platform's own human-readable results document for one importjob via `RetrieveFormattedImportJobResults`, instead of the opaque `data` XML blob. The document is a **SpreadsheetML (Excel XML) workbook**, so the meaning is in the **cell values**, not the tag names. Large (~14k–71k characters); trimmed to `max_chars` (default 20,000) with `results_length` always reporting the true size |
 | `dataverse_list_import_jobs` | default | List importjobs, optional filter by solution unique name, ordered by createdon desc |
 | `dataverse_clone_solution_as_patch` | write | Clone a solution as a patch via bound `CloneAsPatch` action; resolves parent by GUID or unique name |
 | `dataverse_analyze_dependencies` | default | Analyze component dependencies: `blocking_delete` (blocks deletion), `dependents` (what depends on it), or `required` (what it needs); resolves component type codes to names |
@@ -557,6 +565,8 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_add_form_control` | write | Add a column control to a form (auto-resolves classid) |
 | `dataverse_remove_form_control` | write | Remove a column control by logical name |
 
+> `dataverse_get_form` returns the **published** form. After any write above, read the draft back with `dataverse_retrieve_unpublished` (`entity_set_name='systemforms'`) or publish first with `dataverse_publish_customizations`.
+
 ### Views
 
 | Tool | Gate | Description |
@@ -568,6 +578,8 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_update_view` | write | Update a view's FetchXml, LayoutXml, name, or description |
 | `dataverse_add_view_column` | write | Add a column to a view's LayoutXml |
 | `dataverse_remove_view_column` | write | Remove a column from a view's LayoutXml |
+
+> `dataverse_get_view` returns the **published** view. After any write above, read the draft back with `dataverse_retrieve_unpublished` (`entity_set_name='savedqueries'`) or publish first with `dataverse_publish_customizations`.
 
 ### Model-driven apps
 

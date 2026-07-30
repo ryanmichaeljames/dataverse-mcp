@@ -5,11 +5,16 @@ import json
 import logging
 import os
 import uuid
+import xml.etree.ElementTree as ET
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from urllib.parse import urlencode
 
+import defusedxml.ElementTree as DET
 import httpx
+from defusedxml.common import DefusedXmlException
 from mcp.server.mcpserver import Context
 
 from dataverse_mcp._app import category_tools
@@ -41,6 +46,7 @@ from dataverse_mcp.models import (
     DeleteAndPromoteSolutionInput,
     ExportSolutionInput,
     GetImportJobInput,
+    GetImportJobResultsInput,
     GetSolutionHistoryInput,
     GetSolutionInput,
     ImportSolutionInput,
@@ -2000,6 +2006,397 @@ async def dataverse_list_import_jobs(params: ListImportJobsInput, ctx: Context) 
         })
     except Exception as e:
         return tool_error_response(e, "dataverse_list_import_jobs")
+
+
+# ---------------------------------------------------------------------------
+# Formatted import job results (RetrieveFormattedImportJobResults)
+# ---------------------------------------------------------------------------
+
+# Property names RetrieveFormattedImportJobResultsResponse may carry the document
+# under, tried in order. LIVE-VERIFIED: "FormattedResults" is the one that fires,
+# and the body carries nothing else — the whole payload is
+# {"FormattedResults": "<string>"} once the @odata.* envelope is dropped. It stays
+# first in the list for that reason. Microsoft Learn still documents the function
+# and its return TYPE but NOT the type's inner properties, so the name is not
+# contractual and the two fallbacks are kept: they mirror shapes this repo has
+# actually met live ("Response" was RetrieveAccessOrigin's single scalar property).
+# Whichever fires is reported back in results_source so the caller can see how the
+# document was found; if none does, _extract_results falls back to shape and then
+# gives up rather than guessing.
+_IMPORT_JOB_RESULTS_KEYS = ("FormattedResults", "Response", "ImportJobResults")
+
+# Ceiling above which the structural summary is skipped. The slice returned to the
+# caller is bounded by max_chars, but the summary is deliberately computed over the
+# WHOLE document, and parsing an unbounded string costs memory proportional to it.
+# importjob.data is declared with a ~1 GB max length, so a ceiling is not
+# theoretical. Well past any real formatted-results document.
+_SUMMARY_MAX_CHARS = 8_000_000
+
+# Cap on distinct tag names reported in element_counts. A results document has a
+# small tag vocabulary; the cap stops a pathological document turning the summary
+# into the payload.
+_ELEMENT_COUNTS_MAX_TAGS = 40
+
+
+def _is_markup_string(value: Any) -> bool:
+    """True for a string payload — the shape the results document arrives in.
+
+    Only ``str`` qualifies. Numbers and booleans are excluded on purpose: the
+    answer is a markup document, so a lone ``0`` or ``False`` elsewhere in the
+    payload is not it. Restricting to ``str`` also sidesteps the ``bool``-is-an-
+    ``int`` trap outright — there is no numeric branch here to be fooled.
+
+    An EMPTY string qualifies: "the import produced no formatted results" is a
+    real answer, and reporting results_length 0 says so more honestly than
+    degrading to raw pass-through.
+    """
+    return isinstance(value, str)
+
+
+def _extract_results(payload: Any) -> tuple[str, str] | None:
+    """Locate the results document as ``(source, text)``, or None.
+
+    Three tiers, mirroring ``_extract_privileges`` / ``_extract_access_origin`` in
+    tools\\security.py:
+
+    1. One of ``_IMPORT_JOB_RESULTS_KEYS`` at the top level, in order.
+    2. Exactly one string property at the top level — an unambiguous body, whatever
+       the property is called.
+    3. Exactly one string one level down inside a named wrapper, which is the shape
+       ``dataverse_retrieve_record_change_history`` met
+       (``AuditDetailCollection.AuditDetails``).
+
+    A bare string body is accepted too. Ambiguity — two or more candidate strings
+    at the same tier with no known name among them — returns None, so the caller
+    degrades to raw pass-through rather than reporting some other string as the
+    import results.
+    """
+    if _is_markup_string(payload):
+        return ("<response body>", payload)
+    if not isinstance(payload, dict):
+        return None
+
+    for key in _IMPORT_JOB_RESULTS_KEYS:
+        value = payload.get(key)
+        if _is_markup_string(value):
+            return (key, value)
+
+    top_level = [(k, v) for k, v in payload.items() if _is_markup_string(v)]
+    if len(top_level) == 1:
+        return top_level[0]
+    if len(top_level) > 1:
+        logger.warning(
+            "RetrieveFormattedImportJobResults returned %d candidate strings at the "
+            "top level (%s); refusing to pick one",
+            len(top_level),
+            ", ".join(k for k, _ in top_level),
+        )
+        return None
+
+    nested = [
+        (f"{outer}.{inner}", value)
+        for outer, container in payload.items()
+        if isinstance(container, dict)
+        for inner, value in container.items()
+        if _is_markup_string(value)
+    ]
+    if len(nested) == 1:
+        return nested[0]
+    if len(nested) > 1:
+        logger.warning(
+            "RetrieveFormattedImportJobResults returned %d candidate nested strings "
+            "(%s); refusing to pick one",
+            len(nested),
+            ", ".join(k for k, _ in nested),
+        )
+    return None
+
+
+def _local_tag(tag: Any) -> str:
+    """Strip an ``{namespace}`` prefix from an ElementTree tag."""
+    if not isinstance(tag, str):
+        # Comments and processing instructions carry a callable as their tag.
+        return "<non-element>"
+    return tag.rsplit("}", 1)[-1] if tag.startswith("{") else tag
+
+
+def _summarize_markup(text: str) -> dict[str, Any]:
+    """Describe the document's STRUCTURE without assuming a schema.
+
+    Returns the root tag, the total element count and a per-tag tally. Nothing
+    here interprets the document: the tag vocabulary is reported as found, so a
+    caller (or a live test) learns the real shape instead of being handed an
+    invented one. No node is claimed to be an error, a warning or a result,
+    because RetrieveFormattedImportJobResultsResponse's document schema is not
+    documented and a wrong failure verdict is worse than none.
+
+    What that buys the caller is modest for THIS document and known to be so.
+    Live testing showed the import-results document is a SpreadsheetML workbook,
+    so the tally is dominated by spreadsheet furniture (``Cell``, ``Data``,
+    ``Row``, ``Style``) and no tag name carries a verdict. The summary is kept
+    anyway — it is cheap, it is computed over the whole document even when the
+    text is trimmed, and it is the honest schema-free thing to report — but it
+    ships with element_counts_note telling the caller in the response itself that
+    tag names describe structure, not outcome, and that the answer is in the text.
+
+    Parsing goes through defusedxml, never stdlib ``xml.etree``. The document is
+    server-sourced, but it is server-sourced content built from a solution zip the
+    caller supplied, so it is not trusted input — and an entity declaration has no
+    business in an import-results document either way. Both failure modes are
+    reported, never raised: a rejected document (forbidden constructs) and a
+    malformed one are ordinary outcomes here, and the raw text is still returned.
+    """
+    summary: dict[str, Any] = {"markup_parsed": False}
+
+    if not text:
+        summary["markup_note"] = "The results document is empty."
+        return summary
+
+    if len(text) > _SUMMARY_MAX_CHARS:
+        summary["markup_note"] = (
+            f"The document is {len(text)} characters, above the "
+            f"{_SUMMARY_MAX_CHARS}-character summary ceiling, so it was not parsed. "
+            "The text itself is unaffected — raise max_chars to read more of it."
+        )
+        return summary
+
+    try:
+        root = DET.fromstring(text)
+    except DefusedXmlException:
+        # Accurate wording matters here: with defusedxml's defaults
+        # (forbid_dtd=False) a bare <!DOCTYPE ...> parses fine — only an ENTITY
+        # declaration or an external entity reference is refused.
+        logger.warning(
+            "Import job results document declares an XML entity or references an "
+            "external one; refused to parse it"
+        )
+        summary["markup_note"] = (
+            "The results document declares an XML entity (or references an "
+            "external one) and was NOT parsed — entity expansion is a "
+            "denial-of-service and file-disclosure vector, so no structural "
+            "summary is reported. A plain DOCTYPE with no entity declaration is "
+            "not affected. The document text itself is returned unchanged below; "
+            "read it directly."
+        )
+        return summary
+    except ET.ParseError as exc:
+        summary["markup_note"] = (
+            f"The results document is not well-formed XML ({exc}), so no structural "
+            "summary is reported. It may be HTML or plain text rather than XML — "
+            "read the text itself below."
+        )
+        return summary
+    except Exception as exc:  # pragma: no cover - defensive: parser internals
+        logger.warning("Import job results document could not be parsed: %s", exc)
+        summary["markup_note"] = (
+            f"The results document could not be parsed ({type(exc).__name__}), so no "
+            "structural summary is reported. Read the text itself below."
+        )
+        return summary
+
+    counts: Counter[str] = Counter(_local_tag(el.tag) for el in root.iter())
+    summary["markup_parsed"] = True
+    summary["root_tag"] = _local_tag(root.tag)
+    summary["element_count"] = sum(counts.values())
+    summary["distinct_tag_count"] = len(counts)
+    summary["element_counts"] = dict(counts.most_common(_ELEMENT_COUNTS_MAX_TAGS))
+    # Unconditional, so it never implies a verdict about a particular document and
+    # adds no schema-sniffing branch. It exists because the observed document is a
+    # SpreadsheetML workbook: a caller staring at Cell/Data/Row counts with no tag
+    # called "Error" must not read that absence as "the import succeeded".
+    summary["element_counts_note"] = (
+        "Structural tally only — tag NAMES describe how the document is built, "
+        "not what the import did. Import results come back as a SpreadsheetML "
+        "(Excel XML) workbook, so these are spreadsheet tags and the meaning sits "
+        "in the element TEXT (cell values). No tag being named 'error' does NOT "
+        "mean the import succeeded: read results itself, raising max_chars if it "
+        "is truncated."
+    )
+    if len(counts) > _ELEMENT_COUNTS_MAX_TAGS:
+        summary["markup_note"] = (
+            f"element_counts lists the {_ELEMENT_COUNTS_MAX_TAGS} commonest of "
+            f"{len(counts)} distinct tags."
+        )
+    return summary
+
+
+@tool(
+    name="dataverse_get_import_job_results",
+    annotations={
+        "title": "Get Import Job Results",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_import_job_results(
+    params: GetImportJobResultsInput, ctx: Context
+) -> str:
+    """Answer "WHY did this solution import fail?" — the readable import results.
+
+    Calls the unbound RetrieveFormattedImportJobResults function, which returns the
+    platform's own human-readable results document for one import job.
+
+    This is the companion to dataverse_get_import_job, which returns the importjob
+    RECORD (progress, completedon, solutionname) and, with include_data=true, the
+    raw 'data' column — a large opaque XML blob you then have to parse yourself to
+    find the failure. This tool asks Dataverse to format those results instead. Use
+    dataverse_list_import_jobs (most recent first) or the import_job_id returned by
+    dataverse_import_solution / dataverse_stage_and_upgrade_solution to get an id.
+
+    RESPONSE SHAPE — LIVE-VERIFIED. The document arrives as ONE string property
+    named FormattedResults, and the body carries nothing else. It is surfaced as
+    'results', with results_source naming the property it was read from. Nothing in
+    the document is interpreted: the text is passed through verbatim. Microsoft
+    Learn documents the function and its return type but NOT that type's inner
+    properties, so the property is still located by name and then by shape rather
+    than assumed; if the payload cannot be identified unambiguously, normalized is
+    false, no length or summary is reported, and the payload comes back unchanged
+    (minus the @odata.* envelope) under raw_response — read it yourself rather than
+    trusting a guess.
+
+    WHAT YOU GET BACK IS A SPREADSHEET. Live-verified: 'results' is a SpreadsheetML
+    (Excel XML) workbook — root element Workbook, an mso-application
+    progid="Excel.Sheet" processing instruction and the
+    urn:schemas-microsoft-com:office:spreadsheet namespace — NOT a Dataverse
+    results schema. Its element names are spreadsheet furniture (Worksheet, Table,
+    Row, Cell, Data, Style, Font, Interior, Border...) and NONE of them is named
+    error, warning or failure. The meaning lives in the CELL VALUES, so to find out
+    why an import failed you must read the TEXT of the document, not its tags. The
+    same format came back for a completed job and a still-running one.
+
+    THE DOCUMENT IS TRIMMED BY DEFAULT, AND IT IS BIG. The function has no
+    server-side paging — it returns the whole document in one string, and observed
+    documents ran to tens of thousands of characters (about 14,000 for a small
+    import, about 71,000 for a larger one), so the default WILL usually truncate.
+    The first max_chars characters (default 20,000) are returned inline and the
+    true size is never hidden: results_length is ALWAYS the full character count
+    Dataverse returned and truncated says whether anything was cut. Raise max_chars
+    (max 2,000,000) to read more; an import failure's reason is usually near the
+    top, but spreadsheet markup is verbose, so budget generously.
+
+    A STRUCTURAL SUMMARY, NOT A VERDICT. When the document parses as XML, the
+    summary reports root_tag, element_count, distinct_tag_count and element_counts
+    (a per-tag tally) — computed over the WHOLE document, not just the returned
+    slice, so it describes what you did not see as well as what you did. It is
+    deliberately descriptive only: no node is labelled an error, a warning or a
+    failure, because the document's schema is undocumented and a wrong "the import
+    succeeded" verdict is worse than none. Given the SpreadsheetML format above,
+    the tally counts spreadsheet structure and tells you little about the import
+    itself — element_counts_note repeats that warning in the response. Read the
+    text. If the document does not parse (it may be HTML or plain text),
+    markup_parsed is false with a note explaining why and the text is still
+    returned in full. Parsing uses a hardened parser that refuses XML entity
+    declarations and external entity references outright.
+
+    Note the two ids are not interchangeable: this takes the importjob GUID
+    (ImportJobId / importjobid), not the separate ImportJobKey string that
+    ImportSolutionAsync also returns.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # Parameter alias, mirroring dataverse_get_role_privileges (tools/security.py)
+    # and dataverse_is_component_customizable (tools/metadata.py). ImportJobId is
+    # Edm.Guid: an OData Guid literal is written BARE — no surrounding quotes and no
+    # guid'...' prefix — so there is no string literal to break out of and
+    # encode_odata_literal deliberately does NOT apply here. The entire defence is
+    # the input model: import_job_id must match _GUID_PATTERN, so it cannot carry a
+    # character that is significant in a URL.
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/RetrieveFormattedImportJobResults(ImportJobId=@jid)"
+        f"?@jid={params.import_job_id}"
+    )
+
+    # The whole body is guarded, not just the HTTP call: CLAUDE.md's "do not raise
+    # uncaught exceptions from tools" is unconditional, and the extraction and
+    # summary steps below read a payload whose inner properties are undocumented.
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        if response.status_code == 404:
+            # Same treatment dataverse_get_import_job gives a missing row: an
+            # actionable message beats a bare 404. Note an import that never staged
+            # can leave no importjob row at all.
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Import job not found: '{params.import_job_id}'. Use "
+                    "dataverse_list_import_jobs to find recent import jobs. An "
+                    "import that failed before staging may leave no importjob row "
+                    "at all."
+                ),
+            })
+        response.raise_for_status()
+
+        # Parse defensively: a non-JSON or empty body is surfaced as-is rather than
+        # raising.
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning(
+                "RetrieveFormattedImportJobResults returned a non-JSON body"
+            )
+            payload = response.text or None
+
+        body: Any = payload
+        if isinstance(payload, dict):
+            body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+        result: dict[str, Any] = {"import_job_id": params.import_job_id}
+
+        found = _extract_results(body)
+        if found is None:
+            logger.warning(
+                "RetrieveFormattedImportJobResults response carried no unambiguous "
+                "results document; returning it raw"
+            )
+            result["normalized"] = False
+            result["message"] = (
+                "Dataverse answered successfully, but no unambiguous results "
+                "document could be located in the payload, so no length or summary "
+                "is reported and none is guessed. The response is returned "
+                "unchanged (minus the @odata.* envelope) under raw_response — read "
+                "the import results from there."
+            )
+            result["raw_response"] = body
+            return finalize_response(result)
+
+        source, text = found
+        page = text[: params.max_chars]
+
+        result["normalized"] = True
+        result["results_source"] = source
+        result["results_length"] = len(text)
+        result["truncated"] = len(text) > len(page)
+        result["returned_length"] = len(page)
+        # The summary spans the WHOLE document even when the text is trimmed —
+        # the same reason depth_summary in dataverse_get_role_privileges is
+        # computed before trimming.
+        result.update(_summarize_markup(text))
+        result["results"] = page
+
+        if result["truncated"]:
+            result["message"] = (
+                f"The results document is {len(text)} characters; the first "
+                f"{len(page)} are returned. RetrieveFormattedImportJobResults has "
+                "no server-side paging, so it is trimmed here — raise max_chars "
+                "(max 2,000,000) to read more. An import failure's reason is "
+                "usually near the top of the document, and the structural summary "
+                "covers the whole of it."
+            )
+        return finalize_response(result)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_get_import_job_results")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_import_job_results")
 
 
 @write_tool(

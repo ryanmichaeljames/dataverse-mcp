@@ -30,6 +30,7 @@ import dataverse_mcp.tools.jobs  # noqa: E402, F401
 import dataverse_mcp.tools.web_resources  # noqa: E402, F401
 import dataverse_mcp.tools.custom_apis  # noqa: E402, F401
 import dataverse_mcp.tools.dependencies  # noqa: E402, F401
+import dataverse_mcp.tools.customizations  # noqa: E402, F401
 
 
 def main():

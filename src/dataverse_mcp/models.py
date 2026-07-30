@@ -1,7 +1,7 @@
 """Pydantic input models for all Dataverse MCP tools."""
 
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -23,6 +23,27 @@ _GUID_PATTERN = re.compile(
 #     the identifier grammar forbids CR/LF and so rules out header injection.
 # Mirrors the pattern already enforced on entity_set_name.
 _DATAVERSE_NAME_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
+
+# Dataverse caps a table's schema name (and therefore its logical name, which is
+# that schema name lowercased) at 50 characters, publisher prefix included.
+_DATAVERSE_NAME_MAX_LENGTH = 50
+
+# Upper bound on a FetchXml document that has to travel inside a request URL.
+# ValidateFetchXmlExpression takes its FetchXml as a query-string parameter alias,
+# and percent-encoding an XML document roughly doubles it. Typical worst case is
+# 3x: every <, >, ", space and = becomes three characters, so 2,000 raw
+# characters encode to ~6,000 and the request line stays inside the 8 KB default
+# that http.sys and the proxies in front of Dataverse allow.
+# The absolute worst case is 6x, not 3x: encode_odata_literal DOUBLES every single
+# quote before percent-encoding, so each ' becomes '' and then %27%27 — measured at
+# 12,000 characters for 2,000 apostrophes. That is a pathological document (an
+# apostrophe in every position), not a real query, and it is deliberately not
+# guarded here: capping the input lower would reject legitimate queries, and an
+# over-long URL is already handled downstream — dataverse_validate_fetchxml turns
+# Dataverse's HTTP 414 into an actionable "shorten the query" message.
+# For scale, the stock "Active Accounts" view's FetchXml is well under 500
+# characters, so this comfortably covers hand-written and generated queries.
+_FETCH_XML_MAX_LENGTH = 2000
 
 
 # ---------------------------------------------------------------------------
@@ -994,6 +1015,48 @@ class ExecuteFetchXmlInput(DataverseEnvironmentInput):
         return stripped
 
 
+class ValidateFetchXmlInput(DataverseEnvironmentInput):
+    """Input for the FetchXml pre-flight validation tool (ValidateFetchXmlExpression)."""
+
+    fetch_xml: str = Field(
+        ...,
+        description=(
+            "The FetchXml document to validate, starting with '<fetch ...>'. It is "
+            "analysed by Dataverse, not executed: no records are read and nothing "
+            "is modified. No entity set name is needed — the root "
+            "<entity name='...'> inside the document identifies the table. "
+            "Maximum 2000 characters, because the whole document is sent inside "
+            "the request URL's query string as a percent-encoded OData string "
+            "literal, which roughly doubles its length (typically at most triples "
+            "it, and up to six times for a document that is almost all single "
+            "quotes, since each quote is doubled before being encoded); beyond "
+            "that the URL risks rejection by Dataverse or a proxy in front of it, "
+            "which is reported back as an HTTP 414 with a shortening hint. "
+            "If a query is too long, shrink it before validating: drop "
+            "insignificant whitespace and comments, trim <attribute> elements to "
+            "the columns actually needed, or validate expensive <link-entity> "
+            "branches one at a time — the warnings are reported per construct, so "
+            "a trimmed query still surfaces the same suggestions. The document "
+            "must be well-formed XML and must not declare a DTD or XML entities; "
+            "both are checked locally before the request is sent."
+        ),
+        # '<fetch/>' is the shortest string that can legitimately be submitted;
+        # asking Dataverse what it makes of a stub is a valid use of a validator.
+        min_length=8,
+        max_length=_FETCH_XML_MAX_LENGTH,
+    )
+
+    @field_validator("fetch_xml")
+    @classmethod
+    def validate_fetch_xml(cls, v: str) -> str:
+        stripped = v.strip()
+        if not stripped.lower().startswith("<fetch"):
+            raise ValueError(
+                "fetch_xml must be a valid FetchXML string starting with '<fetch ...>'"
+            )
+        return stripped
+
+
 class GetRecordInput(DataverseEnvironmentInput):
     """Input for retrieving a single record by its ID."""
 
@@ -1086,6 +1149,40 @@ class CountRecordsInput(DataverseEnvironmentInput):
             "OData $filter expression to count only matching records. "
             "Note: the count is always capped at 5,000 by Dataverse."
         ),
+    )
+
+
+class GetTotalRecordCountsInput(DataverseEnvironmentInput):
+    """Input for the bulk approximate row-count tool (RetrieveTotalRecordCount)."""
+
+    entity_names: list[
+        Annotated[
+            str,
+            # 50 chars is Dataverse's own cap on a table schema name (a logical name
+            # is that schema name lowercased), so nothing longer can name a real
+            # table. It also bounds the query string: the 50-name cap below assumes
+            # a URL length budget, and without a per-item cap 50 pattern-valid but
+            # absurdly long names could blow straight past it.
+            Field(min_length=1, max_length=_DATAVERSE_NAME_MAX_LENGTH,
+                  pattern=_DATAVERSE_NAME_PATTERN),
+        ]
+    ] = Field(
+        ...,
+        description=(
+            "Logical names of the tables to count — singular and lowercase "
+            "(e.g. ['account', 'contact', 'new_invoice']), NOT the plural OData "
+            "entity set names used elsewhere. Between 1 and 50 names per call: "
+            "the list is sent as a JSON array inside the request URL's query "
+            "string, and a longer list risks exceeding the practical URL length "
+            "limit, so split larger sets across multiple calls (with unusually "
+            "long names, split sooner). Each name must match the Dataverse "
+            "identifier grammar (letter or underscore, then "
+            "letters/digits/underscores) and Dataverse's 50-character limit on "
+            "table schema/logical names. Every name must exist: one unrecognized "
+            "name fails the whole call with HTTP 400, with no partial results."
+        ),
+        min_length=1,
+        max_length=50,
     )
 
 
@@ -2188,6 +2285,52 @@ class PublishCustomizationsInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Component customizability tools
+# ---------------------------------------------------------------------------
+
+
+class IsComponentCustomizableInput(DataverseEnvironmentInput):
+    """Input for the pre-flight customizability check (IsComponentCustomizable)."""
+
+    component_id: str = Field(
+        ...,
+        description=(
+            "GUID of the solution component to check. This is the component's own "
+            "id, NOT a solution id: the MetadataId of a table (from "
+            "dataverse_get_table_metadata) or of a column (from "
+            "dataverse_get_column), the MetadataId of a relationship or global "
+            "choice, or the record id of a form, view, web resource or canvas app."
+        ),
+    )
+    component_type: int = Field(
+        ...,
+        description=(
+            "Integer component type code saying what component_id refers to. This "
+            "is the same code set dataverse_analyze_dependencies takes — use that "
+            "tool's documentation for the full list. Common values: 1=Entity, "
+            "2=Attribute, 3=Relationship, 9=OptionSet, 20=SecurityRole, "
+            "26=SavedQuery, 29=Workflow, 60=SystemForm, 61=WebResource, "
+            "62=SiteMap, 91=PluginAssembly, 92=SDKMessageProcessingStep, "
+            "300=CanvasApp. "
+            "See https://learn.microsoft.com/power-apps/developer/data-platform/reference/entities/solutioncomponent."
+        ),
+        ge=1,
+        # Upper bound purely to keep the value short enough to be a sane URL
+        # segment; Python ints are unbounded and this parameter is interpolated
+        # straight into the request URL. The highest documented component type is
+        # in the hundreds, so 100000 cannot reject a real code.
+        le=100000,
+    )
+
+    @field_validator("component_id")
+    @classmethod
+    def validate_component_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("component_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
 # Security tools
 # ---------------------------------------------------------------------------
 
@@ -2209,6 +2352,41 @@ class RetrieveUserPrivilegesInput(DataverseEnvironmentInput):
     def validate_user_id(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
             raise ValueError("user_id must be a valid GUID")
+        return v
+
+
+class GetRolePrivilegesInput(DataverseEnvironmentInput):
+    """Input for listing the privileges assigned to a security role."""
+
+    role_id: str = Field(
+        ...,
+        description=(
+            "GUID of the security role whose privileges to list. Use "
+            "dataverse_list_security_roles to find a role id by name, or "
+            "dataverse_get_security_role if you already have one and want the "
+            "role record itself."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description=(
+            "Maximum number of privilege entries to return. RetrieveRolePrivilegesRole "
+            "has no server-side paging — it returns every privilege in one response, "
+            "and a System Administrator role was measured live at 4,132 privileges in "
+            "a ~1 MB payload — so the list is trimmed here. total_count always reports "
+            "the full number Dataverse returned and has_more says whether anything was "
+            "trimmed, so the magnitude is never hidden. depth_summary is computed "
+            "over ALL entries, not just the returned page. Raise this to see more."
+        ),
+        ge=1,
+        le=1000,
+    )
+
+    @field_validator("role_id")
+    @classmethod
+    def validate_role_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("role_id must be a valid GUID")
         return v
 
 
@@ -2240,6 +2418,51 @@ class RetrievePrincipalAccessInput(DataverseEnvironmentInput):
     )
 
     @field_validator("user_id", "record_id")
+    @classmethod
+    def validate_guids(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("must be a valid GUID")
+        return v
+
+
+class RetrieveAccessOriginInput(DataverseEnvironmentInput):
+    """Input for explaining WHERE a principal's access to a record comes from."""
+
+    object_id: str = Field(
+        ...,
+        description=(
+            "GUID of the record whose access is being explained (the row's primary "
+            "key, e.g. an accountid or an incidentid)."
+        ),
+    )
+    logical_name: str = Field(
+        ...,
+        description=(
+            "Lowercase logical name of the table that record belongs to (e.g. "
+            "'account', 'incident', 'new_project') — the singular logical name, NOT "
+            "the plural entity set name. Use dataverse_list_tables to confirm it."
+        ),
+        # Both layers are deliberate. This is a schema-plane identifier that ends up
+        # inside an OData single-quoted string literal in the request URL, which is
+        # exactly the class of input a confirmed key-predicate injection came in
+        # through; the grammar makes it impossible to express a quote at all, and
+        # client.encode_odata_literal at the call site is the second, independent
+        # layer.
+        pattern=_DATAVERSE_NAME_PATTERN,
+        min_length=1,
+        max_length=_DATAVERSE_NAME_MAX_LENGTH,
+    )
+    principal_id: str = Field(
+        ...,
+        description=(
+            "GUID of the principal whose access is being explained. Must be a "
+            "systemuser or a team — no other principal type is accepted. Use "
+            "dataverse_list_users or dataverse_list_teams to find one, or "
+            "dataverse_whoami for the current caller's own UserId."
+        ),
+    )
+
+    @field_validator("object_id", "principal_id")
     @classmethod
     def validate_guids(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
@@ -2791,6 +3014,33 @@ class ListAuditInput(DataverseEnvironmentInput):
 
 class WhoAmIInput(DataverseEnvironmentInput):
     """Input for the WhoAmI identity check tool."""
+
+
+class GetOrganizationInfoInput(DataverseEnvironmentInput):
+    """Input for the organization fingerprint tool."""
+
+    access_type: Literal["Default", "Internet", "Intranet"] = Field(
+        default="Default",
+        description=(
+            "EndpointAccessType member used when retrieving the current "
+            "organization's service endpoints. 'Default' returns the endpoints "
+            "for the caller's own access path; 'Internet' and 'Intranet' request "
+            "the externally- and internally-facing endpoints. Only these three "
+            "members are accepted."
+        ),
+    )
+    include_solutions: bool = Field(
+        default=False,
+        description=(
+            "Return the full list of installed solutions from "
+            "RetrieveOrganizationInfo. Off by default because a real environment "
+            "commonly has several hundred solutions, which would dominate the "
+            "response of what is otherwise a small environment fingerprint. When "
+            "false, only 'solutions_count' is returned. Prefer "
+            "dataverse_list_solutions for browsing, filtering, or paging "
+            "solutions — it is the purpose-built tool."
+        ),
+    )
 
 
 class GetEntitySetsInput(DataverseEnvironmentInput):
@@ -6867,4 +7117,148 @@ class DeactivateProcessInput(DataverseEnvironmentInput):
     def validate_process_guid(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
             raise ValueError("process_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Unpublished customization reads
+# ---------------------------------------------------------------------------
+
+# RetrieveUnpublished is bound to an entity INSTANCE and is only meaningful for
+# organization-owned customization records that carry a published/unpublished
+# split (componentstate). The entity set name lands in a URL PATH SEGMENT, which
+# is exactly the class of schema-plane input a confirmed key-predicate injection
+# came in through in this repo, so it is a closed Literal rather than a
+# pattern-validated open string: the member set really is finite, a Literal is an
+# exhaustive allowlist (no escaping to get wrong), and it gives the MCP client a
+# correct JSON-schema enum. It is also the honest surface — RetrieveUnpublished
+# does not work for ordinary data tables, so an open string would advertise
+# capability that does not exist.
+#
+# LIVE-VERIFIED: 'sitemaps' is deliberately NOT a member. Dataverse refuses the
+# MESSAGE for that entity type outright — with or without $select —
+#   HTTP 400 [0x80040800] The 'RetrieveUnpublished' method does not support
+#   entities of type 'sitemap'.
+# so every call would fail. Advertising it would cost the caller a round trip and
+# hand back a confusing platform error.
+UnpublishableEntitySet = Literal[
+    "savedqueries",     # savedquery  — views
+    "systemforms",      # systemform  — forms
+    "appmodules",       # appmodule   — model-driven apps
+    "webresourceset",   # webresource — irregular plural, NOT "webresources"
+]
+
+
+class RetrieveUnpublishedInput(DataverseEnvironmentInput):
+    """Input for reading the UNPUBLISHED (draft) definition of one customization record."""
+
+    entity_set_name: UnpublishableEntitySet = Field(
+        ...,
+        description=(
+            "OData collection name of the customization table to read from. Only "
+            "these four support the RetrieveUnpublished message: 'savedqueries' "
+            "(views), 'systemforms' (forms), 'appmodules', 'webresourceset' (note "
+            "the irregular plural). Ordinary data tables such as 'accounts' have no "
+            "unpublished layer, and 'sitemaps' is rejected by Dataverse itself "
+            "('the RetrieveUnpublished method does not support entities of type "
+            "sitemap') — neither is accepted."
+        ),
+    )
+    record_id: str = Field(
+        ...,
+        description=(
+            "GUID of the record to read — savedqueryid, formid, appmoduleid or "
+            "webresourceid. Use dataverse_list_views, "
+            "dataverse_list_forms, dataverse_list_apps or "
+            "dataverse_list_web_resources to find one."
+        ),
+    )
+    select: list[
+        Annotated[
+            str,
+            Field(
+                min_length=1,
+                max_length=_DATAVERSE_NAME_MAX_LENGTH,
+                pattern=_DATAVERSE_NAME_PATTERN,
+            ),
+        ]
+    ] | None = Field(
+        default=None,
+        description=(
+            "Columns to return. Defaults to a small per-table projection that "
+            "deliberately EXCLUDES the large XML/binary columns (formxml, fetchxml, "
+            "layoutxml, content) — a single systemform row can be hundreds of KB. "
+            "Ask for them explicitly when you need them, e.g. "
+            "['formid','name','formxml'] or ['savedqueryid','name','fetchxml',"
+            "'layoutxml']. A requested column whose value is NULL is omitted from "
+            "the returned record rather than returned as null."
+        ),
+        min_length=1,
+        max_length=100,
+    )
+
+    @field_validator("record_id")
+    @classmethod
+    def validate_record_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("record_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Solution import diagnostics
+# ---------------------------------------------------------------------------
+
+# Default slice of the formatted import-results document returned inline.
+# RetrieveFormattedImportJobResults has NO server-side paging: it returns the whole
+# document in one string, and an import-results document for a real solution runs
+# to hundreds of KB. 20,000 characters is enough to carry the header and the first
+# failures — the part that answers "why did the import fail?" — while staying a
+# small fraction of this server's 5 MB response cap.
+_IMPORT_JOB_RESULTS_DEFAULT_MAX_CHARS = 20_000
+
+# Ceiling on the inline slice. Deliberately below the 5 MB response cap so a caller
+# asking for everything still gets a JSON document rather than the cap's
+# "Response too large" error: JSON-escaping markup can grow it noticeably (every
+# " becomes \", every newline \n), so 2 MB of document has room to expand.
+_IMPORT_JOB_RESULTS_MAX_CHARS = 2_000_000
+
+
+class GetImportJobResultsInput(DataverseEnvironmentInput):
+    """Input for reading the human-readable results of a solution import."""
+
+    import_job_id: str = Field(
+        ...,
+        description=(
+            "GUID of the import job whose formatted results to read — the "
+            "importjobid primary key, which is the same client-supplied "
+            "ImportJobId that dataverse_import_solution and "
+            "dataverse_stage_and_upgrade_solution return as import_job_id. Use "
+            "dataverse_list_import_jobs to find recent import jobs (most recent "
+            "first), or dataverse_get_import_job to check one job's progress "
+            "before reading its results."
+        ),
+    )
+    max_chars: int = Field(
+        default=_IMPORT_JOB_RESULTS_DEFAULT_MAX_CHARS,
+        description=(
+            "Maximum number of characters of the results document to return "
+            "inline. RetrieveFormattedImportJobResults has no server-side paging — "
+            "it returns the whole document in one string — so the slice is taken "
+            "here. results_length always reports the FULL character count "
+            "Dataverse returned regardless of trimming, and truncated says whether "
+            "anything was cut, so the true size is never hidden. Any document "
+            "summary is likewise computed over the WHOLE document, not just the "
+            f"returned slice. Raise this (max {_IMPORT_JOB_RESULTS_MAX_CHARS:,}) to "
+            "read more."
+        ),
+        ge=1000,
+        le=_IMPORT_JOB_RESULTS_MAX_CHARS,
+    )
+
+    @field_validator("import_job_id")
+    @classmethod
+    def validate_import_job_results_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("import_job_id must be a valid GUID")
         return v

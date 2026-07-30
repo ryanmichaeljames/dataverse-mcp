@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- `dataverse_get_organization_info` (`core`, read-only): fingerprints the target environment by
+  merging `RetrieveVersion`, `RetrieveCurrentOrganization` and `RetrieveOrganizationInfo` — server
+  version, organization identity, service endpoints and instance type, so a caller can tell a
+  sandbox from production before doing anything risky. The installed-solution list is behind
+  `include_solutions` (it ran to 519 entries on a real org); by default only `solutions_count` is
+  returned. One function failing is reported in `partial_errors` while the rest of the data is
+  still returned.
+- `dataverse_get_total_record_counts` (`core`, read-only): approximate row counts for up to 50
+  tables in one call via the unbound `RetrieveTotalRecordCount` function. Takes table **logical**
+  names (`account`, not `accounts`). **Counts come from a snapshot taken at most once every 24
+  hours**: they can be stale, and on an org where the snapshot job has not run every count comes
+  back `0` (flagged with `all_counts_zero`) — use `dataverse_count_records` for an exact, live
+  count. All-or-nothing: one unrecognized table name fails the whole batch with HTTP 400.
+- `dataverse_validate_fetchxml` (`core`, read-only): pre-flight companion to
+  `dataverse_execute_fetchxml`. The unbound `ValidateFetchXmlExpression` function parses and
+  analyses a FetchXml expression server-side, returning validation errors and performance
+  suggestions without executing it. **HTTP 200 does not mean the query is valid** — a nonexistent
+  table or attribute still returns 200 carrying a severity-3 message — so the verdict is lifted to
+  `has_errors`, `count`, `error_count`, `warning_count` and `errors`. Input is capped at 2000
+  characters because the document travels in the request URL.
+- `dataverse_is_component_customizable` (`schema`, read-only): pre-flight check via the unbound
+  `IsComponentCustomizable` function answering whether a solution component can be customized
+  before an edit is attempted. Takes the component's own GUID plus the integer `component_type`
+  code `dataverse_analyze_dependencies` uses, and returns `is_customizable`. **A system component
+  does not imply `false`** — `systemuser` reports `true`, because core tables still permit
+  customizations such as adding columns. A well-formed GUID matching no component is an HTTP 400,
+  not a `false`.
+- `dataverse_retrieve_unpublished` (`core`, read-only): reads the **unpublished (draft)**
+  definition of one customization record via the instance-bound `RetrieveUnpublished` function, so
+  a read-back after `dataverse_set_formxml` / `dataverse_update_view` sees the edit instead of the
+  stale published row. `entity_set_name` is a closed allowlist — `savedqueries`, `systemforms`,
+  `appmodules`, `webresourceset`; **`sitemaps` is not accepted**, because Dataverse refuses the
+  message for that entity type outright. Returns one record, not a list, with a small default
+  projection that excludes the large `formxml` / `fetchxml` / `layoutxml` / `content` columns —
+  pass `select` to opt in. The returned column set is not the requested one: columns whose value is
+  NULL are omitted rather than returned as `null`, and `_organizationid_value` is added unasked.
+- `dataverse_get_role_privileges` (`security`, read-only): lists the privileges assigned to a
+  security role via the unbound `RetrieveRolePrivilegesRole` function — the "what can this role
+  actually do?" companion to `dataverse_get_security_role`, which returns only the role record.
+  The function has no server-side paging and a System Administrator role carries thousands of
+  privileges (4,132 in a ~1 MB response, measured live), so entries are trimmed to `top` (default
+  50, max 1000) while `total_count`, `has_more` and `depth_summary` are computed over the full set.
+  A well-formed but nonexistent role id returns HTTP 404, not an empty list.
+- `dataverse_retrieve_access_origin` (`security`, read-only): answers **why** a principal has
+  access to one specific record — security role, ownership, share, business-unit hierarchy, team
+  membership — via the unbound `RetrieveAccessOrigin` function, complementing
+  `dataverse_retrieve_principal_access`, which returns only the access mask. Takes the record's
+  `object_id`, the **singular lowercase** `logical_name` of its table (not the entity set name),
+  and a `principal_id` that must be a systemuser or a team. **HTTP 200 does not mean the principal
+  has access**: access, no access, and a record that does not exist all arrive as successful calls,
+  distinguishable only by the English prose in the returned `access_origin` string, which is
+  deliberately not classified into a boolean.
+- `dataverse_get_import_job_results` (`solutions`, read-only): answers **why a solution import
+  failed** by fetching Dataverse's own human-readable results document for an importjob via the
+  unbound `RetrieveFormattedImportJobResults` function, instead of the opaque `data` XML blob
+  `dataverse_get_import_job` returns. The document is a **SpreadsheetML (Excel XML) workbook**, so
+  the meaning lives in the cell values, not the tag names — no tag is named error, warning or
+  failure. It is large (~14,000–71,000 characters observed) and is truncated at `max_chars`
+  (default 20,000, max 2,000,000), with `results_length` always reporting the full length and
+  `truncated` saying whether anything was cut.
+
 ## [3.8.0] - 2026-07-29
 
 ### Fixed
@@ -695,7 +759,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.8.0...HEAD
+[3.8.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.1...v3.6.0
 [3.5.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...v3.5.1

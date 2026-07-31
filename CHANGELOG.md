@@ -82,6 +82,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still returns, and only both failing yields an error. **An empty result is not proof the record is
   private** — these functions report explicit shares visible to the caller, not access from
   ownership, roles, teams or the business-unit hierarchy.
+- `dataverse_get_setting` (`core`, read-only): reads one setting's **final computed value** via
+  the unbound `RetrieveSetting` function — the value in effect after the platform's precedence
+  rules, which is what diffing configuration between environments needs; a raw row is not it.
+  The value is nested in the `SettingDetail` container Dataverse returns; `Value` is a **string**
+  and the `DataType` integer code is passed through unmapped. Optional `app_unique_name` reads a
+  model-driven app's view of the setting, and when omitted the parameter is left out of the request
+  entirely rather than sent empty. An **unknown setting name is not an error** — Dataverse answers
+  HTTP 200 with `SettingDetail: null`, reported as `setting_found: false`, which never collapses
+  with a setting that genuinely holds `""`, `"false"` or `0`.
 - `dataverse_get_import_job_results` (`solutions`, read-only): answers **why a solution import
   failed** by fetching Dataverse's own human-readable results document for an importjob via the
   unbound `RetrieveFormattedImportJobResults` function, instead of the opaque `data` XML blob

@@ -7367,3 +7367,49 @@ class ListSharedPrincipalsInput(DataverseEnvironmentInput):
         if not _GUID_PATTERN.match(v):
             raise ValueError("record_id must be a valid GUID")
         return v
+
+
+# ---------------------------------------------------------------------------
+# Effective configuration (org settings)
+# ---------------------------------------------------------------------------
+
+# Grammar for a setting name and a model-driven app unique name. Both are
+# interpolated into a SINGLE-QUOTED OData literal in the request URL, and both get
+# encode_odata_literal at the build site; this pattern is the second, independent
+# layer, admitting nothing that could express the "'", ")", "/", "?" or CRLF a
+# literal breakout needs. It is deliberately LOOSER than _DATAVERSE_NAME_PATTERN
+# (it also allows '.' and '-'): these are not table logical names, and setting
+# names are dotted often enough that the identifier grammar would reject real ones.
+_SETTING_NAME_PATTERN = r"^[A-Za-z0-9_.\-]+$"
+
+# Bound on those two names. Both land in a query string; 100 comfortably covers a
+# publisher-prefixed app unique name and a dotted setting name.
+_SETTING_NAME_MAX_LENGTH = 100
+
+
+class GetSettingInput(DataverseEnvironmentInput):
+    """Input for reading one setting's final computed value (RetrieveSetting)."""
+
+    setting_name: str = Field(
+        ...,
+        description=(
+            "Unique name of the setting to read (the settingdefinition's unique "
+            "name, not its display label). Letters, digits, '_', '.' and '-' only."
+        ),
+        min_length=1,
+        max_length=_SETTING_NAME_MAX_LENGTH,
+        pattern=_SETTING_NAME_PATTERN,
+    )
+    app_unique_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional unique name of a model-driven app, to read the value as that "
+            "app sees it (an app-level override of the org-level setting). OMIT it "
+            "to read the organization-level value — the parameter is then left out "
+            "of the request entirely rather than sent empty, which is a different "
+            "call and can return a different value."
+        ),
+        min_length=1,
+        max_length=_SETTING_NAME_MAX_LENGTH,
+        pattern=_SETTING_NAME_PATTERN,
+    )

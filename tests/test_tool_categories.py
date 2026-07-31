@@ -11,20 +11,20 @@ interpreter process.
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
    tools across all categories register (89 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 195 tools register.
-3. DATAVERSE_TOOLS=security + both allow flags: only 23 core + 20 security = 43.
-4. DATAVERSE_TOOLS=core,solutions + both allow flags: 23 core + 21 solutions = 44.
+2. All allow flags set, DATAVERSE_TOOLS unset: all 196 tools register.
+3. DATAVERSE_TOOLS=security + both allow flags: only 24 core + 20 security = 44.
+4. DATAVERSE_TOOLS=core,solutions + both allow flags: 24 core + 21 solutions = 45.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
    core tools in the registered set.
-6. Composition: DATAVERSE_TOOLS=security, no allow flags → 15 read core + 15 read
-   security = 30 tools.
+6. Composition: DATAVERSE_TOOLS=security, no allow flags → 16 read core + 15 read
+   security = 31 tools.
 7. Unknown category: DATAVERSE_TOOLS=bogus,security + both allow flags → warning
-   logged, bogus ignored, security+core still register (43 tools).
-8. DATAVERSE_TOOLS=jobs + both allow flags: 23 core + 3 jobs = 26 tools.
+   logged, bogus ignored, security+core still register (44 tools).
+8. DATAVERSE_TOOLS=jobs + both allow flags: 24 core + 3 jobs = 27 tools.
 9. DATAVERSE_TOOLS=security (no jobs): jobs tools absent.
-10. DATAVERSE_TOOLS=webresources + both allow flags: 23 core + 5 webresources = 28.
+10. DATAVERSE_TOOLS=webresources + both allow flags: 24 core + 5 webresources = 29.
 11. DATAVERSE_TOOLS=security (no webresources): webresource tools absent.
-12. DATAVERSE_TOOLS=customapis + both allow flags: 23 core + 13 customapis = 36.
+12. DATAVERSE_TOOLS=customapis + both allow flags: 24 core + 13 customapis = 37.
 13. DATAVERSE_TOOLS=security (no customapis): customapi tools absent.
 """
 
@@ -85,12 +85,13 @@ def _run_scenario(env_overrides: dict) -> list[str]:
 # Expected tool sets (derived from decorator analysis)
 # ---------------------------------------------------------------------------
 
-# Core tools: environments (6) + tables (16) + customizations (1) = 23 total
-# (15 read + 6 write + 2 delete)
+# Core tools: environments (7) + tables (16) + customizations (1) = 24 total
+# (16 read + 6 write + 2 delete)
 _CORE_READ_TOOLS = {
     "dataverse_list_environments",
     "dataverse_whoami",
     "dataverse_get_organization_info",
+    "dataverse_get_setting",
     "dataverse_get_entity_sets",
     "dataverse_retrieve_user_privileges",
     "dataverse_retrieve_principal_access",
@@ -275,7 +276,7 @@ _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
 
 
 def test_default_no_env_vars():
-    """No env vars set: only read-only tools register across all categories (92 tools)."""
+    """No env vars set: only read-only tools register across all categories (93 tools)."""
     tools = _run_scenario({})
     tool_set = set(tools)
 
@@ -333,22 +334,21 @@ def test_default_no_env_vars():
     assert "dataverse_activate_process" not in tool_set
     assert "dataverse_deactivate_process" not in tool_set
 
-    # Total should be 92 (90 + 2 new security reads: dataverse_get_team_privileges,
-    # dataverse_list_shared_principals)
-    assert len(tools) == 92, f"Expected 92 default tools, got {len(tools)}: {tools}"
+    # Total should be 93 (92 + dataverse_get_setting, a new core read)
+    assert len(tools) == 93, f"Expected 93 default tools, got {len(tools)}: {tools}"
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 195 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 196 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 195, f"Expected 195 tools, got {len(tools)}"
+    assert len(tools) == 196, f"Expected 196 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
-    """DATAVERSE_TOOLS=security + both allow flags: 23 core + 20 security = 43."""
+    """DATAVERSE_TOOLS=security + both allow flags: 24 core + 20 security = 44."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -360,11 +360,11 @@ def test_security_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 43, f"Expected 43 tools, got {len(tools)}"
+    assert len(tools) == 44, f"Expected 44 tools, got {len(tools)}"
 
 
 def test_core_solutions_with_all_flags():
-    """DATAVERSE_TOOLS=core,solutions + both allow flags: 23 core + 21 solutions = 44.
+    """DATAVERSE_TOOLS=core,solutions + both allow flags: 24 core + 21 solutions = 45.
 
     Flows (a separate category) must NOT register.
     """
@@ -380,7 +380,7 @@ def test_core_solutions_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 44, f"Expected 44 tools, got {len(tools)}"
+    assert len(tools) == 45, f"Expected 45 tools, got {len(tools)}"
 
     # Flow tools must not be present
     assert not (tool_set & _FLOWS_ALL_TOOLS), (
@@ -402,7 +402,7 @@ def test_core_always_on_when_omitted():
 
 
 def test_composition_security_no_allow_flags():
-    """DATAVERSE_TOOLS=security, no allow flags: 15 read core + 15 read security = 30."""
+    """DATAVERSE_TOOLS=security, no allow flags: 16 read core + 15 read security = 31."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
     })
@@ -413,11 +413,11 @@ def test_composition_security_no_allow_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 30, f"Expected 30 tools, got {len(tools)}"
+    assert len(tools) == 31, f"Expected 31 tools, got {len(tools)}"
 
 
 def test_unknown_category_ignored():
-    """Unknown category 'bogus' is ignored; security+core still register (43 tools)."""
+    """Unknown category 'bogus' is ignored; security+core still register (44 tools)."""
     result = subprocess.run(
         [sys.executable, "-c", _HELPER_SCRIPT],
         capture_output=True,
@@ -447,11 +447,11 @@ def test_unknown_category_ignored():
         f"Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 43, f"Expected 43 tools, got {len(tools)}"
+    assert len(tools) == 44, f"Expected 44 tools, got {len(tools)}"
 
 
 def test_jobs_only_with_all_flags():
-    """DATAVERSE_TOOLS=jobs + both allow flags: 23 core + 3 jobs = 26."""
+    """DATAVERSE_TOOLS=jobs + both allow flags: 24 core + 3 jobs = 27."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "jobs",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -464,7 +464,7 @@ def test_jobs_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 26, f"Expected 26 tools, got {len(tools)}"
+    assert len(tools) == 27, f"Expected 27 tools, got {len(tools)}"
 
     # Security tools must not be present
     assert not (tool_set & _SECURITY_ALL_TOOLS), (
@@ -489,7 +489,7 @@ def test_security_only_no_jobs():
 
 
 def test_webresources_only_with_all_flags():
-    """DATAVERSE_TOOLS=webresources + both allow flags: 23 core + 5 webresources = 28."""
+    """DATAVERSE_TOOLS=webresources + both allow flags: 24 core + 5 webresources = 29."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "webresources",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -502,7 +502,7 @@ def test_webresources_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 28, f"Expected 28 tools, got {len(tools)}"
+    assert len(tools) == 29, f"Expected 29 tools, got {len(tools)}"
 
     # Security tools must not be present
     assert not (tool_set & _SECURITY_ALL_TOOLS), (
@@ -527,7 +527,7 @@ def test_security_only_no_webresources():
 
 
 def test_customapis_only_with_all_flags():
-    """DATAVERSE_TOOLS=customapis + both allow flags: 23 core + 13 customapis = 36."""
+    """DATAVERSE_TOOLS=customapis + both allow flags: 24 core + 13 customapis = 37."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "customapis",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -540,7 +540,7 @@ def test_customapis_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 36, f"Expected 36 tools, got {len(tools)}"
+    assert len(tools) == 37, f"Expected 37 tools, got {len(tools)}"
 
     # Security tools must not be present
     assert not (tool_set & _SECURITY_ALL_TOOLS), (

@@ -348,7 +348,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**195 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**196 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -366,7 +366,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 
 | Category | Tools | Description |
 |----------|-------|-------------|
-| `core` | 23 | Environment introspection, all record CRUD, and unpublished-customization reads (always registered) |
+| `core` | 24 | Environment introspection, effective org settings, all record CRUD, and unpublished-customization reads (always registered) |
 | `schema` | 33 | Table/column/relationship/choice/alternate-key metadata, component customizability pre-flight |
 | `solutions` | 21 | Solution and publisher management, solution components, history, import/export ALM, import diagnostics, dependency analysis |
 | `flows` | 8 | Cloud flow + classic process listing and activate/deactivate |
@@ -390,6 +390,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_list_environments` | default | List Power Platform environments accessible to the caller |
 | `dataverse_whoami` | default | Return the caller's `UserId`, `BusinessUnitId`, `OrganizationId` |
 | `dataverse_get_organization_info` | default | Fingerprint the environment — server version, organization identity, instance type, service endpoints, installed-solution count |
+| `dataverse_get_setting` | default | Read one setting's **final computed value** via `RetrieveSetting` — the value in effect after the platform's precedence rules, which is what a configuration diff between environments needs. The value is lifted out of the `SettingDetail` container Dataverse returns (`Value` is a **string**; `DataType` is an integer code, passed through unmapped). Optional `app_unique_name` reads the model-driven app's view of it; omitted, the parameter is left out of the call entirely. An **unknown setting name is not an error** — Dataverse answers HTTP 200 with `SettingDetail: null`, reported as `setting_found: false`, which never collapses with a setting that genuinely holds `""`, `"false"` or `0` |
 | `dataverse_get_entity_sets` | default | List OData EntitySet names from the service document |
 | `dataverse_retrieve_user_privileges` | default | List security privileges assigned to a user |
 | `dataverse_retrieve_principal_access` | default | Check a user's access rights to a specific record |

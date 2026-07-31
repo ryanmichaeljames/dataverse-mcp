@@ -35,10 +35,12 @@ from dataverse_mcp.models import (
     GetRolePrivilegesInput,
     GetSecurityRoleInput,
     GetTeamInput,
+    GetTeamPrivilegesInput,
     GetUserInput,
     ListAuditInput,
     ListBusinessUnitsInput,
     ListSecurityRolesInput,
+    ListSharedPrincipalsInput,
     ListTeamsInput,
     ListUsersInput,
     RemoveSecurityRoleInput,
@@ -210,25 +212,30 @@ def _first_present(entry: dict[str, Any], keys: tuple[str, ...]) -> Any:
     return None
 
 
-def _is_privilege_list(value: Any) -> bool:
-    """True when *value* looks like a collection of privilege entries.
+def _is_object_list(value: Any) -> bool:
+    """True when *value* looks like a collection of entries.
 
-    An empty list qualifies: a role with no privileges is a real answer, not a
-    shape mismatch. A non-empty list must be all objects, otherwise it is some
-    other array that happens to sit in the payload.
+    An empty list qualifies: a role with no privileges (or a record shared with
+    nobody) is a real answer, not a shape mismatch. A non-empty list must be all
+    objects, otherwise it is some other array that happens to sit in the payload.
     """
     if not isinstance(value, list):
         return False
     return all(isinstance(item, dict) for item in value)
 
 
-def _extract_privileges(payload: Any) -> tuple[str, list[dict[str, Any]]] | None:
-    """Locate the privilege collection as ``(source, entries)``, or None.
+def _extract_entry_list(
+    payload: Any,
+    preferred_keys: tuple[str, ...],
+    function_name: str,
+) -> tuple[str, list[dict[str, Any]]] | None:
+    """Locate an entry collection as ``(source, entries)``, or None.
 
-    ``RetrieveRolePrivilegesRoleResponse``'s inner properties are undocumented, so
-    the list is found by shape as well as by name, in three tiers:
+    Several of the Web API functions these tools call return types whose inner
+    properties Microsoft Learn does NOT document, so the list is found by shape as
+    well as by name, in three tiers:
 
-    1. The documented-by-convention ``RolePrivileges`` property at the top level.
+    1. Each name in *preferred_keys*, in order, at the top level.
     2. Exactly one object-list among the top-level properties.
     3. Exactly one object-list one level down, inside a named wrapper — the shape
        ``dataverse_retrieve_record_change_history`` actually met
@@ -238,25 +245,27 @@ def _extract_privileges(payload: Any) -> tuple[str, list[dict[str, Any]]] | None
 
     A bare top-level array is accepted too. Ambiguity — two or more candidate
     lists at the same tier — returns None rather than picking one, so the caller
-    degrades to raw pass-through instead of reporting privileges that may not be
-    privileges.
+    degrades to raw pass-through instead of reporting entries that may not be the
+    entries asked for. *function_name* only labels the warnings.
     """
-    if _is_privilege_list(payload):
+    if _is_object_list(payload):
         return ("<response body>", payload)
     if not isinstance(payload, dict):
         return None
 
-    named = payload.get(_ROLE_PRIVILEGES_KEY)
-    if _is_privilege_list(named):
-        return (_ROLE_PRIVILEGES_KEY, named)
+    for key in preferred_keys:
+        named = payload.get(key)
+        if _is_object_list(named):
+            return (key, named)
 
-    top_level = [(k, v) for k, v in payload.items() if _is_privilege_list(v)]
+    top_level = [(k, v) for k, v in payload.items() if _is_object_list(v)]
     if len(top_level) == 1:
         return top_level[0]
     if len(top_level) > 1:
         logger.warning(
-            "RetrieveRolePrivilegesRole returned %d candidate lists at the top "
-            "level (%s); refusing to pick one",
+            "%s returned %d candidate lists at the top level (%s); refusing to "
+            "pick one",
+            function_name,
             len(top_level),
             ", ".join(k for k, _ in top_level),
         )
@@ -267,18 +276,25 @@ def _extract_privileges(payload: Any) -> tuple[str, list[dict[str, Any]]] | None
         for outer, container in payload.items()
         if isinstance(container, dict)
         for inner, value in container.items()
-        if _is_privilege_list(value)
+        if _is_object_list(value)
     ]
     if len(nested) == 1:
         return nested[0]
     if len(nested) > 1:
         logger.warning(
-            "RetrieveRolePrivilegesRole returned %d candidate nested lists (%s); "
-            "refusing to pick one",
+            "%s returned %d candidate nested lists (%s); refusing to pick one",
+            function_name,
             len(nested),
             ", ".join(k for k, _ in nested),
         )
     return None
+
+
+def _extract_privileges(payload: Any) -> tuple[str, list[dict[str, Any]]] | None:
+    """Locate ``RetrieveRolePrivilegesRole``'s privilege collection."""
+    return _extract_entry_list(
+        payload, (_ROLE_PRIVILEGES_KEY,), "RetrieveRolePrivilegesRole"
+    )
 
 
 def _summarize_depths(entries: list[dict[str, Any]]) -> dict[str, int] | None:
@@ -459,6 +475,203 @@ async def dataverse_get_role_privileges(
         return tool_error_response(e, "dataverse_get_role_privileges")
     except Exception as e:
         return tool_error_response(e, "dataverse_get_role_privileges")
+
+
+# ---------------------------------------------------------------------------
+# Team privileges (RetrieveTeamPrivileges)
+# ---------------------------------------------------------------------------
+
+# Property names RetrieveTeamPrivilegesResponse may carry its collection under.
+# Microsoft Learn documents the return TYPE but none of its inner properties. Two
+# names are tried before the by-shape tiers:
+#   * "TeamPrivileges" — the name the response type implies. NEVER OBSERVED live;
+#     kept first because trying it costs nothing and it is the name a future
+#     platform change would most plausibly move to.
+#   * "RolePrivileges" — VERIFIED LIVE: this is the key the response actually
+#     carries, matching the sibling RetrieveUserPrivileges (see
+#     dataverse_audit_user_access below, which reads exactly that key). A team's
+#     privileges come from its roles, so the name fits.
+# _extract_entry_list still locates the list by shape when neither name is present
+# (the fallback never fired on any sampled call), and returns None rather than
+# guessing.
+_TEAM_PRIVILEGES_KEYS = ("TeamPrivileges", "RolePrivileges")
+
+
+@tool(
+    name="dataverse_get_team_privileges",
+    annotations={
+        "title": "Get Team Privileges",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_team_privileges(
+    params: GetTeamPrivilegesInput, ctx: Context
+) -> str:
+    """Answer "what can this TEAM actually DO?" — list a team's privileges.
+
+    Calls the entity-bound RetrieveTeamPrivileges function on the team record. It
+    takes no parameters of its own: the team id is the key predicate.
+
+    This completes the three-way security picture. dataverse_get_role_privileges
+    answers it for a ROLE, dataverse_retrieve_user_privileges for a USER, and this
+    for a TEAM — the missing third. It is the companion to dataverse_get_team,
+    which returns the team RECORD (name, type, business unit) and says nothing
+    about what the team permits. Use dataverse_list_teams to find a team id by
+    name, and dataverse_audit_user_access for one person's full access report
+    across their direct roles and team memberships.
+
+    RESPONSE SHAPE. Microsoft Learn documents the call and the return type
+    RetrieveTeamPrivilegesResponse but NOT its inner properties. VERIFIED LIVE: the
+    collection arrives under RolePrivileges — NOT TeamPrivileges, despite the
+    response type name — exactly as the sibling RetrieveUserPrivileges does. The
+    collection is still located by name first (TeamPrivileges, which has never been
+    observed, then RolePrivileges, which is what really comes back) and then by
+    shape: a lone object-list at the top level, then one level down inside a named
+    wrapper. privileges_source reports where it was found, so check it. If no
+    collection can be identified unambiguously, nothing is guessed: normalized is
+    false, no counts are reported, and the payload comes back unchanged under
+    raw_response (minus the @odata.* envelope) for you to read yourself.
+
+    AN EMPTY LIST IS A REAL ANSWER, NOT A FAILURE. count: 0 with normalized: true
+    means the team has NO DIRECTLY-ASSIGNED SECURITY ROLES — a common and entirely
+    normal state; on the org this was verified against, EVERY team returned an
+    empty RolePrivileges. Do not read it as an error, and do not read it as "this
+    team's members have no access": members still hold their own roles, and
+    dataverse_audit_user_access is the tool for a person's effective access.
+
+    Entries are expected to mirror RetrieveRolePrivilegesRole's, which was verified
+    live: PrivilegeName ('prvReadAccount'), PrivilegeId, Depth, BusinessUnitId,
+    RecordFilterId, RecordFilterUniqueName. That expectation is INHERITED FROM THE
+    ROLE FUNCTION AND NOT YET VERIFIED FOR TEAMS — every team sampled returned an
+    empty list, so no team privilege ENTRY has ever been observed. Entries are
+    passed through EXACTLY as Dataverse sent them — nothing is added, renamed or
+    dropped — so trust the returned keys over this list.
+
+    Depth is never relabelled. OData serializes the PrivilegeDepth enum as its
+    member NAME, and only member names were observed live ON THE ROLE FUNCTION
+    ("Basic", "Local", "Deep", "Global" — increasing scope, Global being org-wide);
+    whether this function returns the member name or a numeric PrivilegeDepth code
+    is likewise unverified, for the same reason. Should a numeric code arrive it is
+    reported raw: that mapping is not confirmed for this function, and a wrong
+    access-level label is more dangerous than an unlabelled one. depth_summary
+    counts every entry by its Depth value.
+
+    THE LIST CAN BE BIG AND IS TRIMMED BY DEFAULT. The function has no server-side
+    paging — it returns every privilege in one response — and a team carrying a
+    broad role inherits thousands of privileges (the role function was measured
+    live at 4,132 privileges in a ~1 MB response). top therefore defaults to 50.
+    The magnitude is never hidden: total_count is always the full number Dataverse
+    returned, has_more says whether anything was trimmed, and depth_summary is
+    computed over ALL entries rather than the returned page. Raise top (max 1000)
+    to see more.
+
+    A well-formed but nonexistent team id returns an ERROR, not an empty list —
+    VERIFIED LIVE: Dataverse answers HTTP 404 [0x80040217] "Does Not Exist", as the
+    role function does, and it is surfaced through the standard
+    {"error": true, "message": ...} envelope. The two cases are therefore
+    distinguishable: an empty privileges list is always a REAL team with no
+    directly-assigned roles, never a bad team id.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    # RetrieveTeamPrivileges is ENTITY-BOUND and takes no function parameters, so
+    # there is no parameter alias here at all: team_id lands in the OData KEY
+    # PREDICATE in the URL PATH — teams(<guid>). A Guid key predicate is written
+    # BARE (no surrounding quotes, no guid'...' prefix), so there is no string
+    # literal to break out of and encode_odata_literal deliberately does NOT apply.
+    # This repo has a confirmed live key-predicate injection through exactly this
+    # position, so the whole defence is _GUID_PATTERN on GetTeamPrivilegesInput: a
+    # value matching it cannot contain ' ) / ? & # or CRLF.
+    url = (
+        f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+        f"/teams({params.team_id})/Microsoft.Dynamics.CRM.RetrieveTeamPrivileges()"
+    )
+
+    # The whole body is guarded, not just the HTTP call: CLAUDE.md's "do not raise
+    # uncaught exceptions from tools" is unconditional, and the shape-location and
+    # summary steps below read an undocumented payload.
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+
+        # Parse defensively: a non-JSON or empty body is surfaced as-is rather than
+        # raising.
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning("RetrieveTeamPrivileges returned a non-JSON body")
+            payload = response.text or None
+
+        body: Any = payload
+        if isinstance(payload, dict):
+            body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+        found = _extract_entry_list(
+            body, _TEAM_PRIVILEGES_KEYS, "RetrieveTeamPrivileges"
+        )
+        if found is None:
+            logger.warning(
+                "RetrieveTeamPrivileges response carried no unambiguous privilege "
+                "collection; returning it raw"
+            )
+            return finalize_response({
+                "team_id": params.team_id,
+                "normalized": False,
+                "message": (
+                    "Dataverse answered successfully, but no unambiguous privilege "
+                    "collection could be located in the payload, so no count is "
+                    "reported and none is guessed. This function's inner response "
+                    "properties are undocumented on Microsoft Learn; live runs saw "
+                    "the collection under 'RolePrivileges', so a payload that does "
+                    "not carry it may signal a platform change. The response is "
+                    "returned unchanged (minus the @odata.* envelope) under "
+                    "raw_response — read the privileges from there."
+                ),
+                "raw_response": body,
+            })
+
+        source, all_entries = found
+        total_count = len(all_entries)
+        page = all_entries[: params.top]
+
+        result: dict[str, Any] = {
+            "team_id": params.team_id,
+            "normalized": True,
+            "privileges_source": source,
+            "count": len(page),
+            "total_count": total_count,
+            "has_more": total_count > len(page),
+            "privileges": page,
+        }
+
+        depth_summary = _summarize_depths(all_entries)
+        if depth_summary is not None:
+            result["depth_summary"] = depth_summary
+
+        if result["has_more"]:
+            result["message"] = (
+                f"This team carries {total_count} privileges; the first "
+                f"{len(page)} are returned. RetrieveTeamPrivileges has no "
+                "server-side paging, so the list is trimmed here — raise top "
+                "(max 1000) to see more, and read depth_summary for the "
+                f"access-level breakdown across ALL {total_count} entries."
+            )
+
+        return finalize_response(result)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_get_team_privileges")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_team_privileges")
 
 
 # ---------------------------------------------------------------------------
@@ -696,6 +909,312 @@ async def dataverse_retrieve_access_origin(
         return tool_error_response(e, "dataverse_retrieve_access_origin")
     except Exception as e:
         return tool_error_response(e, "dataverse_retrieve_access_origin")
+
+
+# ---------------------------------------------------------------------------
+# Record shares (RetrieveSharedPrincipalsAndAccess + RetrieveSharedLinks)
+# ---------------------------------------------------------------------------
+
+# Property name RetrieveSharedPrincipalsAndAccessResponse carries its collection
+# under. Microsoft Learn documents the return type but not its inner properties;
+# "PrincipalAccesses" was taken from the organization-service response class and is
+# now VERIFIED LIVE — every sampled call normalized under exactly this name, and
+# _extract_entry_list's by-shape fallback never fired. The fallback is kept as
+# cheap insurance against a platform change.
+_SHARED_PRINCIPALS_KEYS = ("PrincipalAccesses",)
+
+# RetrieveSharedLinks returns Collection(team), i.e. an ordinary OData collection,
+# so the entries sit under the standard "value" property rather than a named one.
+# VERIFIED LIVE, including that the function itself is available on a real org (it
+# never landed in partial_errors on any sampled call).
+_SHARED_LINKS_KEYS = ("value",)
+
+
+async def _call_share_function(
+    app_ctx: Any,
+    headers: dict[str, str],
+    function_name: str,
+    url: str,
+    partial_errors: list[dict[str, str]],
+) -> Any | None:
+    """GET an unbound function, recording a partial error instead of propagating.
+
+    Mirrors ``_call_org_function`` in tools\\environments.py. Returns the
+    envelope-stripped payload, or None when the call failed — in which case an
+    entry is appended to *partial_errors* so one unavailable or privilege-gated
+    function cannot fail the whole tool.
+    """
+    try:
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning("%s returned a non-JSON body", function_name)
+            return response.text or None
+        if isinstance(payload, dict):
+            return {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+        return payload
+    except httpx.HTTPStatusError as e:
+        message = (
+            f"Dataverse returned HTTP {e.response.status_code}: "
+            f"{extract_error_message(e.response)}"
+        )
+    except Exception as e:  # network, auth — never fatal for the other call
+        message = f"{type(e).__name__}: {e}"
+    logger.warning(
+        "%s failed during dataverse_list_shared_principals: %s", function_name, message
+    )
+    partial_errors.append({"function": function_name, "message": message})
+    return None
+
+
+def _shared_block(
+    payload: Any,
+    preferred_keys: tuple[str, ...],
+    function_name: str,
+    entries_key: str,
+    top: int,
+) -> dict[str, Any]:
+    """Normalize one share function's payload into a trimmed, counted block."""
+    found = _extract_entry_list(payload, preferred_keys, function_name)
+    if found is None:
+        logger.warning(
+            "%s response carried no unambiguous collection; returning it raw",
+            function_name,
+        )
+        return {
+            "normalized": False,
+            "message": (
+                f"{function_name} answered successfully, but no unambiguous "
+                "collection could be located in the payload, so no count is "
+                "reported and none is guessed. This function's inner response "
+                "properties are undocumented. The response is returned unchanged "
+                "(minus the @odata.* envelope) under raw_response — read it there."
+            ),
+            "raw_response": payload,
+        }
+
+    source, all_entries = found
+    total_count = len(all_entries)
+    page = all_entries[:top]
+    block: dict[str, Any] = {
+        "normalized": True,
+        "source": source,
+        "count": len(page),
+        "total_count": total_count,
+        "has_more": total_count > len(page),
+        entries_key: page,
+    }
+    if block["has_more"]:
+        block["message"] = (
+            f"{function_name} returned {total_count} entries; the first "
+            f"{len(page)} are returned. It has no server-side paging, so the list "
+            "is trimmed here — raise top (max 1000) to see more."
+        )
+    return block
+
+
+@tool(
+    name="dataverse_list_shared_principals",
+    annotations={
+        "title": "List Shared Principals",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_shared_principals(
+    params: ListSharedPrincipalsInput, ctx: Context
+) -> str:
+    """Answer "WHO has this record because it was SHARED with them?".
+
+    Merges two unbound Web API functions that answer one question:
+      - RetrieveSharedPrincipalsAndAccess — the principals the record was shared
+        with, and the access rights each was given.
+      - RetrieveSharedLinks — the existing shared links over the record that the
+        caller is allowed to see.
+
+    This is the list neither neighbouring tool can produce.
+    dataverse_retrieve_principal_access answers "which rights does ONE named
+    principal have" (the mask), dataverse_retrieve_access_origin answers "WHY does
+    ONE named principal have them" — both need you to already know who to ask
+    about. This one enumerates them.
+
+    MIND THE INPUT ASYMMETRY. This tool takes the PLURAL entity_set_name
+    ('accounts'), because the target is expressed as an OData EntityReference and
+    an @odata.id names a collection. dataverse_retrieve_access_origin takes the
+    SINGULAR logical_name ('account'). Confusing the two is the easy caller error
+    here — use dataverse_get_entity_sets to confirm the plural, which is irregular
+    often enough ('webresourceset') that guessing costs a 404.
+
+    A WRONG ENTITY SET NAME LOOKS EXACTLY LIKE A MISSING RECORD. VERIFIED LIVE:
+    a nonexistent record id and a VALID id paired with the WRONG entity set both
+    return HTTP 404 [0x80040217] "Entity '<Type>' With Id = <guid> Does Not Exist"
+    from BOTH functions — the same status, the same error code, indistinguishable
+    text. Both calls therefore fail and you get the standard
+    {"error": true, "message": ...} envelope. So when this tool errors with "Does
+    Not Exist", CHECK THE ENTITY SET NAME FIRST (plural — 'accounts', not
+    'account'; see the asymmetry note above) before concluding the record is gone.
+    That singular-for-plural slip is the likeliest cause and it misdiagnoses as a
+    missing record.
+
+    THE TWO CALLS FAIL INDEPENDENTLY. Each is made on its own: if one is
+    unavailable or privilege-gated, its failure is reported in partial_errors and
+    the other's data is still returned. Only a failure of BOTH yields the standard
+    {"error": true, "message": ...} envelope. RetrieveSharedLinks is in principle
+    the more likely of the two to be missing (it was available on the org tested,
+    never landing in partial_errors), so a partial_errors entry naming it is an
+    expected outcome rather than an error — check partial_errors before concluding
+    a record is unshared.
+
+    RESPONSE SHAPES (verified live). Microsoft Learn documents
+    RetrieveSharedPrincipalsAndAccessResponse but not its inner properties; live
+    runs confirm the collection arrives under PrincipalAccesses, and that is the
+    name tried first before the by-shape fallback. RetrieveSharedLinks returns
+    Collection(team), an ordinary OData collection, and its entries duly arrive
+    under the standard 'value' property. Each block reports the source it was found
+    under — check it. If a payload cannot be identified unambiguously that block
+    carries normalized: false, no counts, and the raw payload (minus the @odata.*
+    envelope) under raw_response; nothing is fabricated.
+
+    Both lists are trimmed to top (default 50, max 1000) because neither function
+    pages server-side. count, total_count and has_more are reported per block and
+    total_count is always the full number Dataverse returned.
+
+    An empty result is NOT proof the record is private: these functions report
+    explicit shares (the POA table) that the CALLER can see, not access granted by
+    ownership, security roles, team membership or the business-unit hierarchy. Use
+    dataverse_retrieve_access_origin for a specific principal, and read
+    partial_errors before drawing any conclusion.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    api_root = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+
+    # Target is typed crmbaseentity — an EntityReference, NOT a scalar — and the
+    # Web API passes one as a parameter alias whose value is a JSON OBJECT holding
+    # an @odata.id:  ?@t={"@odata.id":"accounts(<guid>)"}
+    #
+    # That is a FOURTH escaping regime, distinct from the three already live in
+    # this codebase, so do not "make it consistent" with any of them:
+    #   * Edm.Guid              -> bare literal, nothing encoded
+    #                              (dataverse_get_role_privileges above)
+    #   * Edm.String            -> single-quoted literal via encode_odata_literal
+    #                              (dataverse_validate_fetchxml, tools\tables.py)
+    #   * Collection(Edm.String)-> JSON ARRAY alias, percent-encode ONLY
+    #                              (dataverse_get_total_record_counts, tools\tables.py)
+    #   * URL path segment      -> closed Literal allowlist
+    #                              (dataverse_retrieve_unpublished, tools\customizations.py)
+    # An @odata.id object is escaped like the JSON array and for the same reason:
+    # the alias value is a JSON document, so it is json.dumps'd and then
+    # percent-encoded, and encode_odata_literal must NOT be applied — doubling
+    # single quotes would corrupt the JSON. safe="@" keeps the alias name from
+    # becoming %40t, exactly as in dataverse_get_total_record_counts.
+    #
+    # Both halves of the @odata.id are caller-supplied and land in a URL, and this
+    # repo has a confirmed live OData key-predicate injection through exactly this
+    # class of input. The defence is at the model: ListSharedPrincipalsInput pins
+    # entity_set_name to _DATAVERSE_NAME_PATTERN and record_id to _GUID_PATTERN, so
+    # neither can express the '"', '}', ')' or '/' a breakout needs.
+    #
+    # The relative form ("accounts(<guid>)") is what Microsoft Learn's samples use.
+    # dataverse_retrieve_principal_access builds the same reference with an
+    # ABSOLUTE url. VERIFIED LIVE: both forms are accepted — the same record queried
+    # each way returned byte-identical bodies from both functions — so the choice is
+    # free, and the relative form is kept here because it cannot leak the org host
+    # into a query string.
+    target = f"{params.entity_set_name}({params.record_id})"
+    alias_value = json.dumps({"@odata.id": target}, separators=(",", ":"))
+    query = urlencode({"@t": alias_value}, safe="@")
+    principals_url = f"{api_root}/RetrieveSharedPrincipalsAndAccess(Target=@t)?{query}"
+    links_url = f"{api_root}/RetrieveSharedLinks(Target=@t)?{query}"
+
+    partial_errors: list[dict[str, str]] = []
+
+    # The whole body is guarded, not just the HTTP calls: CLAUDE.md's "do not raise
+    # uncaught exceptions from tools" is unconditional, and the normalization steps
+    # below read payloads whose inner properties are undocumented.
+    try:
+        headers = await build_headers(app_ctx, base_url)
+
+        principals_payload = await _call_share_function(
+            app_ctx,
+            headers,
+            "RetrieveSharedPrincipalsAndAccess",
+            principals_url,
+            partial_errors,
+        )
+        links_payload = await _call_share_function(
+            app_ctx, headers, "RetrieveSharedLinks", links_url, partial_errors
+        )
+
+        if len(partial_errors) == 2:
+            details = "; ".join(
+                f"{entry['function']}: {entry['message']}" for entry in partial_errors
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    f"Could not list the principals {target} is shared with: both "
+                    f"functions failed. {details}"
+                ),
+            })
+
+        result: dict[str, Any] = {
+            "entity_set_name": params.entity_set_name,
+            "record_id": params.record_id,
+            "target": target,
+        }
+        if principals_payload is not None:
+            result["shared_principals"] = _shared_block(
+                principals_payload,
+                _SHARED_PRINCIPALS_KEYS,
+                "RetrieveSharedPrincipalsAndAccess",
+                "principals",
+                params.top,
+            )
+        if links_payload is not None:
+            result["shared_links"] = _shared_block(
+                links_payload,
+                _SHARED_LINKS_KEYS,
+                "RetrieveSharedLinks",
+                "links",
+                params.top,
+            )
+        result["partial_errors"] = partial_errors
+
+        # Say what an all-empty answer does and does not mean, but only when every
+        # block really was normalized and really was empty — never as a verdict on
+        # a payload that could not be read.
+        blocks = [
+            b for b in (result.get("shared_principals"), result.get("shared_links"))
+            if isinstance(b, dict)
+        ]
+        if blocks and all(
+            b.get("normalized") and b.get("total_count") == 0 for b in blocks
+        ):
+            result["message"] = (
+                f"No explicit share was reported for {target}. That is not proof "
+                "the record is private: these functions report shares recorded in "
+                "the POA table and visible to THIS caller, not access granted by "
+                "ownership, security roles, team membership or the business-unit "
+                "hierarchy. Check partial_errors, and use "
+                "dataverse_retrieve_access_origin for a specific principal."
+            )
+
+        return finalize_response(result)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_list_shared_principals")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_shared_principals")
 
 
 # ---------------------------------------------------------------------------

@@ -348,7 +348,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**193 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**195 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -376,7 +376,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `connections` | 5 | Connection reference management |
 | `variables` | 8 | Environment variable definitions and values |
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
-| `security` | 18 | Security roles and their privileges, teams, users, business units, record access origin, composite access audit, audit history |
+| `security` | 20 | Security roles and their privileges, teams and their privileges, users, business units, record access origin, record shares, composite access audit, audit history |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 | `customapis` | 13 | Custom API, request parameter, and response property management |
@@ -404,6 +404,8 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_retrieve_access_origin` | default | Answer **why** a principal has access to one record — role, ownership, share, business-unit hierarchy, team membership — via `RetrieveAccessOrigin`, where `dataverse_retrieve_principal_access` returns only the access *mask*. Takes the **singular lowercase** table `logical_name`, not the entity set name. **HTTP 200 does not mean "has access"** — no access and a nonexistent record are also successful calls, distinguishable only by the prose in `access_origin` |
 | `dataverse_list_teams` | default | List teams, optional filter and pagination |
 | `dataverse_get_team` | default | Get one team by GUID |
+| `dataverse_get_team_privileges` | default | Answer "what can this **team** actually do?" via the entity-bound `RetrieveTeamPrivileges` — the missing third of the trio alongside `dataverse_get_role_privileges` (role) and `dataverse_retrieve_user_privileges` (user). Trimmed to `top` (default 50, max 1000) with `total_count`, `has_more` and `depth_summary` over the full set. The collection arrives under **`RolePrivileges`**, not `TeamPrivileges` — check `privileges_source`, and expect `normalized: false` with the raw payload if the shape is unrecognized. **An empty list is normal**, meaning no directly-assigned security roles; a nonexistent team id is an HTTP 404 instead |
+| `dataverse_list_shared_principals` | default | List **everyone one record was shared with**, merging `RetrieveSharedPrincipalsAndAccess` (principals + their access) and `RetrieveSharedLinks`. Neither `dataverse_retrieve_principal_access` (the mask) nor `dataverse_retrieve_access_origin` (the why) can enumerate them. Takes the **plural `entity_set_name`** (`accounts`), unlike `dataverse_retrieve_access_origin`'s singular logical name — and a wrong entity set returns the **same HTTP 404 `Does Not Exist`** as a missing record, so check the plural first. One function failing lands in `partial_errors` while the other still returns; an empty result is **not** proof the record is private |
 | `dataverse_list_users` | default | List system users, optional filter and pagination |
 | `dataverse_get_user` | default | Get one system user by GUID |
 | `dataverse_list_business_units` | default | List business units, optional filter and pagination |

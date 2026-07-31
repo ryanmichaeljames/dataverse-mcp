@@ -28,6 +28,18 @@ _DATAVERSE_NAME_PATTERN = r"^[a-zA-Z_][a-zA-Z0-9_]*$"
 # that schema name lowercased) at 50 characters, publisher prefix included.
 _DATAVERSE_NAME_MAX_LENGTH = 50
 
+# Separate, LARGER cap for an entity SET name. An entity set name is the table's
+# PLURAL collection name, so the 50-character schema-name cap above is the wrong
+# bound for it: pluralizing a 50-character logical name yields 51-52 characters
+# ('...entity' -> '...entities', '...address' -> '...addresses'), which the
+# schema-name cap would spuriously reject. EntitySetName is also settable
+# independently of the logical name when a table is created, so the generated
+# plural is not an upper bound at all. 64 is 52 (the worst-case generated plural)
+# plus headroom for a custom EntitySetName, and is kept as a bound rather than
+# removed because the value is interpolated into a request URL. The real
+# injection defence is _DATAVERSE_NAME_PATTERN, not this number.
+_DATAVERSE_ENTITY_SET_NAME_MAX_LENGTH = 64
+
 # Upper bound on a FetchXml document that has to travel inside a request URL.
 # ValidateFetchXmlExpression takes its FetchXml as a query-string parameter alias,
 # and percent-encoding an XML document roughly doubles it. Typical worst case is
@@ -7261,4 +7273,97 @@ class GetImportJobResultsInput(DataverseEnvironmentInput):
     def validate_import_job_results_guid(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
             raise ValueError("import_job_id must be a valid GUID")
+        return v
+
+
+# ---------------------------------------------------------------------------
+# Security investigation (team privileges, record shares)
+# ---------------------------------------------------------------------------
+
+
+class GetTeamPrivilegesInput(DataverseEnvironmentInput):
+    """Input for listing the privileges a team holds."""
+
+    team_id: str = Field(
+        ...,
+        description=(
+            "GUID of the team whose privileges to list. Use dataverse_list_teams "
+            "to find a team id by name, or dataverse_get_team if you already have "
+            "one and want the team record itself."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description=(
+            "Maximum number of privilege entries to return. RetrieveTeamPrivileges "
+            "has no server-side paging — it returns every privilege in one "
+            "response, and its sibling RetrieveRolePrivilegesRole was measured live "
+            "at 4,132 privileges in a ~1 MB payload for a broad role — so the list "
+            "is trimmed here. total_count always reports the full number Dataverse "
+            "returned and has_more says whether anything was trimmed, so the "
+            "magnitude is never hidden. depth_summary is computed over ALL entries, "
+            "not just the returned page. Raise this to see more."
+        ),
+        ge=1,
+        le=1000,
+    )
+
+    @field_validator("team_id")
+    @classmethod
+    def validate_team_privileges_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("team_id must be a valid GUID")
+        return v
+
+
+class ListSharedPrincipalsInput(DataverseEnvironmentInput):
+    """Input for listing the principals one record has been SHARED with."""
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the record's table — the PLURAL entity set "
+            "name ('accounts', 'contacts', 'new_projects'), NOT the singular "
+            "logical name dataverse_retrieve_access_origin takes. Use "
+            "dataverse_get_entity_sets to confirm it ('account' -> 'accounts'); the "
+            "plural is irregular often enough that guessing it costs a 404."
+        ),
+        # Both layers are deliberate. This value is embedded in the @odata.id of an
+        # EntityReference that lands in the request URL, which is exactly the class
+        # of input a confirmed key-predicate injection came in through. The
+        # identifier grammar makes it impossible to express the '"', ')', '/' or
+        # '}' a breakout needs; percent-encoding of the JSON alias value at the
+        # call site is the second, independent layer. The length bound is the
+        # ENTITY SET cap, not the 50-character schema-name cap: a plural cannot be
+        # measured against a bound derived from the singular.
+        pattern=_DATAVERSE_NAME_PATTERN,
+        min_length=1,
+        max_length=_DATAVERSE_ENTITY_SET_NAME_MAX_LENGTH,
+    )
+    record_id: str = Field(
+        ...,
+        description=(
+            "GUID of the record whose shares to list (the row's primary key, e.g. "
+            "an accountid). It becomes the key predicate inside the target "
+            "EntityReference, so it must be a well-formed GUID."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description=(
+            "Maximum number of entries to return from EACH of the two functions. "
+            "Neither has server-side paging, and a heavily shared record can carry "
+            "many principals, so each list is trimmed here. total_count and "
+            "has_more are reported per list and always describe the full set, so "
+            "the true magnitude is never hidden."
+        ),
+        ge=1,
+        le=1000,
+    )
+
+    @field_validator("record_id")
+    @classmethod
+    def validate_shared_record_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("record_id must be a valid GUID")
         return v

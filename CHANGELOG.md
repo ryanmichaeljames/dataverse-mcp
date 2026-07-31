@@ -60,6 +60,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   has access**: access, no access, and a record that does not exist all arrive as successful calls,
   distinguishable only by the English prose in the returned `access_origin` string, which is
   deliberately not classified into a boolean.
+- `dataverse_get_team_privileges` (`security`, read-only): answers "what can this **team**
+  actually do?" via the entity-bound `RetrieveTeamPrivileges` function — the missing third
+  alongside `dataverse_get_role_privileges` (role) and `dataverse_retrieve_user_privileges` (user).
+  Like the role function it has no server-side paging, so entries are trimmed to `top` (default 50,
+  max 1000) while `total_count`, `has_more` and `depth_summary` cover the full set. The collection
+  arrives under **`RolePrivileges`**, not `TeamPrivileges` (verified live); `privileges_source`
+  reports where it was found and an unrecognized payload returns `normalized: false` with the raw
+  body rather than a guess. **An empty list is a normal answer, not a failure** — it means the team
+  has no directly-assigned security roles; a nonexistent team id is an HTTP 404 instead, so the two
+  are never confused.
+- `dataverse_list_shared_principals` (`security`, read-only): lists **everyone one record was
+  shared with**, merging the unbound `RetrieveSharedPrincipalsAndAccess` (the principals and their
+  access rights) and `RetrieveSharedLinks`. Neither `dataverse_retrieve_principal_access` (the
+  access mask) nor `dataverse_retrieve_access_origin` (why one principal has access) can enumerate
+  them. Takes the **plural `entity_set_name`** (`accounts`) — not the singular logical name
+  `dataverse_retrieve_access_origin` takes, and **getting it wrong is indistinguishable from a
+  missing record**: a valid id with the wrong entity set and a nonexistent id both return the same
+  HTTP 404 `Does Not Exist`, so check the plural before concluding the record is gone. The two
+  functions fail independently: one failing is reported in `partial_errors` while the other's data
+  still returns, and only both failing yields an error. **An empty result is not proof the record is
+  private** — these functions report explicit shares visible to the caller, not access from
+  ownership, roles, teams or the business-unit hierarchy.
 - `dataverse_get_import_job_results` (`solutions`, read-only): answers **why a solution import
   failed** by fetching Dataverse's own human-readable results document for an importjob via the
   unbound `RetrieveFormattedImportJobResults` function, instead of the opaque `data` XML blob

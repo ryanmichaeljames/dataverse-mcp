@@ -2343,6 +2343,89 @@ class IsComponentCustomizableInput(DataverseEnvironmentInput):
 
 
 # ---------------------------------------------------------------------------
+# Language and relationship-enumeration metadata tools
+# ---------------------------------------------------------------------------
+
+
+class ListLanguagesInput(DataverseEnvironmentInput):
+    """Input for listing an environment's languages.
+
+    Deliberately field-free beyond the inherited ``dataverse_url``: all three
+    underlying Web API functions (RetrieveProvisionedLanguages,
+    RetrieveAvailableLanguages, RetrieveInstalledLanguagePacks) are unbound and
+    take no parameters, and each returns ~40 small integers, so there is nothing
+    to filter, page or trim.
+    """
+
+
+class GetValidRelationshipEntitiesInput(DataverseEnvironmentInput):
+    """Input for enumerating the tables eligible for a relationship role."""
+
+    role: Literal["referenced", "referencing", "many_to_many"] = Field(
+        ...,
+        description=(
+            "Which side of a relationship to enumerate. Every role answers the "
+            "ENVIRONMENT-WIDE question — which tables are eligible for that role "
+            "at all. "
+            "'referenced' — tables that can be the primary (one) side of a 1:N, "
+            "i.e. valid targets for a lookup. "
+            "'referencing' — tables that can be the related (many) side of a 1:N, "
+            "i.e. tables that can hold a lookup. "
+            "'many_to_many' — tables that can participate in an N:N; takes no "
+            "table_logical_name."
+        ),
+    )
+    table_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional logical name of a table (lowercase, e.g. 'account'). IT DOES "
+            "NOT NARROW THE ANSWER: measured live, supplying it returns the same "
+            "list as omitting it. Dataverse does validate the name server-side "
+            "(an unknown table is an HTTP 400), so pass it only to prove the table "
+            "exists; use dataverse_check_relationship_eligibility to ask about one "
+            "table. MUST be omitted when role='many_to_many' — that function "
+            "accepts no parameter, so a value here is rejected rather than silently "
+            "ignored. An empty string is NOT the same as omitting the field and is "
+            "rejected."
+        ),
+        min_length=1,
+        max_length=_DATAVERSE_NAME_MAX_LENGTH,
+        pattern=_DATAVERSE_NAME_PATTERN,
+    )
+    top: int = Field(
+        default=250,
+        description=(
+            "Maximum number of table names to return. These functions have no "
+            "server-side paging and the answers are large — measured live at 575 "
+            "names for role='referenced', 305 for 'many_to_many' and 166 for "
+            "'referencing' — so results are trimmed client-side; total_count and "
+            "has_more always describe the full set Dataverse returned."
+        ),
+        ge=1,
+        le=5000,
+    )
+
+    @model_validator(mode="after")
+    def reject_table_name_for_many_to_many(self) -> "GetValidRelationshipEntitiesInput":
+        """GetValidManyToMany takes no parameter — refuse rather than drop the value.
+
+        Accepting ``table_logical_name`` here and ignoring it would answer a
+        different question (every N:N-capable table in the environment) from the
+        one asked (can THIS table do N:N) while looking like it had honoured the
+        scope, so the value is rejected instead.
+        """
+        if self.role == "many_to_many" and self.table_logical_name is not None:
+            raise ValueError(
+                "table_logical_name is not accepted when role='many_to_many': the "
+                "GetValidManyToMany function takes no parameter and always returns "
+                "every table that can participate in an N:N. Omit table_logical_name, "
+                "or use dataverse_check_relationship_eligibility with "
+                "check_type='many_to_many' to ask about one specific table."
+            )
+        return self
+
+
+# ---------------------------------------------------------------------------
 # Security tools
 # ---------------------------------------------------------------------------
 
@@ -7364,6 +7447,91 @@ class ListSharedPrincipalsInput(DataverseEnvironmentInput):
     @field_validator("record_id")
     @classmethod
     def validate_shared_record_guid(cls, v: str) -> str:
+        if not _GUID_PATTERN.match(v):
+            raise ValueError("record_id must be a valid GUID")
+        return v
+
+
+class GetAttributeChangeHistoryInput(DataverseEnvironmentInput):
+    """Input for one record + one COLUMN's audit trail (RetrieveAttributeChangeHistory).
+
+    MIND THE SINGULAR/PLURAL SPLIT — this model deliberately takes BOTH names for
+    the same table and they are NOT interchangeable:
+      * entity_set_name is the PLURAL collection name ('accounts'). It is the only
+        one sent to the function, inside the target EntityReference's @odata.id.
+      * table_logical_name is the SINGULAR logical name ('account'). It is never
+        sent to the function; it exists solely for the audit-configuration probes,
+        which address table metadata by LogicalName.
+    The singular is REQUIRED rather than derived because plural -> singular is not
+    computable ('webresourceset' -> 'webresource') and it cannot be looked up
+    either: $filter on the ROOT EntityDefinitions collection is refused with
+    HTTP 400 [0x80060888].
+    """
+
+    entity_set_name: str = Field(
+        ...,
+        description=(
+            "OData collection name of the record's table — the PLURAL entity set "
+            "name ('accounts', 'contacts', 'new_projects'), NOT the singular "
+            "logical name this tool ALSO takes as table_logical_name. Use "
+            "dataverse_get_entity_sets to confirm it; the plural is irregular often "
+            "enough that guessing it costs a 404."
+        ),
+        # This value is embedded in the @odata.id of an EntityReference that lands
+        # in the request URL — the exact class of input a confirmed key-predicate
+        # injection came in through. The identifier grammar cannot express the
+        # '"', ')', '/' or '}' a breakout needs; percent-encoding of the JSON alias
+        # at the call site is the second, independent layer. The length bound is
+        # the ENTITY SET cap, not the 50-character schema-name cap: a plural cannot
+        # be measured against a bound derived from the singular.
+        pattern=_DATAVERSE_NAME_PATTERN,
+        min_length=1,
+        max_length=_DATAVERSE_ENTITY_SET_NAME_MAX_LENGTH,
+    )
+    record_id: str = Field(
+        ...,
+        description=(
+            "GUID of the record whose column history to retrieve (the row's primary "
+            "key, e.g. an accountid). It becomes the key predicate inside the target "
+            "EntityReference, so it must be a well-formed GUID."
+        ),
+    )
+    table_logical_name: str = Field(
+        ...,
+        description=(
+            "SINGULAR lowercase logical name of the record's table ('account', not "
+            "'accounts'). It is NOT sent to the function — it is used only to probe "
+            "whether auditing is enabled on the table and the column when the result "
+            "comes back empty, which is what turns an empty answer into a usable one."
+        ),
+        pattern=_DATAVERSE_NAME_PATTERN,
+        min_length=1,
+        max_length=_DATAVERSE_NAME_MAX_LENGTH,
+    )
+    column_logical_name: str = Field(
+        ...,
+        description=(
+            "Lowercase logical name of the column whose changes to retrieve "
+            "('name', 'telephone1', 'new_status')."
+        ),
+        pattern=_DATAVERSE_NAME_PATTERN,
+        min_length=1,
+        max_length=_DATAVERSE_NAME_MAX_LENGTH,
+    )
+    top: int = Field(
+        default=50,
+        description=(
+            "Maximum number of audit detail entries to return. The function is "
+            "called without PagingInfo, so the list is trimmed here; has_more "
+            "reports whether anything was cut."
+        ),
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("record_id")
+    @classmethod
+    def validate_attribute_history_record_guid(cls, v: str) -> str:
         if not _GUID_PATTERN.match(v):
             raise ValueError("record_id must be a valid GUID")
         return v

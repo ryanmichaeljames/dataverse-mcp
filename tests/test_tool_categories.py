@@ -10,16 +10,16 @@ interpreter process.
 
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
-   tools across all categories register (89 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 196 tools register.
-3. DATAVERSE_TOOLS=security + both allow flags: only 24 core + 20 security = 44.
+   tools across all categories register (96 tools).
+2. All allow flags set, DATAVERSE_TOOLS unset: all 199 tools register.
+3. DATAVERSE_TOOLS=security + both allow flags: only 24 core + 21 security = 45.
 4. DATAVERSE_TOOLS=core,solutions + both allow flags: 24 core + 21 solutions = 45.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
    core tools in the registered set.
-6. Composition: DATAVERSE_TOOLS=security, no allow flags → 16 read core + 15 read
-   security = 31 tools.
+6. Composition: DATAVERSE_TOOLS=security, no allow flags → 16 read core + 16 read
+   security = 32 tools.
 7. Unknown category: DATAVERSE_TOOLS=bogus,security + both allow flags → warning
-   logged, bogus ignored, security+core still register (44 tools).
+   logged, bogus ignored, security+core still register (45 tools).
 8. DATAVERSE_TOOLS=jobs + both allow flags: 24 core + 3 jobs = 27 tools.
 9. DATAVERSE_TOOLS=security (no jobs): jobs tools absent.
 10. DATAVERSE_TOOLS=webresources + both allow flags: 24 core + 5 webresources = 29.
@@ -125,7 +125,7 @@ _CORE_DELETE_TOOLS = {
 
 _CORE_ALL_TOOLS = _CORE_READ_TOOLS | _CORE_WRITE_TOOLS | _CORE_DELETE_TOOLS
 
-# Security tools: 15 read + 3 write + 2 delete = 20 total
+# Security tools: 16 read + 3 write + 2 delete = 21 total
 _SECURITY_READ_TOOLS = {
     "dataverse_list_security_roles",
     "dataverse_get_security_role",
@@ -143,6 +143,8 @@ _SECURITY_READ_TOOLS = {
     "dataverse_retrieve_record_change_history",
     "dataverse_get_audit_details",
     "dataverse_list_audit",
+    # Column-scoped audit history
+    "dataverse_get_attribute_change_history",
 }
 
 _SECURITY_WRITE_TOOLS = {
@@ -276,7 +278,7 @@ _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
 
 
 def test_default_no_env_vars():
-    """No env vars set: only read-only tools register across all categories (93 tools)."""
+    """No env vars set: only read-only tools register across all categories (96 tools)."""
     tools = _run_scenario({})
     tool_set = set(tools)
 
@@ -301,6 +303,13 @@ def test_default_no_env_vars():
     # Component customizability pre-flight is a read-only schema tool
     assert "dataverse_is_component_customizable" in tool_set, (
         "dataverse_is_component_customizable missing from default read-only tool set"
+    )
+    # Language and relationship-eligibility enumeration are read-only schema tools
+    assert "dataverse_list_languages" in tool_set, (
+        "dataverse_list_languages missing from default read-only tool set"
+    )
+    assert "dataverse_get_valid_relationship_entities" in tool_set, (
+        "dataverse_get_valid_relationship_entities missing from default read-only tool set"
     )
     # Alternate key write/delete tools must NOT be present
     assert "dataverse_create_alternate_key" not in tool_set
@@ -334,21 +343,22 @@ def test_default_no_env_vars():
     assert "dataverse_activate_process" not in tool_set
     assert "dataverse_deactivate_process" not in tool_set
 
-    # Total should be 93 (92 + dataverse_get_setting, a new core read)
-    assert len(tools) == 93, f"Expected 93 default tools, got {len(tools)}: {tools}"
+    # Total should be 96 (95 + dataverse_get_attribute_change_history, a new
+    # read-only security tool)
+    assert len(tools) == 96, f"Expected 96 default tools, got {len(tools)}: {tools}"
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 196 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 199 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 196, f"Expected 196 tools, got {len(tools)}"
+    assert len(tools) == 199, f"Expected 199 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
-    """DATAVERSE_TOOLS=security + both allow flags: 24 core + 20 security = 44."""
+    """DATAVERSE_TOOLS=security + both allow flags: 24 core + 21 security = 45."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -360,7 +370,7 @@ def test_security_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 44, f"Expected 44 tools, got {len(tools)}"
+    assert len(tools) == 45, f"Expected 45 tools, got {len(tools)}"
 
 
 def test_core_solutions_with_all_flags():
@@ -402,7 +412,7 @@ def test_core_always_on_when_omitted():
 
 
 def test_composition_security_no_allow_flags():
-    """DATAVERSE_TOOLS=security, no allow flags: 16 read core + 15 read security = 31."""
+    """DATAVERSE_TOOLS=security, no allow flags: 16 read core + 16 read security = 32."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
     })
@@ -413,11 +423,11 @@ def test_composition_security_no_allow_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 31, f"Expected 31 tools, got {len(tools)}"
+    assert len(tools) == 32, f"Expected 32 tools, got {len(tools)}"
 
 
 def test_unknown_category_ignored():
-    """Unknown category 'bogus' is ignored; security+core still register (44 tools)."""
+    """Unknown category 'bogus' is ignored; security+core still register (45 tools)."""
     result = subprocess.run(
         [sys.executable, "-c", _HELPER_SCRIPT],
         capture_output=True,
@@ -447,7 +457,7 @@ def test_unknown_category_ignored():
         f"Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 44, f"Expected 44 tools, got {len(tools)}"
+    assert len(tools) == 45, f"Expected 45 tools, got {len(tools)}"
 
 
 def test_jobs_only_with_all_flags():

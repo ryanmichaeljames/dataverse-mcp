@@ -348,7 +348,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**196 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**199 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -367,7 +367,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | Category | Tools | Description |
 |----------|-------|-------------|
 | `core` | 24 | Environment introspection, effective org settings, all record CRUD, and unpublished-customization reads (always registered) |
-| `schema` | 33 | Table/column/relationship/choice/alternate-key metadata, component customizability pre-flight |
+| `schema` | 35 | Table/column/relationship/choice/alternate-key metadata, component customizability pre-flight, environment language codes |
 | `solutions` | 21 | Solution and publisher management, solution components, history, import/export ALM, import diagnostics, dependency analysis |
 | `flows` | 8 | Cloud flow + classic process listing and activate/deactivate |
 | `forms` | 6 | Model-driven form management |
@@ -376,7 +376,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `connections` | 5 | Connection reference management |
 | `variables` | 8 | Environment variable definitions and values |
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
-| `security` | 20 | Security roles and their privileges, teams and their privileges, users, business units, record access origin, record shares, composite access audit, audit history |
+| `security` | 21 | Security roles and their privileges, teams and their privileges, users, business units, record access origin, record shares, composite access audit, record- and column-level audit history |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 | `customapis` | 13 | Custom API, request parameter, and response property management |
@@ -414,6 +414,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_list_audit` | default | Query the `audits` entity set with optional OData filter, select, orderby, and top; returns audit metadata rows |
 | `dataverse_get_audit_details` | default | Get full before/after detail for a single audit record via the bound `RetrieveAuditDetails` function |
 | `dataverse_retrieve_record_change_history` | default | Retrieve the full audit change history for a single record via `RetrieveRecordChangeHistory`; returns structured `AuditDetailCollection` |
+| `dataverse_get_attribute_change_history` | default | Audit trail for **one column of one record** via `RetrieveAttributeChangeHistory` — the column-scoped sibling of `dataverse_retrieve_record_change_history`, answering "when did this field last change, and to what?" from the server instead of filtering a whole record's history client-side. Takes the table twice: the plural `entity_set_name` (the only one sent to the function) and the singular `table_logical_name` (used only by the probes below). Org-level audit-**configuration** rows accompany *every* response whatever the target, so they are identified by type and partitioned into `audit_configuration_events` and excluded from `audit_details`, `count` and `has_more`. **Zero changes is ambiguous, so it is diagnosed** — an `audit_configuration` block names the outermost level at which auditing is off (organization / table / column), or confirms auditing is on and nothing was recorded |
 | `dataverse_assign_security_role` | write | Assign a security role to a user or team |
 | `dataverse_add_team_members` | write | Add one or more users to a team |
 | `dataverse_set_user_state` | write | Enable or disable a system user (`isdisabled`) |
@@ -468,6 +469,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_get_table_metadata` | default | Get full schema details for a table |
 | `dataverse_list_columns` | default | List columns for a table, optional type filter |
 | `dataverse_get_column` | default | Get full metadata for one column, including type-specific properties |
+| `dataverse_list_languages` | default | Report the environment's language codes (LCIDs), reconciling `RetrieveProvisionedLanguages`, `RetrieveAvailableLanguages` and `RetrieveInstalledLanguagePacks` in one concurrent call. **`provisioned` is the load-bearing set** — the only LCIDs a `LocalizedLabels` entry may use, so check it before writing a localized label rather than assuming `1033`. The three sets can be **mutually disjoint** (measured live: `available` and `provisioned` both `[1033]`, `installed_packs` 44 other LCIDs), so never infer one from another; `available_not_provisioned` and `installed_not_provisioned` are reported only when both their inputs were read, and the three calls fail independently via `partial_errors` |
 | `dataverse_is_component_customizable` | default | Pre-flight check via `IsComponentCustomizable`: can this solution component be edited, before an update is attempted? Takes the component's own GUID plus the same integer component-type codes as `dataverse_analyze_dependencies`. **Do not assume system components answer `false`** — core tables such as `systemuser` report `true` because customizations like adding columns are permitted |
 | `dataverse_create_table` | write | Create a custom table (ownership type, primary name attribute) |
 | `dataverse_update_table` | write | Update a table's display name or description |
@@ -483,7 +485,8 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 |------|------|-------------|
 | `dataverse_list_relationships` | default | List relationships for a table or the whole environment |
 | `dataverse_get_relationship` | default | Get full metadata for one relationship by schema name |
-| `dataverse_check_relationship_eligibility` | default | Check whether a table can participate in a relationship |
+| `dataverse_check_relationship_eligibility` | default | Answer "**is this table** eligible?" — a per-table boolean for one table you can already name; use `dataverse_get_valid_relationship_entities` to discover candidates |
+| `dataverse_get_valid_relationship_entities` | default | Answer "**which tables** are eligible?" — enumerate the tables that may take a relationship role via `GetValidReferencedEntities` / `GetValidReferencingEntities` / `GetValidManyToMany` (`referenced` = valid lookup targets, `referencing` = tables that can hold a lookup, `many_to_many` = tables that can take an N:N), the enumeration counterpart to `dataverse_check_relationship_eligibility`'s per-table boolean. Every role answers the **environment-wide** question: the optional `table_logical_name` (1:N roles only, rejected for `many_to_many`) is validated server-side but **does not narrow the result**, which the response states via `table_logical_name_filtered: false`. The lists are large and none of the functions pages server-side, so names are trimmed to `top` (default 250) while `count`, `total_count` and `has_more` describe the full set |
 | `dataverse_create_one_to_many_relationship` | write | Create a 1:N relationship and its lookup column |
 | `dataverse_create_many_to_many_relationship` | write | Create an N:N relationship and its intersect table |
 | `dataverse_create_multi_table_lookup` | write | Create a polymorphic lookup referencing multiple tables |

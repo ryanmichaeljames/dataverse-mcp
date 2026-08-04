@@ -91,6 +91,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   entirely rather than sent empty. An **unknown setting name is not an error** — Dataverse answers
   HTTP 200 with `SettingDetail: null`, reported as `setting_found: false`, which never collapses
   with a setting that genuinely holds `""`, `"false"` or `0`.
+- `dataverse_list_languages` (`schema`, read-only): reports an environment's provisioned, available
+  and installed-pack LCIDs in one concurrent call, each source failing independently via
+  `partial_errors`. `provisioned` is the load-bearing set — the LCIDs a `LocalizedLabels` entry may
+  use — and the three can be **mutually disjoint**, so `available_not_provisioned` and
+  `installed_not_provisioned` are reported explicitly.
+- `dataverse_get_valid_relationship_entities` (`schema`, read-only): enumerates **which** tables may
+  take a relationship role (`referenced` / `referencing` / `many_to_many`) — the counterpart to
+  `dataverse_check_relationship_eligibility`, which answers for one named table. The optional
+  `table_logical_name` is validated server-side but does **not** narrow the result
+  (`table_logical_name_filtered: false`); it is rejected for `many_to_many`. Results are trimmed to
+  `top` (default 250), with `total_count` and `has_more` over the full set.
 - `dataverse_get_import_job_results` (`solutions`, read-only): answers **why a solution import
   failed** by fetching Dataverse's own human-readable results document for an importjob via the
   unbound `RetrieveFormattedImportJobResults` function, instead of the opaque `data` XML blob
@@ -99,6 +110,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failure. It is large (~14,000–71,000 characters observed) and is truncated at `max_chars`
   (default 20,000, max 2,000,000), with `results_length` always reporting the full length and
   `truncated` saying whether anything was cut.
+- `dataverse_get_attribute_change_history` (`security`, read-only): column-scoped audit history for
+  one record via `RetrieveAttributeChangeHistory`, taking the plural `entity_set_name` plus the
+  singular `table_logical_name` (used only by the probes). The org-level audit-**configuration** rows
+  that accompany every response are identified by type, split into `audit_configuration_events` and
+  excluded from `audit_details`, `count` and `has_more`. **Zero changes is ambiguous, so it is diagnosed** — an
+  `audit_configuration` block names the outermost level at which auditing is off (organization /
+  table / column), or confirms auditing is on and nothing was recorded.
 
 ## [3.8.0] - 2026-07-29
 

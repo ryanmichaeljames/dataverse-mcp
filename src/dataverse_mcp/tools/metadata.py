@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlencode
 from xml.etree import ElementTree as ET
@@ -17,6 +18,7 @@ from dataverse_mcp.client import (
     encode_odata_literal,
     _DATAVERSE_API_VERSION,
     build_headers,
+    extract_error_message,
     finalize_response,
     get_app_ctx,
     odata_quote,
@@ -45,11 +47,13 @@ from dataverse_mcp.models import (
     GetColumnInput,
     GetRelationshipInput,
     GetTableMetadataInput,
+    GetValidRelationshipEntitiesInput,
     IsComponentCustomizableInput,
     ListAlternateKeysInput,
     ListChoiceColumnOptionsInput,
     ListChoicesInput,
     ListColumnsInput,
+    ListLanguagesInput,
     ListRelationshipsInput,
     ListTablesInput,
     PublishCustomizationsInput,
@@ -756,6 +760,12 @@ async def dataverse_check_relationship_eligibility(
     Only call this immediately before dataverse_create_one_to_many_relationship or
     dataverse_create_many_to_many_relationship — do not use for general queries or data reads.
     Returns eligible (bool) for the requested check_type (see check_type field for valid values).
+
+    This tool answers "is THIS ONE table OK?" — a boolean about a table you can
+    already name. To answer "WHICH tables are OK?" — the enumeration, when you do
+    not yet know which table to point at — use
+    dataverse_get_valid_relationship_entities, whose role values mirror this
+    tool's check_type values one for one.
     """
     app_ctx = get_app_ctx(ctx)
     try:
@@ -2698,3 +2708,596 @@ async def dataverse_is_component_customizable(
 
     result["raw_response"] = body
     return finalize_response(result)
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers for unbound metadata functions
+# ---------------------------------------------------------------------------
+
+
+def _is_locale_id_list(value: Any) -> bool:
+    """True when *value* is a list of real integers (LCIDs).
+
+    ``isinstance(item, bool)`` is excluded deliberately: ``bool`` is a subclass
+    of ``int`` in Python, so ``[True, False]`` would otherwise be accepted as a
+    list of locale ids. The exclusion has already been needed twice elsewhere in
+    this codebase — never test a value that could be either by truthiness or by
+    a bare ``isinstance(x, int)``.
+    """
+    return isinstance(value, list) and all(
+        isinstance(item, int) and not isinstance(item, bool) for item in value
+    )
+
+
+def _is_name_list(value: Any) -> bool:
+    """True when *value* is a list of strings (logical names)."""
+    return isinstance(value, list) and all(isinstance(item, str) for item in value)
+
+
+def _extract_named_list(
+    payload: Any,
+    preferred_key: str,
+    function_name: str,
+    is_wanted: Callable[[Any], bool],
+) -> tuple[str, list] | None:
+    """Locate a list in *payload* as ``(source, items)``, or None.
+
+    Mirrors ``_extract_entry_list`` in tools/security.py. Every round of these
+    unbound-function tools has found at least one response whose real shape
+    differed from the documented one, so the list is found by shape as well as by
+    name, in three tiers:
+
+    1. A bare top-level array (the response body IS the list).
+    2. *preferred_key* at the top level — the documented container name.
+    3. Exactly ONE list-valued top-level property, whatever it is called.
+
+    Ambiguity (two or more top-level lists without the preferred key) returns
+    None, as does a sole list whose items are the wrong type. The caller then
+    degrades to ``normalized: false`` plus the raw body. A MISSING container is
+    never turned into an empty list: "no container" and "no results" are
+    different answers and must not be collapsed. *function_name* only labels the
+    warnings.
+    """
+    if is_wanted(payload):
+        return ("<response body>", payload)
+    if not isinstance(payload, dict):
+        return None
+
+    named = payload.get(preferred_key)
+    if is_wanted(named):
+        return (preferred_key, named)
+
+    candidates = [(k, v) for k, v in payload.items() if isinstance(v, list)]
+    if len(candidates) > 1:
+        logger.warning(
+            "%s returned %d candidate lists at the top level (%s); refusing to "
+            "pick one",
+            function_name,
+            len(candidates),
+            ", ".join(k for k, _ in candidates),
+        )
+        return None
+    if len(candidates) == 1 and is_wanted(candidates[0][1]):
+        return candidates[0]
+    return None
+
+
+async def _call_unbound_function(
+    app_ctx: Any,
+    headers: dict[str, str],
+    function_name: str,
+    url: str,
+    partial_errors: list[dict[str, str]],
+    tool_name: str,
+) -> Any | None:
+    """GET an unbound function, recording a partial error instead of propagating.
+
+    Mirrors ``_call_share_function`` in tools\\security.py. Returns the
+    envelope-stripped payload, or None when the call failed — in which case an
+    entry is appended to *partial_errors* so one unavailable or privilege-gated
+    function cannot fail a whole multi-call tool.
+    """
+    try:
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning("%s returned a non-JSON body", function_name)
+            return response.text or None
+        if isinstance(payload, dict):
+            return {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+        return payload
+    except httpx.HTTPStatusError as e:
+        message = (
+            f"Dataverse returned HTTP {e.response.status_code}: "
+            f"{extract_error_message(e.response)}"
+        )
+    except Exception as e:  # network, auth — never fatal for the sibling calls
+        message = f"{type(e).__name__}: {e}"
+    logger.warning("%s failed during %s: %s", function_name, tool_name, message)
+    partial_errors.append({"function": function_name, "message": message})
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Language tools
+# ---------------------------------------------------------------------------
+
+# Three unbound, zero-parameter GET functions, each answering under a DIFFERENT
+# top-level property name — two repeat the function name, one does not:
+#
+#   RetrieveProvisionedLanguages   -> {"RetrieveProvisionedLanguages": [1033, ...]}
+#   RetrieveAvailableLanguages     -> {"LocaleIds": [1033, ...]}
+#   RetrieveInstalledLanguagePacks -> {"RetrieveInstalledLanguagePacks": [1033, ...]}
+#
+# All three container names are LIVE-CONFIRMED (verified against a real org and
+# against $metadata; the preferred-key tier fired for all three).
+#
+# Do NOT "simplify" this table by deriving the property name from the function
+# name: that holds for two of the three and silently breaks the third. The
+# by-shape fallback in _extract_named_list stays regardless — it is what keeps a
+# future shape change from being reported as an empty list.
+#
+# A FOURTH source exists and is deliberately NOT wrapped here:
+# RetrieveDeprovisionedLanguages() answers HTTP 200 under its own name (observed
+# returning [] live). Add it only with its own live evidence about what it means.
+#
+# The function names are module constants and never caller input, so they are
+# safe as URL path segments by construction.
+_LANGUAGE_FUNCTIONS: tuple[tuple[str, str, str], ...] = (
+    ("provisioned", "RetrieveProvisionedLanguages", "RetrieveProvisionedLanguages"),
+    ("available", "RetrieveAvailableLanguages", "LocaleIds"),
+    (
+        "installed_packs",
+        "RetrieveInstalledLanguagePacks",
+        "RetrieveInstalledLanguagePacks",
+    ),
+)
+
+
+@tool(
+    name="dataverse_list_languages",
+    annotations={
+        "title": "List Languages",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_languages(params: ListLanguagesInput, ctx: Context) -> str:
+    """List an environment's language codes (LCIDs) — which are usable, which are merely installed.
+
+    Call this before writing any localized label. provisioned is the load-bearing
+    answer: those are the LCIDs that are actually ENABLED in this environment and
+    therefore the only ones a LocalizedLabels entry may use (the LanguageCode on
+    a DisplayName / Description label passed to dataverse_create_table,
+    dataverse_create_column, dataverse_create_choice, ...). A LocalizedLabel for a
+    language that is installed but NOT provisioned is rejected or silently
+    dropped, so never assume 1033 (English) is provisioned — verify it.
+
+    Three unbound, zero-parameter functions are called CONCURRENTLY and their
+    answers reconciled. THE THREE SETS CAN BE MUTUALLY DISJOINT — on the org this
+    tool was verified against, available was [1033], provisioned was [1033], and
+    installed_packs held 44 OTHER LCIDs not including 1033. Read each for what it
+    literally reports and do not infer one from another:
+
+    * provisioned (RetrieveProvisionedLanguages) — the LCIDs enabled for use in
+      this environment. THE LOAD-BEARING ONE: this is the set a LocalizedLabels
+      entry may use, and the only one worth deciding anything from.
+    * available (RetrieveAvailableLanguages, container LocaleIds) — what this
+      function reports the environment as offering. Observed live as a SHORT list
+      that matched provisioned exactly and shared nothing with installed_packs;
+      it is NOT "every language whose pack is on the server".
+    * installed_packs (RetrieveInstalledLanguagePacks) — the language packs
+      present on the server. Observed live as by far the largest of the three and
+      DISJOINT from both of the others. A pack being installed does not make its
+      LCID provisioned, and this tool does not know which of them could be.
+
+    Each list is echoed exactly as Dataverse sent it (order included, not sorted)
+    with a matching *_count. Two derived diffs are computed only when both of
+    their inputs were read successfully, and are named after the exact subtraction
+    they perform rather than implying one is the actionable answer:
+    available_not_provisioned (available minus provisioned) and
+    installed_not_provisioned (installed_packs minus provisioned). Neither is a
+    list of languages an administrator can simply turn on — provisioning has its
+    own prerequisites — so treat both as leads to investigate, not as a to-do
+    list.
+
+    THE THREE CALLS FAIL INDEPENDENTLY. A function that is unavailable or
+    privilege-gated is reported in partial_errors and the others' data is still
+    returned, so ALWAYS read partial_errors before concluding a language is
+    absent — a missing key means "not answered", never "empty". Only a failure of
+    all three yields the standard {"error": true, "message": ...} envelope.
+
+    The three container property names genuinely differ (LocaleIds for the
+    available list; the function's own name for the other two) and all three are
+    LIVE-CONFIRMED. Each is still tried by name and then by shape (a sole list of
+    integers), so a future change degrades rather than lies. sources reports the
+    property each list was actually found under — check it. If a payload cannot
+    be read unambiguously, its keys are OMITTED, normalized is false, and the
+    untouched body appears under raw_responses; nothing is fabricated and no empty
+    list is invented.
+
+    LCIDs are Windows locale ids (1033 = English (United States), 1036 = French
+    (France), 1031 = German (Germany), 3082 = Spanish (Spain)); they are returned
+    as raw integers and are not mapped to language names here.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    api_root = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+    partial_errors: list[dict[str, str]] = []
+
+    # The whole body is guarded, not just the HTTP calls: CLAUDE.md's "do not
+    # raise uncaught exceptions from tools" is unconditional, and the
+    # reconciliation below reads payloads whose shapes are only documented.
+    try:
+        headers = await build_headers(app_ctx, base_url)
+
+        payloads = await asyncio.gather(*[
+            _call_unbound_function(
+                app_ctx,
+                headers,
+                function_name,
+                # Zero-parameter unbound function: empty parentheses, no query
+                # string, and nothing caller-supplied anywhere in the URL.
+                f"{api_root}/{function_name}()",
+                partial_errors,
+                "dataverse_list_languages",
+            )
+            for _key, function_name, _property_name in _LANGUAGE_FUNCTIONS
+        ])
+
+        if len(partial_errors) == len(_LANGUAGE_FUNCTIONS):
+            details = "; ".join(
+                f"{entry['function']}: {entry['message']}" for entry in partial_errors
+            )
+            return json.dumps({
+                "error": True,
+                "message": (
+                    "Could not list this environment's languages: all three "
+                    f"functions failed. {details}"
+                ),
+            })
+
+        result: dict[str, Any] = {}
+        sources: dict[str, str] = {}
+        raw_responses: dict[str, Any] = {}
+        locale_lists: dict[str, list[int]] = {}
+
+        for (key, function_name, property_name), payload in zip(
+            _LANGUAGE_FUNCTIONS, payloads
+        ):
+            if payload is None:
+                continue  # already recorded in partial_errors
+            found = _extract_named_list(
+                payload, property_name, function_name, _is_locale_id_list
+            )
+            if found is None:
+                logger.warning(
+                    "%s response carried no unambiguous list of locale ids; "
+                    "returning it raw",
+                    function_name,
+                )
+                raw_responses[function_name] = payload
+                continue
+            source, locale_ids = found
+            sources[key] = source
+            result[key] = locale_ids
+            result[f"{key}_count"] = len(locale_ids)
+            locale_lists[key] = locale_ids
+
+        # Derived answers, each computed ONLY when both of its inputs were read.
+        # A missing input must not be treated as an empty set: that would report
+        # every language on the other side as "not provisioned".
+        #
+        # TWO diffs, each named after the exact subtraction it performs. A single
+        # "not_provisioned" was live-misleading: available minus provisioned came
+        # out EMPTY on an org carrying 44 installed packs, reporting "nothing to
+        # look at" while the largest of the three lists went undiffed entirely.
+        available = locale_lists.get("available")
+        provisioned = locale_lists.get("provisioned")
+        installed = locale_lists.get("installed_packs")
+        if available is not None and provisioned is not None:
+            available_diff = sorted(set(available) - set(provisioned))
+            result["available_not_provisioned"] = available_diff
+            result["available_not_provisioned_count"] = len(available_diff)
+        if installed is not None and provisioned is not None:
+            installed_diff = sorted(set(installed) - set(provisioned))
+            result["installed_not_provisioned"] = installed_diff
+            result["installed_not_provisioned_count"] = len(installed_diff)
+
+        result["sources"] = sources
+        result["normalized"] = not raw_responses
+        if raw_responses:
+            result["raw_responses"] = raw_responses
+            result["message"] = (
+                "These functions answered successfully but their payloads carried "
+                "no unambiguous list of locale ids, so their keys are OMITTED "
+                "rather than guessed and no empty list is implied: "
+                f"{', '.join(sorted(raw_responses))}. Read the untouched bodies "
+                "under raw_responses."
+            )
+        result["partial_errors"] = partial_errors
+
+        return finalize_response(result)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_list_languages")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_languages")
+
+
+# ---------------------------------------------------------------------------
+# Relationship eligibility enumeration
+# ---------------------------------------------------------------------------
+
+# Closed allowlist: role -> (function name, parameter name or None).
+#
+# READ THE PARAMETER NAMES TWICE. They are INVERTED relative to the function
+# names, and this is the single likeliest implementation error here:
+#
+#   GetValidReferencedEntities(ReferencingEntityName='x')
+#       -> the tables x can REFERENCE (x holds the lookup)
+#   GetValidReferencingEntities(ReferencedEntityName='x')
+#       -> the tables that can REFERENCE x (they hold the lookup)
+#
+# You always name the OTHER side of the relationship: the parameter says which
+# table you already have, the function says which side you want back. Do not
+# "fix" the apparent mismatch — the pairing below is confirmed against $metadata.
+#
+# A SWAP WOULD NOT FAIL SILENTLY, contrary to what this comment used to warn.
+# These are function OVERLOADS keyed on the parameter name, so an unrecognized
+# pairing is not resolved at all: live, GetValidReferencedEntities with
+# ReferencedEntityName answers HTTP 404 [0x80060888] "Resource not found for the
+# segment 'GetValidReferencedEntities'". The inversion is still counter-intuitive
+# enough to invite the edit; it is just loud when made.
+#
+# The function name lands in a URL PATH SEGMENT and this repo has a confirmed
+# live OData key-predicate injection, so the name is SELECTED from this frozen
+# table by role and never interpolated from caller input; the build site
+# re-checks membership even though the Literal on the input model already
+# constrains it.
+_RELATIONSHIP_ROLE_FUNCTIONS: dict[str, tuple[str, str | None]] = {
+    "referenced": ("GetValidReferencedEntities", "ReferencingEntityName"),
+    "referencing": ("GetValidReferencingEntities", "ReferencedEntityName"),
+    "many_to_many": ("GetValidManyToMany", None),
+}
+
+# All three functions are documented as returning {"EntityNames": ["account", ...]}.
+_ENTITY_NAMES_PROPERTY = "EntityNames"
+
+
+@tool(
+    name="dataverse_get_valid_relationship_entities",
+    annotations={
+        "title": "Get Valid Relationship Entities",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_get_valid_relationship_entities(
+    params: GetValidRelationshipEntitiesInput, ctx: Context
+) -> str:
+    """List WHICH tables may take part in a relationship — the enumeration, before you pick a target.
+
+    Answers "which tables are eligible?" when you do not yet know what to point a
+    lookup at. Its counterpart dataverse_check_relationship_eligibility answers
+    "is THIS ONE table OK?" — a boolean about a table you can already name. The
+    role values here mirror that tool's check_type values one for one, so use
+    this to discover a candidate and that one to confirm a specific choice.
+
+    Call it before dataverse_create_one_to_many_relationship or
+    dataverse_create_many_to_many_relationship: a table the platform excludes
+    (many system and virtual tables) fails the create late and opaquely.
+
+    role selects one of three unbound functions:
+
+    * 'referenced' — tables that can be the PRIMARY (one) side of a 1:N, i.e.
+      valid lookup TARGETS.
+    * 'referencing' — tables that can be the RELATED (many) side of a 1:N, i.e.
+      tables that can HOLD a lookup.
+    * 'many_to_many' — tables that can participate in an N:N. Takes no
+      table_logical_name; supplying one is an input error rather than being
+      ignored, because ignoring it would answer the environment-wide question
+      while looking scoped.
+
+    table_logical_name DOES NOT NARROW THE ANSWER. It is optional for the two 1:N
+    roles and Dataverse does validate it server-side (an unknown table is HTTP
+    400 [0x80041102] "not found in the MetadataCache"), but supplying it was
+    measured live to return a BYTE-IDENTICAL list to omitting it, for every table
+    tried. Every role therefore answers the environment-wide question: the tables
+    eligible for that role at all. Passing a name buys you exactly one thing —
+    proof the table exists — so pass it only when you want that check, and never
+    read the result as "the tables THIS table may point at". This holds for
+    CUSTOM tables as well as system ones: scoping by a custom table returned the
+    same byte-identical 575-name list that 'account' and 'systemuser' did.
+    The response says so explicitly via table_logical_name_filtered.
+
+    To ask about one specific table, use
+    dataverse_check_relationship_eligibility, which returns a real per-table
+    boolean. This tool cannot answer that question.
+
+    Supply a lowercase logical name ('account', not 'accounts'). Omitting it
+    removes the parameter from the call entirely rather than sending an empty one
+    — the two are different requests, even though they answer the same.
+
+    THE ANSWER IS BIG and 'referenced' is the biggest. Measured live:
+    referenced 575 names / ~13 KB, many_to_many 305 / ~7 KB, referencing 166 /
+    ~4 KB. None of these functions pages server-side, so names are trimmed to top
+    (default 250) while count, total_count and has_more always describe the full
+    set Dataverse returned.
+
+    The list is returned under EntityNames (live-confirmed for all three
+    functions), which is tried first, then a by-shape fallback (a sole top-level
+    list of strings); source names where it was actually found. If it cannot be
+    located unambiguously, table_logical_names and the counts are OMITTED,
+    normalized is false, and the untouched body is returned under raw_response —
+    an unreadable payload is never reported as an empty list.
+
+    An empty list from a readable payload IS a real answer: it means no table
+    qualifies for that role. A nonexistent table name is an HTTP error, not an
+    empty list.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    api_root = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+
+    # Defence in depth: the Literal on the input model already constrains role,
+    # but the function name goes into a URL PATH SEGMENT, so membership of the
+    # frozen allowlist is re-checked here. This survives the model being bypassed
+    # or loosened later.
+    selected = _RELATIONSHIP_ROLE_FUNCTIONS.get(params.role)
+    if selected is None:
+        return json.dumps({
+            "error": True,
+            "message": (
+                f"Unsupported role {params.role!r}. Valid roles: "
+                f"{', '.join(sorted(_RELATIONSHIP_ROLE_FUNCTIONS))}."
+            ),
+        })
+    function_name, parameter_name = selected
+
+    if parameter_name is None and params.table_logical_name is not None:
+        # Unreachable through the input model (its model_validator rejects this),
+        # kept so a bypassed model can never silently drop the scope.
+        return json.dumps({
+            "error": True,
+            "message": (
+                f"{function_name} takes no parameter, so table_logical_name cannot "
+                f"be applied to role={params.role!r}. Omit it, or use "
+                "dataverse_check_relationship_eligibility to ask about one table."
+            ),
+        })
+
+    # Two branches, never one template with an optional hole: an OPTIONAL OData
+    # function parameter is omitted from the parameter list in the URL PATH as
+    # well as from the query string, and `Fn(Name=@p1)?@p1=''` is a DIFFERENT
+    # request from `Fn()`. The test is `is not None`, never truthiness — the
+    # model rejects an empty string, and an empty string must not be silently
+    # read as "omitted" if it ever reached here.
+    if parameter_name is not None and params.table_logical_name is not None:
+        # ReferencingEntityName / ReferencedEntityName are Edm.String, so the
+        # value is a SINGLE-QUOTED OData literal: the two delimiting quotes stay
+        # bare and everything inside goes through encode_odata_literal (double
+        # any ' first, then percent-encode). This is the same regime as
+        # RetrieveSetting, and NOT the JSON-alias regime used for
+        # Collection(Edm.String) / EntityReference parameters, where the literal
+        # escaper would corrupt the value.
+        #
+        # The alias name is written literally as @p1 rather than via urlencode,
+        # exactly as the shipped Edm.String-alias tools do; that also keeps it
+        # from becoming %40p1 (which Dataverse would not recognize as an alias)
+        # and avoids double-encoding the output of encode_odata_literal.
+        #
+        # Both layers apply: _DATAVERSE_NAME_PATTERN at the model means the value
+        # cannot express a quote at all, and the escaper here means the URL stays
+        # safe even if that pattern is loosened later. That pairing is exactly
+        # what the confirmed key-predicate injection in this repo lacked.
+        table_enc = encode_odata_literal(params.table_logical_name)
+        url = f"{api_root}/{function_name}({parameter_name}=@p1)?@p1='{table_enc}'"
+    else:
+        url = f"{api_root}/{function_name}()"
+
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_get_valid_relationship_entities")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_valid_relationship_entities")
+
+    try:
+        # A non-JSON or empty body is surfaced as-is rather than raising.
+        try:
+            payload: Any = response.json()
+        except ValueError:
+            logger.warning("%s returned a non-JSON body", function_name)
+            payload = response.text or None
+
+        body: Any = payload
+        if isinstance(payload, dict):
+            body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+        result: dict[str, Any] = {
+            "role": params.role,
+            "table_logical_name": params.table_logical_name,
+            "function": function_name,
+            # The (inverted) parameter this function takes — null for
+            # GetValidManyToMany, which takes none. It is echoed even when the
+            # call omitted it, so a caller can see which side would be named.
+            "parameter": parameter_name,
+            # ALWAYS false, and deliberately so. This replaced a `scope` field
+            # that reported "table" vs "environment": measured live, supplying
+            # table_logical_name returns a byte-identical list to omitting it, so
+            # "table" was a claim the data did not support. Sending the parameter
+            # still validates the name server-side; it just does not filter.
+            # Flip this to a real computation only if a live run ever shows the
+            # scoped and unscoped answers differing.
+            "table_logical_name_filtered": False,
+        }
+        if params.table_logical_name is not None:
+            result["table_logical_name_note"] = (
+                f"{function_name} accepted and validated "
+                f"{params.table_logical_name!r} (an unknown table would be an HTTP "
+                "400), but it did NOT narrow the result: this is the same "
+                "environment-wide list of tables eligible for "
+                f"role={params.role!r} that omitting it returns. Do not read it as "
+                "the tables related to this one — use "
+                "dataverse_check_relationship_eligibility for a per-table answer."
+            )
+
+        found = _extract_named_list(
+            body, _ENTITY_NAMES_PROPERTY, function_name, _is_name_list
+        )
+        if found is None:
+            logger.warning(
+                "%s response carried no unambiguous list of table names; "
+                "returning it raw",
+                function_name,
+            )
+            result["normalized"] = False
+            result["message"] = (
+                f"{function_name} answered successfully, but no unambiguous list "
+                f"of table names could be located (expected an "
+                f"{_ENTITY_NAMES_PROPERTY} array). No names and no counts are "
+                "reported and none are guessed — do NOT read this as 'no eligible "
+                "tables'. The response is returned unchanged (minus the @odata.* "
+                "envelope) under raw_response; read the list from there."
+            )
+            result["raw_response"] = body
+            return finalize_response(result)
+
+        source, all_names = found
+        page = all_names[: params.top]
+        result["normalized"] = True
+        result["source"] = source
+        result["count"] = len(page)
+        result["total_count"] = len(all_names)
+        result["has_more"] = len(all_names) > len(page)
+        result["table_logical_names"] = page
+        if result["has_more"]:
+            result["message"] = (
+                f"{function_name} returned {len(all_names)} table names; the first "
+                f"{len(page)} are included. Raise top (max 5000) to see more, or "
+                "use dataverse_check_relationship_eligibility to test one specific "
+                "table instead of scanning this list."
+            )
+        return finalize_response(result)
+    except Exception as e:
+        return tool_error_response(e, "dataverse_get_valid_relationship_entities")

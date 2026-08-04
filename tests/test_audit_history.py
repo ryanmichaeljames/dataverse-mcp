@@ -3,8 +3,16 @@
 Coverage:
 - RetrieveRecordChangeHistoryInput / GetAuditDetailsInput / ListAuditInput
   model validation (required fields, GUID format, extra='forbid').
-- dataverse_retrieve_record_change_history happy path — AuditDetailCollection response.
-- dataverse_retrieve_record_change_history error path — auditing-disabled HTTP error.
+- dataverse_retrieve_record_change_history happy path — AuditDetailCollection response,
+  with the org-level audit-CONFIGURATION rows partitioned out of the changes.
+- dataverse_retrieve_record_change_history keeps an entry whose @odata.type it does not
+  recognize as a RESULT rather than dropping it.
+- dataverse_retrieve_record_change_history suppresses the TotalRecordCount = -1 sentinel.
+- dataverse_retrieve_record_change_history reports has_more when the client-side trim cut
+  genuine changes, even though the server said MoreRecords: false.
+- dataverse_retrieve_record_change_history degrades to normalized: false + raw_response
+  when the AuditDetailCollection container is missing — never a fabricated empty list.
+- dataverse_retrieve_record_change_history error path — HTTP error surfaced structurally.
 - dataverse_get_audit_details happy path — bound function URL form.
 - dataverse_get_audit_details 404 path — audit record not found.
 - dataverse_list_audit happy path — paginated records with filter/orderby.
@@ -13,6 +21,7 @@ Coverage:
 """
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -37,6 +46,17 @@ from dataverse_mcp.tools.security import (
 _BASE_URL = "https://yourorg.crm.dynamics.com"
 _ACCOUNT_ID = "aaaabbbb-0000-cccc-1111-dddd2222eeee"
 _AUDIT_ID = "11112222-3333-4444-5555-666677778888"
+
+# The org-level audit-CONFIGURATION row Dataverse attaches to EVERY change-history
+# response whatever the target: no @odata.type at all, AuditRecord and nothing else.
+_CONFIGURATION_ROW = {
+    "AuditRecord": {
+        "auditid": _AUDIT_ID,
+        "action": 110,
+        "attributemask": "",
+        "objecttypecode": "organization",
+    }
+}
 
 
 # ---------------------------------------------------------------------------
@@ -198,34 +218,67 @@ def test_list_audit_input_extra_field_forbidden() -> None:
 # ---------------------------------------------------------------------------
 
 
+def _attribute_detail(name: str) -> dict:
+    """A genuine AttributeAuditDetail — the shape a real change arrives in."""
+    return {
+        "@odata.type": "#Microsoft.Dynamics.CRM.AttributeAuditDetail",
+        "AuditRecord": {
+            "auditid": _AUDIT_ID,
+            "createdon": "2024-06-01T12:00:00Z",
+            "operation": 2,
+            "action": 2,
+            "objecttypecode": "account",
+        },
+        "OldValue": {"name": f"Old {name}"},
+        "NewValue": {"name": f"New {name}"},
+    }
+
+
+async def _run_record_change_history(body: dict, **overrides: Any) -> dict:
+    """Call the tool against a mocked response body and return the parsed result."""
+    ctx = _make_ctx(_make_app_ctx())
+    params = RetrieveRecordChangeHistoryInput(
+        dataverse_url=_BASE_URL,
+        entity_set_name="accounts",
+        record_id=_ACCOUNT_ID,
+        **overrides,
+    )
+    with (
+        patch(
+            "dataverse_mcp.tools.security.build_headers",
+            new=AsyncMock(return_value={"Authorization": "Bearer token"}),
+        ),
+        patch(
+            "dataverse_mcp.tools.security.request_with_retry",
+            new=AsyncMock(return_value=_mock_response(200, body)),
+        ),
+    ):
+        return json.loads(await dataverse_retrieve_record_change_history(params, ctx))
+
+
 @pytest.mark.asyncio
 async def test_retrieve_record_change_history_happy_path() -> None:
-    """Returns structured AuditDetailCollection with count/has_more."""
-    audit_details = [
-        {
-            "@odata.type": "#Microsoft.Dynamics.CRM.AttributeAuditDetail",
-            "AuditRecord": {
-                "auditid": _AUDIT_ID,
-                "createdon": "2024-06-01T12:00:00Z",
-                "operation": 2,
-                "action": 2,
-                "objecttypecode": "account",
-            },
-            "OldValue": {"name": "Old Corp"},
-            "NewValue": {"name": "New Corp"},
-        }
-    ]
+    """Configuration rows are partitioned out of count/has_more, not counted as changes.
+
+    The two org-level audit-CONFIGURATION rows accompany EVERY response whatever the
+    target, so counting the raw list reported changes that never happened. They are
+    surfaced under their own key rather than dropped, and their POSITION in the list is
+    deliberately not the leading one here — classification is by shape, never by index.
+    """
     api_body = {
         "AuditDetailCollection": {
-            "AuditDetails": audit_details,
+            "AuditDetails": [
+                _CONFIGURATION_ROW,
+                _attribute_detail("Corp"),
+                _CONFIGURATION_ROW,
+            ],
             "MoreRecords": False,
             "PagingCookie": None,
             "TotalRecordCount": 1,
         }
     }
 
-    app_ctx = _make_app_ctx()
-    ctx = _make_ctx(app_ctx)
+    ctx = _make_ctx(_make_app_ctx())
     params = RetrieveRecordChangeHistoryInput(
         dataverse_url=_BASE_URL,
         entity_set_name="accounts",
@@ -245,11 +298,16 @@ async def test_retrieve_record_change_history_happy_path() -> None:
         result = await dataverse_retrieve_record_change_history(params, ctx)
 
     data = json.loads(result)
-    assert data["count"] == 1
+    assert data["normalized"] is True
+    assert data["count"] == 1, "an audit-configuration row was counted as a change"
     assert data["has_more"] is False
     assert data["entity_set_name"] == "accounts"
     assert data["record_id"] == _ACCOUNT_ID
     assert len(data["audit_details"]) == 1
+    assert data["audit_details"][0]["@odata.type"].endswith("AttributeAuditDetail")
+    assert data["audit_configuration_events_count"] == 2
+    assert data["audit_configuration_events"] == [_CONFIGURATION_ROW, _CONFIGURATION_ROW]
+    assert "audit_configuration_events" in data["message"]
     assert data["total_record_count"] == 1
 
     # Verify URL encodes Target as alias @p1 with relative @odata.id
@@ -261,22 +319,119 @@ async def test_retrieve_record_change_history_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retrieve_record_change_history_audit_disabled_surfaces_error() -> None:
-    """HTTP error (e.g., audit disabled) returns structured error, never raises."""
+async def test_retrieve_record_change_history_keeps_unrecognized_detail_types() -> None:
+    """An unknown @odata.type is an unknown RESULT and must never be dropped.
+
+    A record-scoped call spans more subtypes than a column-scoped one, so filtering to
+    AttributeAuditDetail would silently lose sharing, relationship and access history.
+    """
+    entries = [
+        {"@odata.type": "#Microsoft.Dynamics.CRM.ShareAuditDetail", "AuditRecord": {}},
+        {"@odata.type": "#Microsoft.Dynamics.CRM.SomethingNotYetInvented"},
+        "not-an-object",
+        _CONFIGURATION_ROW,
+    ]
+    data = await _run_record_change_history(
+        {"AuditDetailCollection": {"AuditDetails": entries, "MoreRecords": False}}
+    )
+
+    assert data["count"] == 3, f"an entry was dropped: {data['audit_details']}"
+    assert data["audit_details"] == entries[:3]
+    assert data["audit_configuration_events_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retrieve_record_change_history_suppresses_negative_total() -> None:
+    """TotalRecordCount = -1 means 'not counted' and is omitted, never passed through."""
+    data = await _run_record_change_history(
+        {
+            "AuditDetailCollection": {
+                "AuditDetails": [_attribute_detail("Corp")],
+                "MoreRecords": False,
+                "TotalRecordCount": -1,
+            }
+        }
+    )
+
+    assert "total_record_count" not in data
+    assert data["count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_retrieve_record_change_history_has_more_covers_the_trim() -> None:
+    """has_more is true when the client-side trim cut genuine rows, MoreRecords or not.
+
+    PagingInfo is not sent, so `top` is applied here; reporting only the server's flag
+    told a caller whose page had been cut that they already had everything.
+    """
+    data = await _run_record_change_history(
+        {
+            "AuditDetailCollection": {
+                "AuditDetails": [
+                    _attribute_detail("One"),
+                    _CONFIGURATION_ROW,
+                    _attribute_detail("Two"),
+                ],
+                "MoreRecords": False,
+            }
+        },
+        top=1,
+    )
+
+    assert data["count"] == 1
+    assert data["has_more"] is True
+
+    # The configuration rows are NOT changes, so trimming to a top that covers every
+    # genuine row must not claim there is more.
+    exact = await _run_record_change_history(
+        {
+            "AuditDetailCollection": {
+                "AuditDetails": [_attribute_detail("One"), _CONFIGURATION_ROW],
+                # A truthy non-bool must not be read as the server saying "more".
+                "MoreRecords": 1,
+            }
+        },
+        top=1,
+    )
+    assert exact["count"] == 1
+    assert exact["has_more"] is False
+
+
+@pytest.mark.asyncio
+async def test_retrieve_record_change_history_missing_container_is_not_no_changes() -> None:
+    """A payload without AuditDetailCollection returns the raw body, not an empty list."""
+    data = await _run_record_change_history({"@odata.context": "...", "Unexpected": 1})
+
+    assert data.get("error") is not True
+    assert data["normalized"] is False
+    assert "audit_details" not in data, "an empty change list was fabricated"
+    assert "count" not in data
+    assert data["raw_response"] == {"Unexpected": 1}
+    assert "AuditDetailCollection" in data["message"]
+
+
+@pytest.mark.asyncio
+async def test_retrieve_record_change_history_http_error_surfaces_structurally() -> None:
+    """An HTTP error returns a structured error, never raises.
+
+    The wrong (singular) entity set is the live-confirmed failure here — a 404 NAMING
+    the bad segment. Auditing being disabled is NOT one of these: it is live-confirmed
+    to return HTTP 200 with zero genuine changes.
+    """
     app_ctx = _make_app_ctx()
     ctx = _make_ctx(app_ctx)
     params = RetrieveRecordChangeHistoryInput(
         dataverse_url=_BASE_URL,
-        entity_set_name="accounts",
+        entity_set_name="account",
         record_id=_ACCOUNT_ID,
     )
 
     error_resp = _mock_response(
-        status_code=400,
+        status_code=404,
         json_body={
             "error": {
-                "code": "0x80044350",
-                "message": "Auditing is not enabled for this organization.",
+                "code": "0x80060888",
+                "message": "Resource not found for the segment 'account'.",
             }
         },
     )
@@ -295,7 +450,8 @@ async def test_retrieve_record_change_history_audit_disabled_surfaces_error() ->
 
     data = json.loads(result)
     assert data["error"] is True
-    assert "400" in data["message"] or "Auditing" in data["message"]
+    assert "404" in data["message"]
+    assert "account" in data["message"]
 
 
 # ---------------------------------------------------------------------------

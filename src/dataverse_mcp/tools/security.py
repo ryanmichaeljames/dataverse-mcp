@@ -1967,6 +1967,56 @@ _DEFAULT_AUDIT_SELECT = [
     "transactionid",
 ]
 
+# SHARED BY BOTH audit-history tools below — the record-scoped
+# RetrieveRecordChangeHistory and the column-scoped RetrieveAttributeChangeHistory —
+# which is why the names say AUDIT DETAIL and not "attribute": $metadata confirms
+# RetrieveRecordChangeHistory returns RetrieveAttributeChangeHistoryResponse, the SAME
+# complex type the attribute function returns, so for both of them the entries sit TWO
+# levels down, not one. A missing container is NOT "no changes"; it is a payload this
+# code did not understand, and is reported as such rather than normalized into [].
+_AUDIT_DETAIL_CONTAINER = "AuditDetailCollection"
+_AUDIT_DETAIL_ENTRIES = "AuditDetails"
+
+# Org-level audit-CONFIGURATION rows ACCOMPANY EVERY response from BOTH functions,
+# whatever the target — live-confirmed two of them (AuditRecord.action 110 and 107,
+# attributemask '', objecttypecode 'organization') on a call whose true answer was "no
+# changes to this column". Their POSITION in the list is not a contract and is never
+# relied on here; they are classified by @odata.type alone (see
+# _is_audit_configuration_event). Counting them made the tools report count: 2 for a
+# target that never changed AND kept the entries list permanently non-empty, which is
+# why the audit_configuration diagnosis in the column-scoped tool never once fired.
+# They are separated out, not discarded.
+_AUDIT_DETAIL_TYPE_KEY = "@odata.type"
+_ATTRIBUTE_AUDIT_DETAIL_TYPE = "#Microsoft.Dynamics.CRM.AttributeAuditDetail"
+
+
+def _is_audit_configuration_event(entry: Any) -> bool:
+    """True ONLY for the audit-configuration rows Dataverse returns on every call.
+
+    Classification is by SHAPE, never by position in the list: the configuration rows
+    accompany every response but where they land in it is not a documented contract.
+
+    The two kinds are cleanly separable live, and the test is deliberately narrow so
+    that "not a result" is something this code has to PROVE:
+
+      * a genuine change carries ``@odata.type`` (``AttributeAuditDetail`` is the one
+        a column-scoped call is expected to yield) alongside ``OldValue``/``NewValue``;
+      * a configuration row carries NO ``@odata.type`` at all and ``AuditRecord`` and
+        nothing else.
+
+    Anything else — an unfamiliar ``@odata.type`` (``AuditDetail`` has ~7 subtypes in
+    $metadata), a typeless entry with more than ``AuditRecord`` on it, a non-object —
+    is an UNKNOWN RESULT, not preamble, and is surfaced as a change. Dropping an entry
+    this code failed to recognize would silently lose audit history, so the default
+    direction of the error is "keep it".
+
+    OData annotations (``@odata.etag``, ``Prop@odata.bind``) are ignored when deciding
+    whether ``AuditRecord`` stands alone; only a real ``@odata.type`` disqualifies.
+    """
+    if not isinstance(entry, dict) or _AUDIT_DETAIL_TYPE_KEY in entry:
+        return False
+    return {key for key in entry if "@odata." not in key} == {"AuditRecord"}
+
 
 @tool(
     name="dataverse_retrieve_record_change_history",
@@ -1983,15 +2033,59 @@ async def dataverse_retrieve_record_change_history(
 ) -> str:
     """Retrieve the full audit change history for a specific record.
 
-    Calls the unbound RetrieveRecordChangeHistory function which returns an
-    AuditDetailCollection. Each AuditDetail is polymorphic — the most common
-    subtype is AttributeAuditDetail (OldValue, NewValue per changed field).
-    All subtypes include an AuditRecord navigation property with the audit
-    metadata (who, when, what operation).
+    Calls the unbound RetrieveRecordChangeHistory function, which returns the same
+    AuditDetailCollection container as its column-scoped sibling
+    dataverse_get_attribute_change_history — the entries sit TWO levels down
+    (AuditDetailCollection -> AuditDetails), not one.
 
-    Note: requires auditing enabled on the org and the target table. If auditing
-    is disabled, Dataverse returns an HTTP error — check the error message for
-    audit configuration guidance.
+    AN HTTP 200 IS NOT PROOF OF ANYTHING, AND ON A 404 READ THE ERROR CODE. Live-
+    confirmed on this function, and the earlier note that auditing being off produces
+    an HTTP error was WRONG:
+      * auditing disabled at organization/table level returns HTTP 200 carrying the
+        audit-configuration rows described below and ZERO genuine changes — not an
+        error, and no error message to read;
+      * MOST tables do NOT validate that the target record exists: a well-formed but
+        NONEXISTENT record id with the CORRECT plural entity set returns HTTP 200 with
+        zero genuine changes (12 of 15 entity sets swept on one org behaved this way,
+        'accounts' among them). An empty answer is therefore never evidence that the
+        record is there, or that it never changed;
+      * a 404 is NOT automatically a naming mistake — the error CODE decides.
+        [0x80060888] "Resource not found for the segment '<name>'" NAMES the bad
+        segment: the entity set is wrong (typically the singular slipped in for the
+        plural) or that table is not provisioned on this org, so fix the name with
+        dataverse_get_entity_sets rather than hunt a deleted row. [0x80048d02] has
+        been seen instead from a CORRECT plural entity set ('audits') and there means
+        what it says — the row really is absent. So some entity sets DO validate the
+        target. One org and 15 entity sets were swept, so treat neither group as a
+        complete list and read the code that actually came back.
+    Use dataverse_get_attribute_change_history when the question is about one column;
+    it additionally diagnoses which level auditing is switched off at.
+
+    NOT EVERY ENTRY IS A RESULT. Dataverse adds org-level audit-CONFIGURATION rows
+    (auditing itself being switched on/off, AuditRecord.objecttypecode 'organization')
+    to EVERY response whatever the target — a bogus GUID gets them too. They are
+    identified by their SHAPE (no @odata.type, AuditRecord and nothing else) and never
+    by their position: where they land in the list is not a contract. They are split
+    out into audit_configuration_events (with audit_configuration_events_count) and are
+    NOT counted: audit_details, count and has_more cover this record's own changes only.
+
+    ENTRIES ARE POLYMORPHIC — read each one's @odata.type. A RECORD-scoped call spans
+    everything that happened to the record, so expect a wider mix than a column-scoped
+    one: AttributeAuditDetail (OldValue/NewValue per changed field),
+    RelationshipAuditDetail, ShareAuditDetail, RolePrivilegeAuditDetail and
+    UserAccessAuditDetail are all documented subtypes. Every subtype carries an
+    AuditRecord navigation property (who, when, what operation). An entry with an
+    UNRECOGNIZED @odata.type is reported as a change, never quietly dropped.
+
+    RESPONSE SHAPE IS CHECKED, NOT ASSUMED. If the AuditDetailCollection container is
+    absent or is not a list of entries, the tool returns normalized: false with the raw
+    body — a missing container is NOT reported as "no changes".
+
+    PagingInfo is not sent, so changes are trimmed client-side to top and has_more
+    reports the server's MoreRecords OR anything the trim cut. total_record_count
+    appears ONLY when Dataverse supplied a real count: it is live-confirmed to arrive
+    as -1 here ("not counted"), and a negative value is suppressed rather than passed
+    on as a number that reads like a count.
 
     URL form: GET /api/data/v9.2/RetrieveRecordChangeHistory(Target=@p1)
               ?@p1={'@odata.id':'<entity_set_name>(<record_id>)'}
@@ -2003,7 +2097,12 @@ async def dataverse_retrieve_record_change_history(
         return json.dumps({"error": True, "message": str(e)})
 
     api_base = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
-    # Build the alias value: relative @odata.id reference
+    # Build the alias value: relative @odata.id reference. This single-quoted,
+    # non-urlencoded spelling is live-tested against three alternatives (including the
+    # json.dumps + percent-encode form the attribute tool uses) and all four returned
+    # byte-identical responses. Leave it alone; the model pins entity_set_name to the
+    # identifier grammar and record_id to the GUID pattern, so neither half can express
+    # the quote or bracket a breakout out of the alias would need.
     target_ref = f"{params.entity_set_name}({params.record_id})"
     alias_value = f"{{'@odata.id':'{target_ref}'}}"
     url = (
@@ -2011,39 +2110,120 @@ async def dataverse_retrieve_record_change_history(
         f"?@p1={alias_value}"
     )
 
+    # The whole body is guarded, not just the HTTP call: "do not raise uncaught
+    # exceptions from tools" is unconditional, and everything below reads a payload
+    # whose real shape has repeatedly differed from the documented one.
     try:
         headers = await build_headers(app_ctx, base_url)
         resp = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
         resp.raise_for_status()
-        body = resp.json()
 
-        # NOTE: this shares the audit-configuration preamble behaviour documented on
-        # dataverse_get_attribute_change_history — Dataverse returns org-level
-        # audit-configuration rows alongside the record's own changes, and they are
-        # counted here. Left as-is deliberately; changing this tool's response shape
-        # is a separate decision.
-        collection = body.get("AuditDetailCollection", body)
-        details = collection.get("AuditDetails", [])
-        more_records = collection.get("MoreRecords", False)
-        paging_cookie = collection.get("PagingCookie")
-        total = collection.get("TotalRecordCount")
+        try:
+            payload: Any = resp.json()
+        except ValueError:
+            logger.warning("RetrieveRecordChangeHistory returned a non-JSON body")
+            payload = resp.text or None
 
-        # Cap to requested top
-        details = details[: params.top]
+        body: Any = payload
+        if isinstance(payload, dict):
+            body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
 
-        response: dict = {
+        response: dict[str, Any] = {
             "entity_set_name": params.entity_set_name,
             "record_id": params.record_id,
-            "audit_details": details,
-            "count": len(details),
-            "has_more": more_records,
         }
-        if total is not None:
+
+        # Both levels are isinstance-checked. The old code fell back to the whole body
+        # when the container was missing and then .get() straight off it, which turned
+        # an unrecognized payload into a confident, fabricated "no changes".
+        container = body.get(_AUDIT_DETAIL_CONTAINER) if isinstance(body, dict) else None
+        entries = (
+            container.get(_AUDIT_DETAIL_ENTRIES)
+            if isinstance(container, dict)
+            else None
+        )
+        if not isinstance(entries, list):
+            logger.warning(
+                "RetrieveRecordChangeHistory response carried no readable %s.%s; "
+                "returning it raw",
+                _AUDIT_DETAIL_CONTAINER,
+                _AUDIT_DETAIL_ENTRIES,
+            )
+            response["normalized"] = False
+            response["message"] = (
+                f"Dataverse answered successfully, but the payload carried no "
+                f"readable {_AUDIT_DETAIL_CONTAINER}.{_AUDIT_DETAIL_ENTRIES} "
+                "list, so the entries could not be located. audit_details and count "
+                "are OMITTED rather than reported as empty — a missing container is "
+                "NOT 'no changes'. The response is returned unchanged (minus the "
+                "@odata.* envelope) under raw_response; read it there."
+            )
+            response["raw_response"] = body
+            return finalize_response(response)
+
+        # PARTITION FIRST, then count and trim. The audit-configuration rows accompany
+        # every response, so slicing the raw list counted rows that are not changes to
+        # this record — and kept the list permanently non-empty. Classification is on
+        # the NEGATIVE (see _is_audit_configuration_event): an entry with an
+        # @odata.type this code does not recognize is an unknown RESULT and is kept,
+        # because dropping it would silently lose audit history.
+        changes: list[Any] = []
+        configuration_events: list[Any] = []
+        for entry in entries:
+            if _is_audit_configuration_event(entry):
+                configuration_events.append(entry)
+            else:
+                changes.append(entry)
+
+        page = changes[: params.top]
+        more_records = container.get("MoreRecords")
+        paging_cookie = container.get("PagingCookie")
+        total = container.get("TotalRecordCount")
+
+        response["normalized"] = True
+        response["audit_details"] = page
+        response["count"] = len(page)
+        # `is True` and not truthiness: bool is a subclass of int, so a stray 1 must
+        # not be read as the server saying "more". The second half covers the trim —
+        # reporting only the server's flag told a caller whose page was cut that they
+        # had everything.
+        response["has_more"] = more_records is True or len(changes) > len(page)
+        # Surfaced, never silently swallowed: they are real audit rows, just not an
+        # answer to the question that was asked.
+        # DELIBERATELY NOT BOUNDED BY top. The partition runs before the slice, so top
+        # caps audit_details only and this list is returned whole. Live it holds two
+        # platform-written rows, so there is nothing to cap; capping it would hide rows
+        # with no has_more-style flag to say so.
+        response["audit_configuration_events"] = configuration_events
+        response["audit_configuration_events_count"] = len(configuration_events)
+        if configuration_events:
+            response["message"] = (
+                f"{len(configuration_events)} organization-level audit-CONFIGURATION "
+                "row(s) were separated out of this response into "
+                "audit_configuration_events (records of auditing itself being turned "
+                "on or off). Dataverse returns them on EVERY "
+                "RetrieveRecordChangeHistory call regardless of the target, so they "
+                "are not changes to this record: audit_details, count and has_more "
+                "cover this record's own changes only."
+            )
+        # Emitted ONLY when the server really supplied a usable count, and never
+        # substituted with len(changes). isinstance(total, bool) is excluded because
+        # bool is a subclass of int. A NEGATIVE value is suppressed: this function is
+        # live-confirmed to answer TotalRecordCount = -1, meaning "not counted", which
+        # makes this branch effectively DEAD on every org seen so far.
+        # IT WOULD NOT AGREE WITH count IF IT EVER FIRED: TotalRecordCount is the
+        # SERVER's total over the UNPARTITIONED list, so it includes the org-level
+        # audit-configuration rows that audit_details/count deliberately exclude. Do
+        # not "fix" the suppression on its own — emitting it as-is would ship a pair of
+        # numbers that disagree by the configuration-row count.
+        if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
             response["total_record_count"] = total
-        if paging_cookie:
+        if isinstance(paging_cookie, str) and paging_cookie:
             response["paging_cookie"] = paging_cookie
 
         return finalize_response(response)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_retrieve_record_change_history")
     except Exception as e:
         return tool_error_response(e, "dataverse_retrieve_record_change_history")
 
@@ -2167,56 +2347,9 @@ async def dataverse_list_audit(params: ListAuditInput, ctx: Context) -> str:
 # Column-scoped audit history (RetrieveAttributeChangeHistory)
 # ---------------------------------------------------------------------------
 
-# The function's return type has ONE property, AuditDetailCollection, of the same
-# complex type RetrieveRecordChangeHistory returns — so the entries sit TWO levels
-# down, not one. A missing container is NOT "no changes"; it is a payload this code
-# did not understand, and is reported as such rather than normalized into [].
-_ATTRIBUTE_HISTORY_CONTAINER = "AuditDetailCollection"
-_ATTRIBUTE_HISTORY_ENTRIES = "AuditDetails"
-
-# Org-level audit-CONFIGURATION rows ACCOMPANY EVERY RetrieveAttributeChangeHistory
-# response, whatever the target — live-confirmed two of them (AuditRecord.action 110
-# and 107, attributemask '', objecttypecode 'organization') on a call whose true answer
-# was "no changes to this column". Their POSITION in the list is not a contract and is
-# never relied on here; they are classified by @odata.type alone (see
-# _is_audit_configuration_event). Counting them made the tool report count: 2 for a
-# column that never changed AND kept the entries list permanently non-empty, which is
-# why the audit_configuration diagnosis below never once fired. They are separated out
-# here, not discarded.
-_ATTRIBUTE_HISTORY_TYPE_KEY = "@odata.type"
-_ATTRIBUTE_AUDIT_DETAIL_TYPE = "#Microsoft.Dynamics.CRM.AttributeAuditDetail"
-
 # Ordered OUTERMOST-first: auditing must be on at all three levels for a row to be
 # written, so the first level found disabled is the one worth naming.
 _AUDIT_PROBE_LEVELS = ("organization", "table", "column")
-
-
-def _is_audit_configuration_event(entry: Any) -> bool:
-    """True ONLY for the audit-configuration rows Dataverse returns on every call.
-
-    Classification is by SHAPE, never by position in the list: the configuration rows
-    accompany every response but where they land in it is not a documented contract.
-
-    The two kinds are cleanly separable live, and the test is deliberately narrow so
-    that "not a result" is something this code has to PROVE:
-
-      * a genuine change carries ``@odata.type`` (``AttributeAuditDetail`` is the one
-        a column-scoped call is expected to yield) alongside ``OldValue``/``NewValue``;
-      * a configuration row carries NO ``@odata.type`` at all and ``AuditRecord`` and
-        nothing else.
-
-    Anything else — an unfamiliar ``@odata.type`` (``AuditDetail`` has ~7 subtypes in
-    $metadata), a typeless entry with more than ``AuditRecord`` on it, a non-object —
-    is an UNKNOWN RESULT, not preamble, and is surfaced as a change. Dropping an entry
-    this code failed to recognize would silently lose audit history, so the default
-    direction of the error is "keep it".
-
-    OData annotations (``@odata.etag``, ``Prop@odata.bind``) are ignored when deciding
-    whether ``AuditRecord`` stands alone; only a real ``@odata.type`` disqualifies.
-    """
-    if not isinstance(entry, dict) or _ATTRIBUTE_HISTORY_TYPE_KEY in entry:
-        return False
-    return {key for key in entry if "@odata." not in key} == {"AuditRecord"}
 
 
 def _plain_bool(value: Any) -> bool | None:
@@ -2473,11 +2606,11 @@ async def dataverse_get_attribute_change_history(
     — $filter on the root EntityDefinitions collection is refused with HTTP 400
     [0x80060888]. Use dataverse_get_entity_sets to confirm the plural.
 
-    DATAVERSE DOES NOT VALIDATE THE TARGET, AND A WRONG ENTITY SET IS A DIFFERENT
-    ERROR. Live-confirmed on this function, and the two cases are trivially told
-    apart — the older warning that they were indistinguishable was wrong:
+    ON A 404, READ THE ERROR CODE — DO NOT ASSUME WHICH FAILURE IT IS. Live-confirmed
+    on this function, and the older warning that a missing record and a wrong entity
+    set were indistinguishable was wrong:
       * a well-formed but NONEXISTENT record id with the CORRECT plural entity set
-        returns HTTP 200, not a 404. The function never checks that the record
+        returns HTTP 200, not a 404. The function did not check that the record
         exists, so a bogus GUID (or a deleted record) simply yields zero changes and
         the audit_configuration diagnosis below. A successful empty answer is
         therefore never proof that the record is there.
@@ -2485,6 +2618,13 @@ async def dataverse_get_attribute_change_history(
         [0x80060888] "Resource not found for the segment '<name>'" — which NAMES the
         bad segment. That message is the singular-for-plural slip, not a missing
         record: fix the entity set name rather than hunting a deleted row.
+    Do NOT read those two as an exhaustive split. On the sibling function
+    RetrieveRecordChangeHistory, a sweep of 15 entity sets found a THIRD outcome —
+    [0x80048d02] from a CORRECT plural entity set ('audits'), meaning the row really
+    was absent, i.e. some entity sets DO validate the target. That sweep was run
+    against the record-scoped function, not this one, so it is not confirmed here;
+    it is reason enough to read the code that actually came back rather than trust
+    a two-case rule.
 
     AN EMPTY RESULT IS AMBIGUOUS, AND THIS TOOL RESOLVES IT. Audit rows are written
     only where auditing is enabled at organization AND table AND column level, so
@@ -2599,9 +2739,9 @@ async def dataverse_get_attribute_change_history(
             "target": target,
         }
 
-        container = body.get(_ATTRIBUTE_HISTORY_CONTAINER) if isinstance(body, dict) else None
+        container = body.get(_AUDIT_DETAIL_CONTAINER) if isinstance(body, dict) else None
         entries = (
-            container.get(_ATTRIBUTE_HISTORY_ENTRIES)
+            container.get(_AUDIT_DETAIL_ENTRIES)
             if isinstance(container, dict)
             else None
         )
@@ -2609,13 +2749,13 @@ async def dataverse_get_attribute_change_history(
             logger.warning(
                 "RetrieveAttributeChangeHistory response carried no readable %s.%s; "
                 "returning it raw",
-                _ATTRIBUTE_HISTORY_CONTAINER,
-                _ATTRIBUTE_HISTORY_ENTRIES,
+                _AUDIT_DETAIL_CONTAINER,
+                _AUDIT_DETAIL_ENTRIES,
             )
             result["normalized"] = False
             result["message"] = (
                 f"Dataverse answered successfully, but the payload carried no "
-                f"readable {_ATTRIBUTE_HISTORY_CONTAINER}.{_ATTRIBUTE_HISTORY_ENTRIES} "
+                f"readable {_AUDIT_DETAIL_CONTAINER}.{_AUDIT_DETAIL_ENTRIES} "
                 "list, so the entries could not be located. audit_details and count "
                 "are OMITTED rather than reported as empty — a missing container is "
                 "NOT 'no changes'. The response is returned unchanged (minus the "
@@ -2650,7 +2790,7 @@ async def dataverse_get_attribute_change_history(
         result["has_more"] = more_records is True or len(changes) > len(page)
         result["detail_types"] = dict(
             Counter(
-                entry.get(_ATTRIBUTE_HISTORY_TYPE_KEY, "unspecified")
+                entry.get(_AUDIT_DETAIL_TYPE_KEY, "unspecified")
                 if isinstance(entry, dict)
                 else "non-object"
                 for entry in page
@@ -2658,6 +2798,10 @@ async def dataverse_get_attribute_change_history(
         )
         # Surfaced, never silently swallowed: they are real audit rows, just not an
         # answer to the question that was asked.
+        # DELIBERATELY NOT BOUNDED BY top. The partition runs before the slice, so top
+        # caps audit_details only and this list is returned whole. Live it holds two
+        # platform-written rows, so there is nothing to cap; capping it would hide rows
+        # with no has_more-style flag to say so.
         result["audit_configuration_events"] = configuration_events
         result["audit_configuration_events_count"] = len(configuration_events)
         if configuration_events:
@@ -2675,7 +2819,13 @@ async def dataverse_get_attribute_change_history(
         # substituted with len(changes), and a NEGATIVE value is suppressed: this
         # function is live-confirmed to answer TotalRecordCount = -1 both with and
         # without PagingInfo, meaning "not counted" — emitting -1 as a total would
-        # hand the caller a number that reads as a count and is not one.
+        # hand the caller a number that reads as a count and is not one. That makes
+        # this branch effectively DEAD on every org seen so far.
+        # IT WOULD NOT AGREE WITH count IF IT EVER FIRED: TotalRecordCount is the
+        # SERVER's total over the UNPARTITIONED list, so it includes the org-level
+        # audit-configuration rows that audit_details/count deliberately exclude. Do
+        # not "fix" the suppression on its own — emitting it as-is would ship a pair of
+        # numbers that disagree by the configuration-row count.
         if isinstance(total, int) and not isinstance(total, bool) and total >= 0:
             result["total_record_count"] = total
         if isinstance(paging_cookie, str) and paging_cookie:

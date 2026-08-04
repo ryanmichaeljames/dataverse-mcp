@@ -118,6 +118,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `audit_configuration` block names the outermost level at which auditing is off (organization /
   table / column), or confirms auditing is on and nothing was recorded.
 
+### Changed
+- **Breaking — `dataverse_retrieve_record_change_history` response shape.** The org-level
+  audit-**configuration** rows Dataverse attaches to every response were being counted as results, so
+  `count` was inflated (and non-zero for records that never changed); they now move to
+  `audit_configuration_events` / `audit_configuration_events_count` and `count`/`has_more`/
+  `audit_details` cover genuine changes only. `total_record_count` is now omitted when Dataverse
+  sends its `-1` "not counted" sentinel instead of being emitted as `-1`, `has_more` is now true when
+  the client-side `top` trim cut rows (it previously reported only the server's `MoreRecords`), and a
+  missing/malformed `AuditDetailCollection` returns `normalized: false` + `raw_response` instead of a
+  fabricated empty list. The docstring's claim that auditing being disabled returns an HTTP error was
+  false: that case is a live-confirmed HTTP 200 with zero genuine changes. It no longer claims a 404
+  always means a wrong entity set name either — most tables do not validate the target id, but a
+  15-entity-set sweep on one org found `audits` answering 404 `[0x80048d02]` for a genuinely absent
+  row, so the error code decides.
+
 ## [3.8.0] - 2026-07-29
 
 ### Fixed

@@ -713,3 +713,11 @@ Restart the MCP server in VS Code after code changes to pick up the new source.
 ## License
 
 MIT
+
+---
+
+## Disclaimer
+
+Independent community project. Not affiliated with, endorsed by, or supported by Microsoft. For the first-party runtime server, see Microsoft's [Dataverse MCP Server](https://learn.microsoft.com/en-us/power-platform/release-plan/2025wave1/data-platform/dataverse-mcp-server).
+
+"Dataverse" is a trademark of the President and Fellows of Harvard College. "Microsoft Dataverse" and "Power Platform" are trademarks of the Microsoft group of companies. Used here only to describe the systems this tool works with.

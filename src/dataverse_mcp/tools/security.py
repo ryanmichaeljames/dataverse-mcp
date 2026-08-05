@@ -540,27 +540,31 @@ async def dataverse_get_team_privileges(
 
     AN EMPTY LIST IS A REAL ANSWER, NOT A FAILURE. count: 0 with normalized: true
     means the team has NO DIRECTLY-ASSIGNED SECURITY ROLES — a common and entirely
-    normal state; on the org this was verified against, EVERY team returned an
-    empty RolePrivileges. Do not read it as an error, and do not read it as "this
-    team's members have no access": members still hold their own roles, and
-    dataverse_audit_user_access is the tool for a person's effective access.
+    normal state, and the usual one: most teams get their access from their members'
+    own roles rather than from a role assigned to the team itself. Do not read it as
+    an error, and do not read it as "this team's members have no access": members
+    still hold their own roles, and dataverse_audit_user_access is the tool for a
+    person's effective access.
 
-    Entries are expected to mirror RetrieveRolePrivilegesRole's, which was verified
-    live: PrivilegeName ('prvReadAccount'), PrivilegeId, Depth, BusinessUnitId,
-    RecordFilterId, RecordFilterUniqueName. That expectation is INHERITED FROM THE
-    ROLE FUNCTION AND NOT YET VERIFIED FOR TEAMS — every team sampled returned an
-    empty list, so no team privilege ENTRY has ever been observed. Entries are
-    passed through EXACTLY as Dataverse sent them — nothing is added, renamed or
-    dropped — so trust the returned keys over this list.
+    Entries mirror RetrieveRolePrivilegesRole's, VERIFIED LIVE for teams across 484
+    entries: PrivilegeName ('prvReadAccount'), PrivilegeId, Depth, BusinessUnitId,
+    RecordFilterId, RecordFilterUniqueName — one identical key set on every entry,
+    with PrivilegeName present and populated throughout, so no name-resolution step
+    is needed. Entries are passed through EXACTLY as Dataverse sent them — nothing
+    is added, renamed or dropped — so trust the returned keys over this list.
 
     Depth is never relabelled. OData serializes the PrivilegeDepth enum as its
-    member NAME, and only member names were observed live ON THE ROLE FUNCTION
-    ("Basic", "Local", "Deep", "Global" — increasing scope, Global being org-wide);
-    whether this function returns the member name or a numeric PrivilegeDepth code
-    is likewise unverified, for the same reason. Should a numeric code arrive it is
-    reported raw: that mapping is not confirmed for this function, and a wrong
-    access-level label is more dangerous than an unlabelled one. depth_summary
-    counts every entry by its Depth value.
+    member NAME, and this function was VERIFIED LIVE to return the member name —
+    "Basic", "Local", "Deep", "Global" (increasing scope, Global being org-wide) —
+    as a STRING on every one of 484 entries, with no numeric PrivilegeDepth code
+    ever arriving. Should one nonetheless arrive it is reported raw rather than
+    mapped: a wrong access-level label is more dangerous than an unlabelled one.
+    depth_summary counts every entry by its Depth value, over the WHOLE list before
+    any trimming.
+
+    This function and dataverse_get_role_privileges return the SAME privilege set
+    for a team and its assigned role, but in a DIFFERENT ORDER — verified live as
+    equal sets, unequal sequences. Never assume the two line up by index.
 
     THE LIST CAN BE BIG AND IS TRIMMED BY DEFAULT. The function has no server-side
     paging — it returns every privilege in one response — and a team carrying a

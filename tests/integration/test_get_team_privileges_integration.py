@@ -18,22 +18,26 @@ Settled by a live run (2026-07-30):
 * a well-formed but nonexistent team id is an **HTTP 404** ``[0x80040217]``, as
   the role function is — not an empty collection.
 
-Still open, and **not answerable on an org whose teams have no directly-assigned
-roles** — every team on the org tested returned ``"RolePrivileges": []``:
+Previously open and now **answered live**, against a team carrying a directly-
+assigned role (484 privileges, ~122 KB raw):
 
-* whether entries carry the same six keys ``RetrieveRolePrivilegesRole`` returns,
-  and in particular whether ``PrivilegeName`` is present — if it is not, the tool
-  hands an LLM bare GUIDs and a name-resolution step becomes necessary;
-* whether ``Depth`` is the enum MEMBER NAME string (as on the role function) or a
-  numeric ``PrivilegeDepth`` code. **Do not map a numeric code to a label** — a
-  wrong access-level label is worse than a raw one; record the finding first;
-* the magnitude, which is why trimming exists: the role function was measured at
-  4,132 privileges in ~1.04 MB.
+* entries carry the same six keys ``RetrieveRolePrivilegesRole`` returns, as one
+  identical key set on every entry, and ``PrivilegeName`` IS present and populated
+  throughout — no name-resolution step is needed;
+* ``Depth`` is the enum MEMBER NAME **string** — ``Basic`` / ``Local`` / ``Deep`` /
+  ``Global`` — on every entry, with no numeric ``PrivilegeDepth`` code ever
+  arriving. The refusal to map a numeric code to a label therefore remains
+  unexercised live and is covered only by unit tests; keep it, a wrong
+  access-level label is worse than a raw one;
+* the tool's page is byte-identical to the head of the raw payload, and
+  ``total_count`` / ``depth_summary`` are computed over the WHOLE list before
+  trimming.
 
-**An all-empty result is an ORG-DATA limitation, not a tool failure.** A team with
-no directly-assigned security roles legitimately has no privileges, so the tests
-that need a populated list SKIP with that reason instead of failing. Assign a role
-to a team and re-run to close the open questions above.
+**An all-empty result is still an ORG-DATA limitation, not a tool failure.** Most
+teams take their access from their members' own roles, so a team with no directly-
+assigned role legitimately has no privileges, and tests needing a populated list
+SKIP with that reason rather than failing. Those skips return the moment no team
+on the org has a directly-assigned role.
 
 No team id is hardcoded: every id is discovered live. Sizes and counts are printed
 rather than asserted exactly, so an org of any scale reports its numbers instead

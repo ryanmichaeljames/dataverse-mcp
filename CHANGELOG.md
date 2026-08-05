@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.0] - 2026-08-06
+
+Fifteen read-only tools wrapping Dataverse Web API functions, taking the registered tool count from
+185 to 200. Each was verified against a live organization rather than from documentation alone, and
+that verification repeatedly contradicted the published contracts — the corrections are recorded per
+entry below.
+
+Minor rather than major, though one shipped tool's output changes: the old counts from
+`dataverse_retrieve_record_change_history` were simply wrong, so this corrects a defect rather than
+breaking a contract. **It does mean recorded counts from that tool will differ after upgrading** —
+see the entry under Changed.
+
 ### Added
 - `dataverse_get_organization_info` (`core`, read-only): fingerprints the target environment by
   merging `RetrieveVersion`, `RetrieveCurrentOrganization` and `RetrieveOrganizationInfo` — server
@@ -142,7 +154,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so `audit_configuration_events_count: 0` is normal (0 for a record created after the last such
   change, 4 for older records on the same org), and those rows carry the **target table's**
   `objecttypecode`, not `organization`.
-- **Breaking — `dataverse_retrieve_record_change_history` response shape.** The org-level
+- **`dataverse_retrieve_record_change_history` response shape corrected — counts will differ.** The org-level
   audit-**configuration** rows Dataverse attaches to every response were being counted as results, so
   `count` was inflated (and non-zero for records that never changed); they now move to
   `audit_configuration_events` / `audit_configuration_events_count` and `count`/`has_more`/
@@ -846,7 +858,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.8.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.0...HEAD
+[3.9.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.1...v3.6.0

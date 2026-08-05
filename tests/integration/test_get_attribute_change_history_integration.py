@@ -22,10 +22,14 @@ batch has differed from the real one somewhere:
   ``BooleanManagedProperty`` OBJECT — reading the object as a bool reports
   "auditing on" unconditionally;
 * THE CONFIGURATION ROWS: org-level audit-CONFIGURATION rows (no ``@odata.type``,
-  ``AuditRecord`` and nothing else) accompany EVERY response whatever the target, so
-  the raw list is never empty and counting it reports changes that do not exist. They
-  must be partitioned out of the changes by TYPE — their position in the list is not
-  a contract — and surfaced, not dropped;
+  ``AuditRecord`` and nothing else, and an all-zero ``AuditRecord._objectid_value``)
+  MAY accompany a response, and counting them reports changes that do not exist. They
+  are NOT unconditional: they arrive when an audit-configuration change falls inside
+  the TARGET RECORD'S own history window, so their presence and count vary by target
+  and ``audit_configuration_events_count: 0`` is a normal answer (live: a record
+  created after the last audit-config change got 0; two older records got 4 each).
+  They must be partitioned out of the changes by SHAPE — their position in the list is
+  not a contract — and surfaced, not dropped;
 * the two failure modes, which are NOT the same: a valid id with the WRONG (singular)
   entity set is an HTTP 404 naming the bad segment, while a NONEXISTENT record id is
   a plain HTTP 200 with zero genuine changes — Dataverse never checks that the target
@@ -80,6 +84,15 @@ _FALLBACK_ENTITY_SET = "accounts"
 _FALLBACK_COLUMN = "name"
 
 _ABSENT_RECORD_ID = "00000000-0000-0000-0000-0000000000ff"
+
+# Every audit-CONFIGURATION row carries this as AuditRecord._objectid_value: the row is
+# about auditing itself, so it points at no record. Live: 11 rows, zero divergence.
+_ALL_ZERO_GUID = "00000000-0000-0000-0000-000000000000"
+
+# The trimming test needs a column with >= 2 audited changes. Discovery verifies each
+# candidate through the tool rather than taking the first usable hit, so this caps how
+# many live verification calls that costs before the test skips.
+_MAX_VERIFICATION_CALLS = 10
 
 # The organization record's own audit toggle: switching auditing off is itself an
 # audited attribute change, so this pair has genuine history on any org where auditing
@@ -229,6 +242,7 @@ def _describe_result(result: dict) -> dict:
             "has_more",
             "total_record_count",
             "detail_types",
+            "unclassified_typeless_count",
             "audit_configuration_events_count",
             "audit_configuration",
         )
@@ -293,22 +307,42 @@ async def _organization_id() -> str | None:
 
 
 def _looks_like_configuration_row(entry: Any) -> bool:
-    """The preamble shape: no ``@odata.type`` at all, ``AuditRecord`` and nothing else.
+    """The configuration shape, all four conditions.
 
-    Mirrors ``_is_audit_configuration_event`` in the tool so this suite can assert the
-    partition from the outside rather than trusting the implementation.
+    No ``@odata.type`` at all, ``AuditRecord`` and nothing else, and an ALL-ZERO
+    ``AuditRecord._objectid_value`` — the row is about auditing itself, so it points at
+    no record. Mirrors ``_is_audit_configuration_event`` in the tool so this suite can
+    assert the partition from the outside rather than trusting the implementation.
     """
     if not isinstance(entry, dict) or "@odata.type" in entry:
         return False
-    return {key for key in entry if "@odata." not in key} == {"AuditRecord"}
+    if {key for key in entry if "@odata." not in key} != {"AuditRecord"}:
+        return False
+    audit_record = entry.get("AuditRecord")
+    if not isinstance(audit_record, dict):
+        return False
+    objectid = audit_record.get("_objectid_value")
+    if not isinstance(objectid, str):
+        return False
+    return objectid.strip().strip("{}").lower() == _ALL_ZERO_GUID
 
 
-async def _audited_target() -> tuple[str, str, str, str] | None:
+async def _audited_target(min_changes: int = 1) -> tuple[str, str, str, str] | None:
     """Find a live (entity_set, record_id, table, column) that has audit history.
 
     Walks recent UPDATE audit rows, resolves the plural for each candidate table,
     and asks RetrieveAuditDetails which column that row touched. Returns None when
     the org has no usable audit data, so callers skip rather than fail.
+
+    ``min_changes >= 2`` makes the choice DETERMINISTIC IN INTENT instead of taking the
+    first usable hit: every candidate column is verified through the tool and rejected
+    unless it really carries that many genuine changes. Taking the first hit happened to
+    land on a multi-change column on one org, so the trimming test passed by luck; as
+    unrelated audit activity accrues the first hit drifts onto a 1-entry column and the
+    test skips for a reason that has nothing to do with the code. The verification is
+    bounded by ``_MAX_VERIFICATION_CALLS`` so a large org cannot make this walk forever.
+    Nothing here is hardcoded — it works on any org, and returns None when the org
+    genuinely has no such column.
     """
     response = await _get(
         f"/audits?$select=auditid,objecttypecode,_objectid_value"
@@ -325,6 +359,7 @@ async def _audited_target() -> tuple[str, str, str, str] | None:
     rows = response.json().get("value", [])
     print(f"\n=== discovered {len(rows)} recent update audit row(s) ===")
     seen: dict[str, str | None] = {}
+    verified: set[tuple[str, str]] = set()
     for row in rows:
         table = row.get("objecttypecode")
         record_id = row.get("_objectid_value")
@@ -354,12 +389,45 @@ async def _audited_target() -> tuple[str, str, str, str] | None:
             for key in (changed.get(side) or {})
             if isinstance(changed.get(side), dict) and not key.startswith("@odata.")
         ]
-        if columns:
+        if not columns:
+            continue
+        if min_changes <= 1:
             print(
                 f"=== selected audited target: table='{table}' "
                 f"entity_set='{entity_set}' column='{columns[0]}' (record redacted) ==="
             )
             return entity_set, record_id, table, columns[0]
+
+        # Verify rather than assume: one audit row proves the column changed ONCE.
+        for column in dict.fromkeys(columns):
+            if (record_id, column) in verified:
+                continue
+            if len(verified) >= _MAX_VERIFICATION_CALLS:
+                print(
+                    f"=== gave up after {_MAX_VERIFICATION_CALLS} verification call(s) "
+                    f"without finding a column with {min_changes}+ changes ==="
+                )
+                return None
+            verified.add((record_id, column))
+            probe = await _call(
+                entity_set_name=entity_set,
+                record_id=record_id,
+                table_logical_name=table,
+                column_logical_name=column,
+            )
+            # Column NAMES and a COUNT only — no audit value is read or printed.
+            found = probe.get("count", 0) if not probe.get("error") else 0
+            print(
+                f"=== candidate table='{table}' column='{column}': {found} genuine "
+                "change(s) (record redacted) ==="
+            )
+            if found >= min_changes:
+                print(
+                    f"=== selected audited target: table='{table}' "
+                    f"entity_set='{entity_set}' column='{column}' with {found} "
+                    "change(s) (record redacted) ==="
+                )
+                return entity_set, record_id, table, column
     return None
 
 
@@ -545,8 +613,17 @@ async def test_tool_returns_a_normalized_column_history() -> None:
             "a negative TotalRecordCount means 'not counted' and must be suppressed, "
             "not handed to the caller as a count"
         )
-    # The accompanying audit-configuration rows are separated out, never counted as
-    # changes and never dropped.
+    # The tripwire on the classifier: 0 everywhere observed. A non-zero value is not a
+    # tool defect — the entry was KEPT as a change — but it means Dataverse emitted a
+    # typeless entry that is not the configuration shape, which no live call has yet
+    # produced and which the classifier's structural assumption should be re-read for.
+    assert result["unclassified_typeless_count"] == 0, (
+        "a typeless entry was kept as a change: read detail_types above, then re-read "
+        "_is_audit_configuration_event before trusting the partition"
+    )
+    # The audit-configuration rows, WHEN THEY ARRIVE, are separated out, never counted
+    # as changes and never dropped. Zero of them is a normal answer: they show up only
+    # when an audit-configuration change falls inside this record's history window.
     assert isinstance(result["audit_configuration_events"], list)
     assert result["audit_configuration_events_count"] == len(
         result["audit_configuration_events"]
@@ -568,10 +645,20 @@ async def test_tool_returns_a_normalized_column_history() -> None:
 
 
 async def test_trimming_reports_the_true_magnitude() -> None:
-    """top trims client-side because PagingInfo is not sent; has_more must say so."""
-    target = await _audited_target()
+    """top trims client-side because PagingInfo is not sent; has_more must say so.
+
+    Discovery asks for a column with 2+ genuine changes rather than taking the first
+    usable audit row, so the assertion below is reached deterministically instead of
+    depending on which record the most recent audit activity happened to surface. A
+    skip here means the ORG has no multi-change audited column within the bounded scan,
+    not that anything is wrong with the tool.
+    """
+    target = await _audited_target(min_changes=2)
     if target is None:
-        pytest.skip("this org has no retrievable attribute-level audit history")
+        pytest.skip(
+            "this org has no audited column with 2+ genuine changes within the bounded "
+            "candidate scan, so there is nothing for top to trim"
+        )
     entity_set, record_id, table, column = target
 
     full = await _call(
@@ -580,8 +667,10 @@ async def test_trimming_reports_the_true_magnitude() -> None:
         table_logical_name=table,
         column_logical_name=column,
     )
-    if full.get("count", 0) < 2:
-        pytest.skip("the discovered column has fewer than 2 audited changes")
+    assert full.get("count", 0) >= 2, (
+        "discovery verified this column had 2+ changes moments ago; a lower count now "
+        f"means the tool disagrees with its own earlier answer: {full.get('message')}"
+    )
 
     trimmed = await _call(
         entity_set_name=entity_set,

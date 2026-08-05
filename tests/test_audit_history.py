@@ -6,7 +6,13 @@ Coverage:
 - dataverse_retrieve_record_change_history happy path — AuditDetailCollection response,
   with the org-level audit-CONFIGURATION rows partitioned out of the changes.
 - dataverse_retrieve_record_change_history keeps an entry whose @odata.type it does not
-  recognize as a RESULT rather than dropping it.
+  recognize as a RESULT rather than dropping it, and reports detail_types over the page.
+- dataverse_retrieve_record_change_history treats a typeless entry as configuration ONLY
+  when AuditRecord._objectid_value is the all-zero GUID; every other typeless shape is
+  kept as a result and counted in unclassified_typeless_count. The known configuration
+  actions (105/107/110) still classify as configuration — the check is behaviour-neutral.
+- audit_configuration_events_count: 0 is a normal outcome — the rows arrive only when an
+  audit-configuration change falls inside the target's own history window.
 - dataverse_retrieve_record_change_history suppresses the TotalRecordCount = -1 sentinel.
 - dataverse_retrieve_record_change_history reports has_more when the client-side trim cut
   genuine changes, even though the server said MoreRecords: false.
@@ -46,17 +52,29 @@ from dataverse_mcp.tools.security import (
 _BASE_URL = "https://yourorg.crm.dynamics.com"
 _ACCOUNT_ID = "aaaabbbb-0000-cccc-1111-dddd2222eeee"
 _AUDIT_ID = "11112222-3333-4444-5555-666677778888"
+_ALL_ZERO_GUID = "00000000-0000-0000-0000-000000000000"
 
-# The org-level audit-CONFIGURATION row Dataverse attaches to EVERY change-history
-# response whatever the target: no @odata.type at all, AuditRecord and nothing else.
-_CONFIGURATION_ROW = {
-    "AuditRecord": {
-        "auditid": _AUDIT_ID,
-        "action": 110,
-        "attributemask": "",
-        "objecttypecode": "organization",
+
+def _configuration_row(action: int = 110, objecttypecode: str = "account") -> dict:
+    """An org-level audit-CONFIGURATION row as the platform really sends it.
+
+    No ``@odata.type`` at all, ``AuditRecord`` and nothing else, and an ALL-ZERO
+    ``_objectid_value`` because the row is about auditing rather than about a record.
+    It carries the TARGET TABLE's ``objecttypecode`` (live: 'account', 'systemuser' —
+    NOT 'organization') and an ``action`` 105 row has no ``attributemask`` key at all;
+    neither field takes any part in the classification.
+    """
+    return {
+        "AuditRecord": {
+            "auditid": _AUDIT_ID,
+            "action": action,
+            "objecttypecode": objecttypecode,
+            "_objectid_value": _ALL_ZERO_GUID,
+        }
     }
-}
+
+
+_CONFIGURATION_ROW = _configuration_row()
 
 
 # ---------------------------------------------------------------------------
@@ -305,6 +323,8 @@ async def test_retrieve_record_change_history_happy_path() -> None:
     assert data["record_id"] == _ACCOUNT_ID
     assert len(data["audit_details"]) == 1
     assert data["audit_details"][0]["@odata.type"].endswith("AttributeAuditDetail")
+    assert data["detail_types"] == {"#Microsoft.Dynamics.CRM.AttributeAuditDetail": 1}
+    assert data["unclassified_typeless_count"] == 0
     assert data["audit_configuration_events_count"] == 2
     assert data["audit_configuration_events"] == [_CONFIGURATION_ROW, _CONFIGURATION_ROW]
     assert "audit_configuration_events" in data["message"]
@@ -338,11 +358,25 @@ async def test_retrieve_record_change_history_keeps_unrecognized_detail_types() 
     assert data["count"] == 3, f"an entry was dropped: {data['audit_details']}"
     assert data["audit_details"] == entries[:3]
     assert data["audit_configuration_events_count"] == 1
+    # detail_types is the record-scoped tool's census of the WIDER subtype mix it sees
+    # (ShareAuditDetail is live-confirmed here), matching its column-scoped sibling.
+    assert data["detail_types"] == {
+        "#Microsoft.Dynamics.CRM.ShareAuditDetail": 1,
+        "#Microsoft.Dynamics.CRM.SomethingNotYetInvented": 1,
+        "non-object": 1,
+    }
+    # Nothing typeless was kept: a non-object entry is not a typeless entry.
+    assert data["unclassified_typeless_count"] == 0
 
 
 @pytest.mark.asyncio
 async def test_retrieve_record_change_history_suppresses_negative_total() -> None:
-    """TotalRecordCount = -1 means 'not counted' and is omitted, never passed through."""
+    """TotalRecordCount = -1 means 'not counted' and is omitted, never passed through.
+
+    Also pins that ZERO audit-configuration rows is a normal answer: they arrive only
+    when an audit-configuration change falls inside the target's history window, so a
+    record created after the last such change gets none and no message is added.
+    """
     data = await _run_record_change_history(
         {
             "AuditDetailCollection": {
@@ -355,6 +389,97 @@ async def test_retrieve_record_change_history_suppresses_negative_total() -> Non
 
     assert "total_record_count" not in data
     assert data["count"] == 1
+    assert data["audit_configuration_events_count"] == 0
+    assert data["audit_configuration_events"] == []
+    assert "message" not in data
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "audit_record,reason",
+    [
+        pytest.param(
+            {"action": 105, "objecttypecode": "account"},
+            "no _objectid_value at all — nothing proves this is configuration",
+            id="objectid-absent",
+        ),
+        pytest.param(
+            {"action": 2, "_objectid_value": _ACCOUNT_ID},
+            "a REAL record id: every genuine event points at a record",
+            id="real-objectid",
+        ),
+        pytest.param(
+            {"_objectid_value": None},
+            "a null objectid is not the all-zero GUID",
+            id="null-objectid",
+        ),
+        pytest.param(
+            "not-an-object", "AuditRecord is not a dict", id="audit-record-not-a-dict"
+        ),
+    ],
+)
+async def test_retrieve_record_change_history_keeps_typeless_rows_without_a_zero_objectid(
+    audit_record: Any, reason: str
+) -> None:
+    """The all-zero objectid is REQUIRED for configuration — every edge keeps the row.
+
+    Live, every typeless row carried the all-zero AuditRecord._objectid_value and every
+    typed row a real record id, across 11 rows with no divergence. Requiring it can only
+    move a row OUT of configuration and INTO the results, which is the safe direction:
+    a bare genuine event (base AuditDetail declares only AuditRecord, and OData omits
+    @odata.type when the instance type equals the declared type) is surfaced instead of
+    being silently dropped.
+    """
+    entry = {"AuditRecord": audit_record}
+    data = await _run_record_change_history(
+        {
+            "AuditDetailCollection": {
+                "AuditDetails": [_CONFIGURATION_ROW, entry],
+                "MoreRecords": False,
+            }
+        }
+    )
+
+    assert data["audit_details"] == [entry], reason
+    assert data["count"] == 1
+    # It was kept, and the caller is told the tool met something it could not name.
+    assert data["unclassified_typeless_count"] == 1
+    assert data["detail_types"] == {"unspecified": 1}
+    # ...and the row that DOES carry the all-zero objectid is still configuration.
+    assert data["audit_configuration_events"] == [_CONFIGURATION_ROW]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", [105, 107, 110])
+@pytest.mark.parametrize(
+    "objectid",
+    [
+        pytest.param(_ALL_ZERO_GUID, id="plain"),
+        pytest.param(_ALL_ZERO_GUID.upper(), id="uppercase"),
+        pytest.param(f"{{{_ALL_ZERO_GUID}}}", id="braced"),
+    ],
+)
+async def test_retrieve_record_change_history_known_configuration_rows_still_classify(
+    action: int, objectid: str
+) -> None:
+    """BEHAVIOUR-NEUTRAL: every row observed as configuration still classifies as one.
+
+    The objectid check is defence in depth, not a reclassification — the known
+    audit-configuration actions (105 Entity Audit Started, 107, 110) all carry the
+    all-zero objectid live, so nothing moves today. The GUID is compared
+    case-insensitively and tolerates the optional braces.
+    """
+    row = _configuration_row(action=action)
+    row["AuditRecord"]["_objectid_value"] = objectid
+    data = await _run_record_change_history(
+        {"AuditDetailCollection": {"AuditDetails": [row], "MoreRecords": False}}
+    )
+
+    assert data["audit_details"] == []
+    assert data["count"] == 0
+    assert data["unclassified_typeless_count"] == 0
+    assert data["audit_configuration_events"] == [row]
+    assert data["audit_configuration_events_count"] == 1
 
 
 @pytest.mark.asyncio

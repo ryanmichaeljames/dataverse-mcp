@@ -119,6 +119,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table / column), or confirms auditing is on and nothing was recorded.
 
 ### Changed
+- Both audit-history tools now require an all-zero `AuditRecord._objectid_value` before filing an
+  entry as an audit-**configuration** row, on top of the existing "no `@odata.type`, `AuditRecord`
+  and nothing else" shape test. Behaviour-neutral against every row observed live; it exists so a
+  bare genuine event (base `AuditDetail` declares only `AuditRecord`, and OData omits `@odata.type`
+  when the instance type equals the declared type) is kept as a change instead of being dropped.
+  Entries kept that way are reported in the new `unclassified_typeless_count`, which is `0` on
+  every response seen so far. `dataverse_retrieve_record_change_history` also now emits
+  `detail_types`, matching its column-scoped sibling — it is the call that sees the wider subtype
+  mix. Corrected on both tools: audit-configuration rows do **not** accompany every response — they
+  arrive only when an audit-configuration change falls inside the target record's history window,
+  so `audit_configuration_events_count: 0` is normal (0 for a record created after the last such
+  change, 4 for older records on the same org), and those rows carry the **target table's**
+  `objecttypecode`, not `organization`.
 - **Breaking — `dataverse_retrieve_record_change_history` response shape.** The org-level
   audit-**configuration** rows Dataverse attaches to every response were being counted as results, so
   `count` was inflated (and non-zero for records that never changed); they now move to

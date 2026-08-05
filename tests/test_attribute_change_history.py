@@ -10,10 +10,13 @@ Acceptance criteria:
 - The built URL carries both alias encodings side by side, unmixed.
 - Entries are located TWO levels down (``AuditDetailCollection`` -> ``AuditDetails``)
   and returned verbatim, so ``@odata.type`` survives on every entry.
-- The org-level audit-CONFIGURATION rows that accompany EVERY response are
-  partitioned out of the changes by ``@odata.type`` (never by position), surfaced
-  separately, and never counted — while an entry with an unrecognized
-  ``@odata.type`` is kept as a change, not dropped.
+- The org-level audit-CONFIGURATION rows that MAY accompany a response (they arrive
+  only when an audit-configuration change falls inside the target's history window, so
+  a count of 0 is normal) are partitioned out of the changes by SHAPE — absent
+  ``@odata.type``, an ``AuditRecord``-only key set and an all-zero
+  ``AuditRecord._objectid_value``, never by position — surfaced separately, and never
+  counted. Every other entry, including a typeless one that fails the objectid test, is
+  kept as a change and counted in ``unclassified_typeless_count``.
 - A missing/unreadable container degrades to ``normalized: false`` with the raw body
   — never a fabricated empty list.
 - ``total_record_count`` appears only when the server supplied a non-negative integer
@@ -47,6 +50,7 @@ _ENTITY_SET = "accounts"
 _TABLE = "account"
 _COLUMN = "name"
 _RECORD_ID = "1f3d9c58-2a44-4b0e-8c71-6d5e0a9b7c31"
+_ALL_ZERO_GUID = "00000000-0000-0000-0000-000000000000"
 
 # The Target alias: the JSON document {"@odata.id":"accounts(<guid>)"} percent-encoded
 # with the alias NAME left literal (urlencode would otherwise emit %40t).
@@ -75,20 +79,25 @@ def _detail(index: int, odata_type: str = "AttributeAuditDetail") -> dict:
     }
 
 
-def _preamble(action: int) -> dict:
-    """One org-level audit-CONFIGURATION row, as Dataverse returns it on EVERY call.
+def _preamble(action: int, objectid: str = _ALL_ZERO_GUID) -> dict:
+    """One org-level audit-CONFIGURATION row, as Dataverse really returns it.
 
-    Live shape: NO ``@odata.type`` at all, ``AuditRecord`` and nothing else, an empty
-    ``attributemask`` and ``objecttypecode: organization`` — i.e. a record of auditing
-    itself being switched on or off, returned whatever the target was. Where these
-    rows sit in the list is not a contract, so nothing keys off their position.
+    Live shape: NO ``@odata.type`` at all, ``AuditRecord`` and nothing else, and an
+    ALL-ZERO ``_objectid_value`` — the row is about auditing itself, so it points at no
+    record. It carries the TARGET TABLE's ``objecttypecode`` ('account', 'systemuser' —
+    NOT 'organization'), and an ``action`` 105 row ("Entity Audit Started") has no
+    ``attributemask`` key at all; classification depends on neither field.
+
+    These rows are NOT returned on every call: they arrive only when an
+    audit-configuration change falls inside the target record's history window. Where
+    they sit in the list is not a contract either, so nothing keys off their position.
     """
     return {
         "AuditRecord": {
             "auditid": f"00000000-0000-0000-0000-{action:012d}",
             "action": action,
-            "attributemask": "",
-            "objecttypecode": "organization",
+            "objecttypecode": _TABLE,
+            "_objectid_value": objectid,
         }
     }
 
@@ -249,7 +258,10 @@ async def test_happy_path_reads_entries_two_levels_down() -> None:
     assert result["count"] == 2
     assert result["has_more"] is False
     assert result["total_record_count"] == 2
-    # Nothing to separate out, so the list is reported empty and no message is added.
+    assert result["unclassified_typeless_count"] == 0
+    # ZERO configuration rows is a NORMAL outcome, not a partition failure: they arrive
+    # only when an audit-configuration change falls inside this record's history window,
+    # so a record created after the last such change gets none. No message is added.
     assert result["audit_configuration_events"] == []
     assert result["audit_configuration_events_count"] == 0
     assert "message" not in result
@@ -280,12 +292,14 @@ async def test_entries_are_passed_through_with_their_odata_type() -> None:
         "#Microsoft.Dynamics.CRM.RelationshipAuditDetail": 1,
         "unspecified": 1,
     }
+    # The typeless entry was KEPT, and the caller is told it could not be named.
+    assert result["unclassified_typeless_count"] == 1
     assert result["audit_configuration_events"] == []
 
 
 @pytest.mark.asyncio
 async def test_the_audit_configuration_rows_are_not_counted_as_changes() -> None:
-    """Dataverse returns two org-level config rows on EVERY call — split, not counted."""
+    """Org-level config rows that DO arrive are split out, never counted as changes."""
     result, _ = await _run(_body([_preamble(110), _preamble(107), _detail(0)]))
 
     assert result["audit_details"] == [_detail(0)]
@@ -302,36 +316,101 @@ async def test_the_audit_configuration_rows_are_not_counted_as_changes() -> None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "entry,reason",
+    "entry,typeless,reason",
     [
         pytest.param(
             {"@odata.type": "#Microsoft.Dynamics.CRM.ShareAuditDetail", "AuditRecord": {}},
+            0,
             "an @odata.type this code does not know is an unknown RESULT, not preamble",
             id="unrecognized-odata-type",
         ),
         pytest.param(
             {"@odata.type": "#Microsoft.Dynamics.CRM.AttributeAuditDetail"},
+            0,
             "a typed entry with no AuditRecord is still a result",
             id="typed-without-audit-record",
         ),
         pytest.param(
             {"AuditRecord": {}, "NewValue": {}},
+            1,
             "typeless but carrying more than AuditRecord",
             id="typeless-with-extra-key",
         ),
-        pytest.param("not-an-object", "a non-object entry", id="non-object"),
+        pytest.param("not-an-object", 0, "a non-object entry", id="non-object"),
+        # The all-zero-objectid condition. A typeless AuditRecord-only entry is
+        # configuration ONLY when the row points at no record; anything else is an
+        # event this code cannot name, and is kept.
+        pytest.param(
+            {"AuditRecord": {"action": 2, "_objectid_value": _RECORD_ID}},
+            1,
+            "a REAL objectid: a bare genuine event, kept rather than dropped",
+            id="typeless-with-a-real-objectid",
+        ),
+        pytest.param(
+            {"AuditRecord": {"action": 105, "objecttypecode": _TABLE}},
+            1,
+            "no _objectid_value at all — nothing proves this is configuration",
+            id="typeless-without-an-objectid",
+        ),
+        pytest.param(
+            {"AuditRecord": "not-an-object"},
+            1,
+            "AuditRecord is not a dict, so its objectid cannot be read",
+            id="audit-record-not-a-dict",
+        ),
+        pytest.param(
+            {"AuditRecord": {"_objectid_value": _ALL_ZERO_GUID[:-1] + "1"}},
+            1,
+            "a near-miss GUID is not the all-zero GUID",
+            id="near-zero-objectid",
+        ),
     ],
 )
 async def test_only_the_bare_audit_record_shape_is_treated_as_configuration(
-    entry: Any, reason: str
+    entry: Any, typeless: int, reason: str
 ) -> None:
-    """Anything not PROVEN to be preamble is surfaced — never silently dropped."""
+    """Anything not PROVEN to be preamble is surfaced — never silently dropped.
+
+    Every edge resolves to "keep it as a result": the classifier can only ever move a
+    row OUT of configuration and INTO the answer, which is the safe direction. A
+    typeless entry that is kept is also COUNTED, so a caller can see that this tool met
+    an entry it could not name instead of it passing silently.
+    """
     result, _ = await _run(_body([_preamble(110), entry]))
 
     assert result["audit_details"] == [entry], reason
     assert result["count"] == 1
+    assert result["unclassified_typeless_count"] == typeless
     assert result["audit_configuration_events_count"] == 1
     assert "audit_configuration" not in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", [105, 107, 110])
+@pytest.mark.parametrize(
+    "objectid",
+    [
+        pytest.param(_ALL_ZERO_GUID, id="plain"),
+        pytest.param(_ALL_ZERO_GUID.upper(), id="uppercase"),
+        pytest.param(f"{{{_ALL_ZERO_GUID}}}", id="braced"),
+    ],
+)
+async def test_the_known_configuration_rows_still_classify_as_configuration(
+    action: int, objectid: str
+) -> None:
+    """BEHAVIOUR-NEUTRAL: the objectid condition reclassifies nothing observed live.
+
+    Every configuration row seen live carried the all-zero objectid (11 rows, zero
+    divergence), so requiring it moves no row that used to be filed as configuration.
+    The GUID is compared case-insensitively and tolerates the optional braces.
+    """
+    row = _preamble(action, objectid)
+    result, _ = await _run(_body([row, _detail(0)]))
+
+    assert result["audit_details"] == [_detail(0)]
+    assert result["count"] == 1
+    assert result["unclassified_typeless_count"] == 0
+    assert result["audit_configuration_events"] == [row]
 
 
 @pytest.mark.asyncio
@@ -340,7 +419,11 @@ async def test_odata_annotations_do_not_defeat_the_configuration_match() -> None
     row = {
         "@odata.etag": 'W/"1"',
         "AuditRecord@odata.associationLink": "https://yourorg/x",
-        "AuditRecord": {"action": 110, "objecttypecode": "organization"},
+        "AuditRecord": {
+            "action": 110,
+            "objecttypecode": _TABLE,
+            "_objectid_value": _ALL_ZERO_GUID,
+        },
     }
     result, _ = await _run(_body([row]))
 

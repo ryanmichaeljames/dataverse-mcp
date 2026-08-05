@@ -9,12 +9,17 @@ and every shape trap proven there applies here too.
 What this suite establishes live, each point being a defect the tool used to have:
 
 * THE CONFIGURATION ROWS: org-level audit-CONFIGURATION rows (no ``@odata.type``,
-  ``AuditRecord`` and nothing else) accompany EVERY response whatever the target, so the
-  raw list is never empty and counting it reports changes that did not happen. They must
-  be partitioned out by SHAPE — their position in the list is not a contract — and
+  ``AuditRecord`` and nothing else, and an all-zero ``AuditRecord._objectid_value``) MAY
+  accompany a response, and counting them reports changes that did not happen. They are
+  NOT unconditional: they arrive when an audit-configuration change falls inside the
+  TARGET RECORD'S own history window, so their presence and count vary by target and
+  ``audit_configuration_events_count: 0`` is a normal answer (live: a record created
+  after the last audit-config change got 0; two older records got 4 each). They must be
+  partitioned out by SHAPE — their position in the list is not a contract — and
   surfaced, not dropped;
-* THE SUBTYPE MIX: a RECORD-scoped call is not restricted to ``AttributeAuditDetail``.
-  Whatever ``@odata.type`` values this org actually returns are printed, and an
+* THE SUBTYPE MIX: a RECORD-scoped call is not restricted to ``AttributeAuditDetail`` —
+  ``ShareAuditDetail`` is live-confirmed here. Whatever ``@odata.type`` values this org
+  actually returns are printed and counted in the tool's own ``detail_types``, and an
   unrecognized one must be kept as a result;
 * ``TotalRecordCount`` arrives as ``-1`` ("not counted"), which must be suppressed rather
   than handed to the caller as a number that reads like a count;
@@ -76,6 +81,10 @@ _FALLBACK_TABLE = "account"
 _FALLBACK_ENTITY_SET = "accounts"
 
 _ABSENT_RECORD_ID = "00000000-0000-0000-0000-0000000000ff"
+
+# Every audit-CONFIGURATION row carries this as AuditRecord._objectid_value: the row is
+# about auditing itself, so it points at no record. Live: 11 rows, zero divergence.
+_ALL_ZERO_GUID = "00000000-0000-0000-0000-000000000000"
 
 pytestmark = [
     pytest.mark.integration,
@@ -208,6 +217,10 @@ def _describe_result(result: dict) -> dict:
             "count",
             "has_more",
             "total_record_count",
+            # The tool's own census, added for parity with its column-scoped sibling:
+            # this is the call that sees the wider subtype mix, so it needs it most.
+            "detail_types",
+            "unclassified_typeless_count",
             "audit_configuration_events_count",
         )
         if key in result
@@ -218,12 +231,6 @@ def _describe_result(result: dict) -> dict:
         summary["audit_details"] = [
             _describe_detail(entry) for entry in result["audit_details"][:3]
         ]
-        summary["detail_types"] = sorted(
-            {
-                entry.get("@odata.type", "<absent>") if isinstance(entry, dict) else "<non-object>"
-                for entry in result["audit_details"]
-            }
-        )
     if "audit_configuration_events" in result:
         summary["audit_configuration_events"] = [
             _describe_detail(entry) for entry in result["audit_configuration_events"][:3]
@@ -246,14 +253,24 @@ def _dump(label: str, payload: Any) -> None:
 
 
 def _looks_like_configuration_row(entry: Any) -> bool:
-    """The configuration shape: no ``@odata.type`` at all, ``AuditRecord`` and nothing else.
+    """The configuration shape, all four conditions.
 
-    Mirrors ``_is_audit_configuration_event`` in the tool so this suite can assert the
-    partition from the outside rather than trusting the implementation.
+    No ``@odata.type`` at all, ``AuditRecord`` and nothing else, and an ALL-ZERO
+    ``AuditRecord._objectid_value`` — the row is about auditing itself, so it points at
+    no record. Mirrors ``_is_audit_configuration_event`` in the tool so this suite can
+    assert the partition from the outside rather than trusting the implementation.
     """
     if not isinstance(entry, dict) or "@odata.type" in entry:
         return False
-    return {key for key in entry if "@odata." not in key} == {"AuditRecord"}
+    if {key for key in entry if "@odata." not in key} != {"AuditRecord"}:
+        return False
+    audit_record = entry.get("AuditRecord")
+    if not isinstance(audit_record, dict):
+        return False
+    objectid = audit_record.get("_objectid_value")
+    if not isinstance(objectid, str):
+        return False
+    return objectid.strip().strip("{}").lower() == _ALL_ZERO_GUID
 
 
 # ---------------------------------------------------------------------------
@@ -414,8 +431,23 @@ async def test_tool_returns_a_normalized_record_history() -> None:
     assert result["count"] == len(result["audit_details"])
     assert isinstance(result["has_more"], bool)
 
-    # The accompanying audit-configuration rows are separated out, never counted as
-    # changes and never dropped.
+    # detail_types — parity with the column-scoped sibling. This is the call that sees
+    # the WIDER subtype mix, so it is the one that needs the census most.
+    assert isinstance(result["detail_types"], dict)
+    assert sum(result["detail_types"].values()) == result["count"]
+
+    # The tripwire on the classifier: 0 everywhere observed. A non-zero value is not a
+    # tool defect — the entry was KEPT as a change — but it means Dataverse emitted a
+    # typeless entry that is not the configuration shape, which no live call has yet
+    # produced and which the classifier's structural assumption should be re-read for.
+    assert result["unclassified_typeless_count"] == 0, (
+        "a typeless entry was kept as a change: read detail_types above, then re-read "
+        "_is_audit_configuration_event before trusting the partition"
+    )
+
+    # The audit-configuration rows, WHEN THEY ARRIVE, are separated out, never counted
+    # as changes and never dropped. Zero of them is a normal answer: they show up only
+    # when an audit-configuration change falls inside this record's history window.
     assert isinstance(result["audit_configuration_events"], list)
     assert result["audit_configuration_events_count"] == len(
         result["audit_configuration_events"]
@@ -474,7 +506,8 @@ async def test_a_wrong_entity_set_404s_but_a_missing_record_returns_an_empty_200
     * a VALID id with the SINGULAR (wrong) entity set is refused by the URL parser:
       HTTP 404 naming the bad SEGMENT, not the record;
     * a well-formed but NONEXISTENT record id with the CORRECT plural is a plain HTTP
-      200 carrying the configuration rows and zero genuine changes — on this entity set
+      200 with zero genuine changes (plus any audit-configuration rows, which are not
+      guaranteed to be present — their count varies by target) — on this entity set
       Dataverse does not validate the target, so an empty answer is not evidence the
       record is there. This is also what an auditing-disabled org returns: never an
       HTTP error.

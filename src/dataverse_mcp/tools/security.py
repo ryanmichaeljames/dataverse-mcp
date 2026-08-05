@@ -1977,45 +1977,97 @@ _DEFAULT_AUDIT_SELECT = [
 _AUDIT_DETAIL_CONTAINER = "AuditDetailCollection"
 _AUDIT_DETAIL_ENTRIES = "AuditDetails"
 
-# Org-level audit-CONFIGURATION rows ACCOMPANY EVERY response from BOTH functions,
-# whatever the target — live-confirmed two of them (AuditRecord.action 110 and 107,
-# attributemask '', objecttypecode 'organization') on a call whose true answer was "no
-# changes to this column". Their POSITION in the list is not a contract and is never
-# relied on here; they are classified by @odata.type alone (see
-# _is_audit_configuration_event). Counting them made the tools report count: 2 for a
-# target that never changed AND kept the entries list permanently non-empty, which is
-# why the audit_configuration diagnosis in the column-scoped tool never once fired.
-# They are separated out, not discarded.
+# Org-level audit-CONFIGURATION rows MAY accompany a response from either function —
+# they are NOT unconditional. Live-measured on one org: they appear only when an
+# audit-configuration change falls INSIDE THE TARGET RECORD'S OWN HISTORY WINDOW, so
+# their presence and count vary by target. A record created AFTER the last audit-config
+# change came back with audit_configuration_events_count 0; two records predating it
+# came back with 4 each. ZERO IS A NORMAL, EXPECTED OUTCOME, not a sign the partition
+# misfired.
+#
+# Their SHAPE was also misdescribed here. Live, an action 105 row ("Entity Audit
+# Started") carries the TARGET TABLE's objecttypecode ('account', 'systemuser' — NOT
+# 'organization') and has NO attributemask key at all; actions 107 and 110 are also
+# seen. Classification depends on NEITHER of those fields.
+#
+# Their POSITION in the list is not a contract and is never relied on here. They are
+# classified by the ABSENCE of @odata.type, PLUS an exact AuditRecord-only key set,
+# PLUS an all-zero AuditRecord._objectid_value (see _is_audit_configuration_event).
+# Counting them made the tools report count: 2 for a target that never changed AND kept
+# the entries list non-empty on exactly the targets that carry them, which is why the
+# audit_configuration diagnosis in the column-scoped tool never once fired on the org it
+# was tested against. They are separated out, not discarded.
 _AUDIT_DETAIL_TYPE_KEY = "@odata.type"
 _ATTRIBUTE_AUDIT_DETAIL_TYPE = "#Microsoft.Dynamics.CRM.AttributeAuditDetail"
 
+# The AuditRecord._objectid_value every configuration row carries — the row is about
+# auditing itself, so it points at no record. Live: 11 rows, zero divergence, every
+# typeless row all-zero and every typed row a real record id.
+_ALL_ZERO_GUID = "00000000-0000-0000-0000-000000000000"
+
+
+def _is_all_zero_guid(value: Any) -> bool:
+    """True when *value* is the all-zero GUID, however Dataverse spelled it.
+
+    Normalized compare rather than a regex: case is folded and the optional
+    registry-style braces are stripped, and anything that is not a string is False.
+    """
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip()
+    if normalized.startswith("{") and normalized.endswith("}"):
+        normalized = normalized[1:-1]
+    return normalized.lower() == _ALL_ZERO_GUID
+
+
+def _is_typeless_entry(entry: Any) -> bool:
+    """True for an object entry carrying no ``@odata.type`` at all."""
+    return isinstance(entry, dict) and _AUDIT_DETAIL_TYPE_KEY not in entry
+
 
 def _is_audit_configuration_event(entry: Any) -> bool:
-    """True ONLY for the audit-configuration rows Dataverse returns on every call.
+    """True ONLY for an audit-CONFIGURATION row — a record of auditing being toggled.
 
-    Classification is by SHAPE, never by position in the list: the configuration rows
-    accompany every response but where they land in it is not a documented contract.
+    Classification is by SHAPE, never by position in the list: where these rows land in
+    a response is not a documented contract, and whether they appear at all depends on
+    the target (see the comment above).
 
-    The two kinds are cleanly separable live, and the test is deliberately narrow so
-    that "not a result" is something this code has to PROVE:
+    ALL FOUR conditions must hold, and the last is defence in depth:
 
-      * a genuine change carries ``@odata.type`` (``AttributeAuditDetail`` is the one
-        a column-scoped call is expected to yield) alongside ``OldValue``/``NewValue``;
-      * a configuration row carries NO ``@odata.type`` at all and ``AuditRecord`` and
-        nothing else.
+      1. the entry is a dict;
+      2. it carries NO ``@odata.type`` key;
+      3. its non-``@odata.`` keys are EXACTLY ``{"AuditRecord"}``;
+      4. ``AuditRecord._objectid_value`` is present and is the ALL-ZERO GUID.
 
-    Anything else — an unfamiliar ``@odata.type`` (``AuditDetail`` has ~7 subtypes in
-    $metadata), a typeless entry with more than ``AuditRecord`` on it, a non-object —
-    is an UNKNOWN RESULT, not preamble, and is surfaced as a change. Dropping an entry
-    this code failed to recognize would silently lose audit history, so the default
-    direction of the error is "keep it".
+    Condition 4 exists because conditions 2 and 3 are not structurally safe on their
+    own: base ``AuditDetail`` declares only ``AuditRecord``, and OData omits
+    ``@odata.type`` when the instance type equals the declared element type, so a
+    genuine event class with no subtype of its own would arrive bare and be dropped.
+    Live that risk is hypothetical — a Delete arrives as ``AttributeAuditDetail`` and a
+    Share as ``ShareAuditDetail``, both typed — but a configuration row is ABOUT
+    auditing rather than about a record, so its ``_objectid_value`` is all zeros while
+    every genuine event points at a real record id. Requiring it can only ever move a
+    row OUT of configuration and INTO the results, which is the safe direction.
+
+    Every edge resolves to "keep it as a result": ``AuditRecord`` missing, not a dict,
+    ``_objectid_value`` absent, or a real record id. So does an unfamiliar
+    ``@odata.type`` (``AuditDetail`` has ~7 subtypes in $metadata), a typeless entry
+    carrying more than ``AuditRecord``, and a non-object. Dropping an entry this code
+    failed to recognize would silently lose audit history, so the default direction of
+    the error is always "keep it" — and a typeless entry that IS kept is counted in
+    unclassified_typeless_count so the caller can see it happened.
 
     OData annotations (``@odata.etag``, ``Prop@odata.bind``) are ignored when deciding
     whether ``AuditRecord`` stands alone; only a real ``@odata.type`` disqualifies.
     """
-    if not isinstance(entry, dict) or _AUDIT_DETAIL_TYPE_KEY in entry:
+    if not _is_typeless_entry(entry):
         return False
-    return {key for key in entry if "@odata." not in key} == {"AuditRecord"}
+    if {key for key in entry if "@odata." not in key} != {"AuditRecord"}:
+        return False
+    audit_record = entry.get("AuditRecord")
+    if not isinstance(audit_record, dict):
+        return False
+    return _is_all_zero_guid(audit_record.get("_objectid_value"))
 
 
 @tool(
@@ -2061,21 +2113,30 @@ async def dataverse_retrieve_record_change_history(
     Use dataverse_get_attribute_change_history when the question is about one column;
     it additionally diagnoses which level auditing is switched off at.
 
-    NOT EVERY ENTRY IS A RESULT. Dataverse adds org-level audit-CONFIGURATION rows
-    (auditing itself being switched on/off, AuditRecord.objecttypecode 'organization')
-    to EVERY response whatever the target — a bogus GUID gets them too. They are
-    identified by their SHAPE (no @odata.type, AuditRecord and nothing else) and never
-    by their position: where they land in the list is not a contract. They are split
-    out into audit_configuration_events (with audit_configuration_events_count) and are
-    NOT counted: audit_details, count and has_more cover this record's own changes only.
+    NOT EVERY ENTRY IS A RESULT. Dataverse MAY add org-level audit-CONFIGURATION rows
+    (records of auditing itself being switched on or off) to a response. They arrive
+    when an audit-configuration change falls inside the TARGET RECORD'S history window,
+    so their presence and count VARY BY TARGET — a record created after the last such
+    change gets none, while older records on the same org got four each, live-measured.
+    audit_configuration_events_count: 0 is a normal, expected answer. They are
+    identified by their SHAPE — no @odata.type, AuditRecord and nothing else, and an
+    all-zero AuditRecord._objectid_value — never by their position, which is not a
+    contract. They are split out into audit_configuration_events (with
+    audit_configuration_events_count) and are NOT counted: audit_details, count and
+    has_more cover this record's own changes only.
 
-    ENTRIES ARE POLYMORPHIC — read each one's @odata.type. A RECORD-scoped call spans
-    everything that happened to the record, so expect a wider mix than a column-scoped
-    one: AttributeAuditDetail (OldValue/NewValue per changed field),
-    RelationshipAuditDetail, ShareAuditDetail, RolePrivilegeAuditDetail and
+    ENTRIES ARE POLYMORPHIC — read each one's @odata.type, and detail_types counts the
+    values present on the returned page. A RECORD-scoped call spans everything that
+    happened to the record, so expect a wider mix than a column-scoped one:
+    AttributeAuditDetail (OldValue/NewValue per changed field), RelationshipAuditDetail,
+    ShareAuditDetail (live-confirmed here), RolePrivilegeAuditDetail and
     UserAccessAuditDetail are all documented subtypes. Every subtype carries an
     AuditRecord navigation property (who, when, what operation). An entry with an
-    UNRECOGNIZED @odata.type is reported as a change, never quietly dropped.
+    UNRECOGNIZED @odata.type is reported as a change, never quietly dropped, and
+    unclassified_typeless_count reports how many entries carrying NO @odata.type were
+    kept as changes because they did not match the configuration shape — it is 0 on
+    every response observed so far, and a non-zero value means this tool met an entry
+    it could not name rather than that anything was lost.
 
     RESPONSE SHAPE IS CHECKED, NOT ASSUMED. If the AuditDetailCollection container is
     absent or is not a list of entries, the tool returns normalized: false with the raw
@@ -2161,19 +2222,32 @@ async def dataverse_retrieve_record_change_history(
             response["raw_response"] = body
             return finalize_response(response)
 
-        # PARTITION FIRST, then count and trim. The audit-configuration rows accompany
-        # every response, so slicing the raw list counted rows that are not changes to
-        # this record — and kept the list permanently non-empty. Classification is on
+        # PARTITION FIRST, then count and trim. Audit-configuration rows can arrive
+        # alongside the answer, so slicing the raw list counted rows that are not
+        # changes to this record — and kept the list non-empty. Classification is on
         # the NEGATIVE (see _is_audit_configuration_event): an entry with an
         # @odata.type this code does not recognize is an unknown RESULT and is kept,
         # because dropping it would silently lose audit history.
         changes: list[Any] = []
         configuration_events: list[Any] = []
+        # Typeless entries that were KEPT — i.e. that failed the all-zero-objectid
+        # test. Counted over the WHOLE partition, not the page, and never logged with
+        # its entry bodies: audit payloads carry real business values.
+        unclassified_typeless = 0
         for entry in entries:
             if _is_audit_configuration_event(entry):
                 configuration_events.append(entry)
-            else:
-                changes.append(entry)
+                continue
+            changes.append(entry)
+            if _is_typeless_entry(entry):
+                unclassified_typeless += 1
+        if unclassified_typeless:
+            logger.warning(
+                "RetrieveRecordChangeHistory returned %d entr(ies) with no @odata.type "
+                "that did not match the audit-configuration shape; they were kept as "
+                "changes",
+                unclassified_typeless,
+            )
 
         page = changes[: params.top]
         more_records = container.get("MoreRecords")
@@ -2188,12 +2262,29 @@ async def dataverse_retrieve_record_change_history(
         # reporting only the server's flag told a caller whose page was cut that they
         # had everything.
         response["has_more"] = more_records is True or len(changes) > len(page)
+        # A RECORD-scoped call sees the WIDER subtype mix (ShareAuditDetail confirmed
+        # live; RelationshipAuditDetail / UserAccessAuditDetail documented), so the
+        # caller needs the type census at least as much as the column-scoped sibling
+        # that already emits it. Same key name and same shape as there, deliberately.
+        response["detail_types"] = dict(
+            Counter(
+                entry.get(_AUDIT_DETAIL_TYPE_KEY, "unspecified")
+                if isinstance(entry, dict)
+                else "non-object"
+                for entry in page
+            )
+        )
+        # A tripwire, not a failure: 0 on every response observed. If Dataverse ever
+        # does emit a bare genuine event, the caller sees that this tool met something
+        # it could not name instead of it passing silently.
+        response["unclassified_typeless_count"] = unclassified_typeless
         # Surfaced, never silently swallowed: they are real audit rows, just not an
         # answer to the question that was asked.
         # DELIBERATELY NOT BOUNDED BY top. The partition runs before the slice, so top
-        # caps audit_details only and this list is returned whole. Live it holds two
-        # platform-written rows, so there is nothing to cap; capping it would hide rows
-        # with no has_more-style flag to say so.
+        # caps audit_details only and this list is returned whole. Live it holds a
+        # handful of platform-written rows at most (0 or 4 on the org measured), so
+        # there is nothing to cap; capping it would hide rows with no has_more-style
+        # flag to say so.
         response["audit_configuration_events"] = configuration_events
         response["audit_configuration_events_count"] = len(configuration_events)
         if configuration_events:
@@ -2201,8 +2292,9 @@ async def dataverse_retrieve_record_change_history(
                 f"{len(configuration_events)} organization-level audit-CONFIGURATION "
                 "row(s) were separated out of this response into "
                 "audit_configuration_events (records of auditing itself being turned "
-                "on or off). Dataverse returns them on EVERY "
-                "RetrieveRecordChangeHistory call regardless of the target, so they "
+                "on or off). Dataverse returns such rows when an audit-configuration "
+                "change falls inside this record's history window, so their presence "
+                "and count vary by target and a count of 0 is equally normal. They "
                 "are not changes to this record: audit_details, count and has_more "
                 "cover this record's own changes only."
             )
@@ -2625,6 +2717,13 @@ async def dataverse_get_attribute_change_history(
     against the record-scoped function, not this one, so it is not confirmed here;
     it is reason enough to read the code that actually came back rather than trust
     a two-case rule.
+    THE ALL-ZERO GUID IS HANDLED DIFFERENTLY BY THE TWO FUNCTIONS, live-confirmed.
+    Passing 00000000-0000-0000-0000-000000000000 as record_id returns HTTP 200 with
+    zero changes HERE, but the record-scoped dataverse_retrieve_record_change_history
+    rejects the same id with HTTP 400 [0x80040203] "Expected non-empty Guid." That is
+    Dataverse's own inconsistency between the two messages, not this server's. So an
+    empty, successful answer from this tool can mean the caller passed a placeholder
+    id — check the id before reading zero changes as a fact about the record.
 
     AN EMPTY RESULT IS AMBIGUOUS, AND THIS TOOL RESOLVES IT. Audit rows are written
     only where auditing is enabled at organization AND table AND column level, so
@@ -2639,14 +2738,17 @@ async def dataverse_get_attribute_change_history(
       - undetermined — a probe failed or returned an unreadable shape; the level is
         reported as null with the reason in probe_errors, and NOTHING is guessed.
 
-    NOT EVERY ENTRY IS A RESULT. Dataverse adds org-level audit-CONFIGURATION rows
-    (auditing switched on/off, AuditRecord.objecttypecode 'organization') to EVERY
-    response, whatever the target — two of them, live-confirmed, even for a column
-    that never changed. They can arrive anywhere in the list and are identified by
-    their @odata.type, not by their position. They are split out into
-    audit_configuration_events (with audit_configuration_events_count) and are NOT
-    counted as changes: audit_details, count and has_more cover this column's own
-    changes only.
+    NOT EVERY ENTRY IS A RESULT. Dataverse MAY add org-level audit-CONFIGURATION rows
+    (auditing itself switched on or off) to a response. They arrive when an
+    audit-configuration change falls inside the TARGET RECORD'S history window, so
+    their presence and count VARY BY TARGET — a record created after the last such
+    change gets none, while older records on the same org got four each, live-measured.
+    audit_configuration_events_count: 0 is a normal, expected answer. They can arrive
+    anywhere in the list and are identified by their SHAPE — no @odata.type,
+    AuditRecord and nothing else, and an all-zero AuditRecord._objectid_value — never
+    by their position. They are split out into audit_configuration_events (with
+    audit_configuration_events_count) and are NOT counted as changes: audit_details,
+    count and has_more cover this column's own changes only.
 
     ENTRIES ARE POLYMORPHIC. Each change is returned verbatim, so read its
     @odata.type: a column-scoped call is expected to yield AttributeAuditDetail
@@ -2654,8 +2756,11 @@ async def dataverse_get_attribute_change_history(
     AuditRecord.attributemask naming the changed columns) but nothing guarantees it
     — AuditDetail has several subtypes. An entry with an UNRECOGNIZED @odata.type is
     reported as a change, never quietly dropped; only the typeless AuditRecord-only
-    shape is treated as configuration. detail_types counts the @odata.type values
-    actually present on the returned page.
+    shape with an all-zero objectid is treated as configuration. detail_types counts
+    the @odata.type values actually present on the returned page, and
+    unclassified_typeless_count reports how many entries carrying NO @odata.type were
+    kept as changes — 0 on every response observed so far, and a non-zero value means
+    this tool met an entry it could not name rather than that anything was lost.
 
     RESPONSE SHAPE IS CHECKED, NOT ASSUMED. The entries sit TWO levels down
     (AuditDetailCollection -> AuditDetails). If that container is absent or is not a
@@ -2764,18 +2869,31 @@ async def dataverse_get_attribute_change_history(
             result["raw_response"] = body
             return finalize_response(result)
 
-        # PARTITION FIRST, then count and trim. Audit-configuration rows accompany
-        # every response, so slicing the raw list reported count: 2 for a column with
-        # no changes at all — and kept the list non-empty, which suppressed the
+        # PARTITION FIRST, then count and trim. Audit-configuration rows can arrive
+        # alongside the answer, so slicing the raw list reported count: 2 for a column
+        # with no changes at all — and kept the list non-empty, which suppressed the
         # diagnosis below on exactly the calls that needed it. The partition is by
         # shape, so it does not care where in the list those rows arrive.
         changes: list[Any] = []
         configuration_events: list[Any] = []
+        # Typeless entries that were KEPT — i.e. that failed the all-zero-objectid
+        # test. Counted over the WHOLE partition, not the page, and never logged with
+        # its entry bodies: audit payloads carry real business values.
+        unclassified_typeless = 0
         for entry in entries:
             if _is_audit_configuration_event(entry):
                 configuration_events.append(entry)
-            else:
-                changes.append(entry)
+                continue
+            changes.append(entry)
+            if _is_typeless_entry(entry):
+                unclassified_typeless += 1
+        if unclassified_typeless:
+            logger.warning(
+                "RetrieveAttributeChangeHistory returned %d entr(ies) with no "
+                "@odata.type that did not match the audit-configuration shape; they "
+                "were kept as changes",
+                unclassified_typeless,
+            )
 
         page = changes[: params.top]
         more_records = container.get("MoreRecords")
@@ -2796,12 +2914,17 @@ async def dataverse_get_attribute_change_history(
                 for entry in page
             )
         )
+        # A tripwire, not a failure: 0 on every response observed. If Dataverse ever
+        # does emit a bare genuine event, the caller sees that this tool met something
+        # it could not name instead of it passing silently.
+        result["unclassified_typeless_count"] = unclassified_typeless
         # Surfaced, never silently swallowed: they are real audit rows, just not an
         # answer to the question that was asked.
         # DELIBERATELY NOT BOUNDED BY top. The partition runs before the slice, so top
-        # caps audit_details only and this list is returned whole. Live it holds two
-        # platform-written rows, so there is nothing to cap; capping it would hide rows
-        # with no has_more-style flag to say so.
+        # caps audit_details only and this list is returned whole. Live it holds a
+        # handful of platform-written rows at most (0 or 4 on the org measured), so
+        # there is nothing to cap; capping it would hide rows with no has_more-style
+        # flag to say so.
         result["audit_configuration_events"] = configuration_events
         result["audit_configuration_events_count"] = len(configuration_events)
         if configuration_events:
@@ -2809,8 +2932,9 @@ async def dataverse_get_attribute_change_history(
                 f"{len(configuration_events)} organization-level audit-CONFIGURATION "
                 "row(s) were separated out of this response into "
                 "audit_configuration_events (records of auditing itself being turned "
-                "on or off). Dataverse returns them on EVERY "
-                "RetrieveAttributeChangeHistory call regardless of the target, so they "
+                "on or off). Dataverse returns such rows when an audit-configuration "
+                "change falls inside this record's history window, so their presence "
+                "and count vary by target and a count of 0 is equally normal. They "
                 f"are not changes to '{params.table_logical_name}."
                 f"{params.column_logical_name}': audit_details, count and has_more "
                 "cover this column's own changes only."

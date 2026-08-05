@@ -348,7 +348,7 @@ A single server instance can target any Dataverse org — pass `dataverse_url` o
 
 ## Tools
 
-**199 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
+**200 tools** grouped by domain below. Every tool returns JSON and requires `dataverse_url` on each call.
 
 The **Gate** column shows when a tool is registered:
 
@@ -376,7 +376,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `connections` | 5 | Connection reference management |
 | `variables` | 8 | Environment variable definitions and values |
 | `plugins` | 33 | Plugin assemblies, types, steps, step images, packages, trace logs |
-| `security` | 21 | Security roles and their privileges, teams and their privileges, users, business units, record access origin, record shares, composite access audit, record- and column-level audit history |
+| `security` | 22 | Security roles and their privileges, teams and their privileges, the environment-wide privilege catalogue, users, business units, record access origin, record shares, composite access audit, record- and column-level audit history |
 | `jobs` | 3 | Async operation (system job) monitoring and cancellation |
 | `webresources` | 5 | Web resource (JS/HTML/CSS/image) CRUD — gated, not always-on |
 | `customapis` | 13 | Custom API, request parameter, and response property management |
@@ -406,6 +406,7 @@ Use `DATAVERSE_TOOLS` to register only the tool categories your agent needs. Thi
 | `dataverse_list_teams` | default | List teams, optional filter and pagination |
 | `dataverse_get_team` | default | Get one team by GUID |
 | `dataverse_get_team_privileges` | default | Answer "what can this **team** actually do?" via the entity-bound `RetrieveTeamPrivileges` — the missing third of the trio alongside `dataverse_get_role_privileges` (role) and `dataverse_retrieve_user_privileges` (user). Trimmed to `top` (default 50, max 1000) with `total_count`, `has_more` and `depth_summary` over the full set. The collection arrives under **`RolePrivileges`**, not `TeamPrivileges` — check `privileges_source`, and expect `normalized: false` with the raw payload if the shape is unrecognized. **An empty list is normal**, meaning no directly-assigned security roles; a nonexistent team id is an HTTP 404 instead |
+| `dataverse_list_privileges` | default | List the privileges **defined** in the environment from the `privileges` catalogue — the definitions behind the `prvReadAccount` names the role/team/user privilege tools return, answering "what exists" rather than "who holds what". The integer `accessright` column is decoded into a readable name (`ReadAccess`, `AppendToAccess`, …) by a hand-rolled map, because **Dataverse exposes no option set for it** — the `PicklistAttributeMetadata` cast and `GlobalOptionSetDefinitions` both 404 — and an unrecognized value is reported **raw with no name** rather than mislabelled. Optional `table_logical_name` scopes to one table through the `privilegeobjecttypecodesset` join table, not by matching privilege names (`endswith(name,'Role')` spans four unrelated tables); an unknown name is an HTTP 400 naming it, while an **empty list means a real table with no privileges**. `total_count` comes from `$apply=aggregate($count as c)` because **`@odata.count` caps at 5,000** and under-reports this ~7,300-row collection |
 | `dataverse_list_shared_principals` | default | List **everyone one record was shared with**, merging `RetrieveSharedPrincipalsAndAccess` (principals + their access) and `RetrieveSharedLinks`. Neither `dataverse_retrieve_principal_access` (the mask) nor `dataverse_retrieve_access_origin` (the why) can enumerate them. Takes the **plural `entity_set_name`** (`accounts`), unlike `dataverse_retrieve_access_origin`'s singular logical name — and a wrong entity set returns the **same HTTP 404 `Does Not Exist`** as a missing record, so check the plural first. One function failing lands in `partial_errors` while the other still returns; an empty result is **not** proof the record is private |
 | `dataverse_list_users` | default | List system users, optional filter and pagination |
 | `dataverse_get_user` | default | Get one system user by GUID |

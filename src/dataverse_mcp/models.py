@@ -7452,6 +7452,110 @@ class ListSharedPrincipalsInput(DataverseEnvironmentInput):
         return v
 
 
+# Bound on a privilege-name prefix. The value lands in a $filter string literal in
+# the query string; 100 comfortably covers 'prv' + a verb + a publisher-prefixed
+# table name, which is the longest privilege name Dataverse generates.
+_PRIVILEGE_NAME_PREFIX_MAX_LENGTH = 100
+
+# The nine access-right names dataverse_list_privileges decodes the integer
+# `accessright` column into. Dataverse exposes NO option set for that column (the
+# PicklistAttributeMetadata cast and GlobalOptionSetDefinitions(Name='accessrights')
+# both 404, and odata.include-annotations yields only the integer with thousands
+# separators), so the tool decodes it through a hand-rolled map. The map itself —
+# with the integer values, which are NOT a contiguous or shiftable sequence — lives
+# in tools/security.py as _ACCESS_RIGHT_NAMES; it cannot live here because
+# models.py must not import from tools. tests/test_list_privileges.py asserts the
+# two stay in step.
+_AccessRightName = Literal[
+    "None",
+    "ReadAccess",
+    "WriteAccess",
+    "AppendAccess",
+    "AppendToAccess",
+    "CreateAccess",
+    "DeleteAccess",
+    "ShareAccess",
+    "AssignAccess",
+]
+
+
+class ListPrivilegesInput(DataverseEnvironmentInput):
+    """Input for listing the privileges DEFINED in an environment."""
+
+    table_logical_name: str | None = Field(
+        default=None,
+        description=(
+            "Optional SINGULAR logical name of a table ('account', not 'accounts') "
+            "to scope the list to that table's privileges. The value is LOWERCASED "
+            "for you — Dataverse logical names are always lowercase and it rejects "
+            "'Account' outright — so only the singular/plural distinction is yours "
+            "to get right. Scoping goes through a join table, NOT by matching "
+            "privilege names: matching on the name is wrong in general "
+            "(endswith(name,'Role') returns 25 privileges spanning role, "
+            "connectionrole, relationshiprole and mspp_webrole), it just happens to "
+            "look right on the tables people test with. Omit it to list the whole "
+            "environment-wide privilege catalogue."
+        ),
+        # Both layers are deliberate, and this repo has a CONFIRMED live OData
+        # key-predicate injection to justify them: the identifier grammar means the
+        # value cannot express the "'" a string-literal breakout needs, and the
+        # value is separately escaped and percent-encoded at the build site.
+        pattern=_DATAVERSE_NAME_PATTERN,
+        min_length=1,
+        max_length=_DATAVERSE_NAME_MAX_LENGTH,
+    )
+    name_startswith: str | None = Field(
+        default=None,
+        description=(
+            "Optional prefix of the privilege NAME to filter on, case-insensitively "
+            "('prvRead', 'prvCreate', 'prvAppendTo'). Privilege names follow the "
+            "prv{Verb}{Table} form, so a prefix is the natural way to ask 'every "
+            "read privilege'. Combine it with table_logical_name to narrow one "
+            "table's privileges further."
+        ),
+        min_length=1,
+        max_length=_PRIVILEGE_NAME_PREFIX_MAX_LENGTH,
+    )
+    access_right: _AccessRightName | None = Field(
+        default=None,
+        description=(
+            "Optional access right to filter on, given by NAME. The name is "
+            "translated to its integer here — no caller text is ever interpolated "
+            "into the query. Note that 'None' is a REAL access right (the value 0, "
+            "carried by non-CRUD privileges such as prvActOnBehalfOfAnotherUser), "
+            "not a way of saying 'no filter' — omit the field entirely for that."
+        ),
+    )
+    top: int = Field(
+        default=50,
+        description=(
+            "Maximum number of privileges to return. The environment-wide catalogue "
+            "runs to roughly 7,300 rows, so the list is trimmed. total_count "
+            "reports the TRUE total (obtained by aggregation, because @odata.count "
+            "caps at 5,000 on this collection and under-reports) and has_more says "
+            "whether anything was trimmed, so the magnitude is never hidden."
+        ),
+        ge=1,
+        le=5000,
+    )
+
+    @field_validator("table_logical_name")
+    @classmethod
+    def normalize_privilege_table_logical_name(cls, v: str | None) -> str | None:
+        """Lowercase the logical name so casing can never cause a failure.
+
+        Dataverse rejects 'Account' and 'ACCOUNT' from the privilege join table
+        with HTTP 400 [0x80041102] "… was not found in the MetadataCache", while
+        name_startswith on the same tool is deliberately case-INSENSITIVE on both
+        routes — an asymmetry that is a trap, not a feature. Lowercasing is
+        LOSSLESS here: a Dataverse logical name IS its schema name lowercased, so
+        no distinct name can be collapsed away, and the whole error class goes.
+
+        Runs after the identifier-grammar pattern, which lowercasing cannot break.
+        """
+        return v if v is None else v.lower()
+
+
 class GetAttributeChangeHistoryInput(DataverseEnvironmentInput):
     """Input for one record + one COLUMN's audit trail (RetrieveAttributeChangeHistory).
 

@@ -70,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   body rather than a guess. **An empty list is a normal answer, not a failure** — it means the team
   has no directly-assigned security roles; a nonexistent team id is an HTTP 404 instead, so the two
   are never confused.
+- `dataverse_list_privileges` (`security`, read-only): lists the privileges **defined** in the
+  environment — the catalogue behind the `prvReadAccount` names the role/team/user privilege tools
+  return. `accessright` is decoded by a hand-rolled map because Dataverse exposes **no option set
+  for it** (an unknown value is reported raw, never labelled), `total_count` comes from
+  `$apply=aggregate($count as c)` because **`@odata.count` caps at 5,000 and under-reports** on this
+  collection, and `table_logical_name` scopes through the `privilegeobjecttypecodesset` join table
+  rather than by matching privilege names, which is wrong in general. `table_logical_name` is
+  **lowercased for you** (Dataverse rejects `Account` outright, while `name_startswith` is
+  case-insensitive on both routes). An **unknown table name is an HTTP 400 `[0x80041102]` naming
+  it**, not an empty list; an empty list means a real table with no privileges mapped to it.
 - `dataverse_list_shared_principals` (`security`, read-only): lists **everyone one record was
   shared with**, merging the unbound `RetrieveSharedPrincipalsAndAccess` (the principals and their
   access rights) and `RetrieveSharedLinks`. Neither `dataverse_retrieve_principal_access` (the

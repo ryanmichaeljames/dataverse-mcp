@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 from collections import Counter
+from types import MappingProxyType
 from typing import Any
 from urllib.parse import urlencode
 
@@ -42,6 +43,7 @@ from dataverse_mcp.models import (
     GetUserInput,
     ListAuditInput,
     ListBusinessUnitsInput,
+    ListPrivilegesInput,
     ListSecurityRolesInput,
     ListSharedPrincipalsInput,
     ListTeamsInput,
@@ -679,6 +681,651 @@ async def dataverse_get_team_privileges(
         return tool_error_response(e, "dataverse_get_team_privileges")
     except Exception as e:
         return tool_error_response(e, "dataverse_get_team_privileges")
+
+
+# ---------------------------------------------------------------------------
+# Privilege catalogue (privileges / privilegeobjecttypecodesset)
+# ---------------------------------------------------------------------------
+
+# TRANSPORT NOTE — do NOT "improve" this onto RetrievePrivilegeSet. VERIFIED LIVE:
+# that function is collection-bound, takes no parameter beyond the binding, and
+# SILENTLY IGNORES $select, $filter, $top, $orderby and Prefer: odata.maxpagesize —
+# every call returns the same 7,346-row, 3.2 MB dump, with no @odata.nextLink and no
+# error to say the query options were dropped. The `privileges` ENTITY SET used here
+# is an ordinary queryable collection: $select, $top, $filter, $orderby and
+# odata.maxpagesize/@odata.nextLink all work on it.
+#
+# $skip is the one exception and is NEVER built: Dataverse answers HTTP 400 "Skip
+# Clause is not supported in CRM".
+_PRIVILEGES_ENTITY_SET = "privileges"
+
+# The join table mapping privileges to TABLES. It is undocumented, absent from
+# $metadata and flagged IsPrivate=True, and its collection name is NOT the logical
+# name plus an 's' — hence the literal 'set' suffix. Every call through it is
+# wrapped so a failure is reported by name rather than silently falling back to
+# privilege-name matching, which is wrong (see the tool docstring).
+_PRIVILEGE_TABLE_JOIN_ENTITY_SET = "privilegeobjecttypecodesset"
+
+# Dataverse's "that entity name is not in the MetadataCache" code. objecttypecode
+# on the join table is AttributeType EntityName, so the platform VALIDATES the
+# name in the $filter: an unknown, misspelled or plural logical name answers HTTP
+# 400 with this code naming the entity, NOT an empty collection (live-confirmed on
+# 'acount', 'accounts', 'new_notatable' and 'zzz_no_such_table'). It is therefore
+# the reliable signal for a bad table name, and the error path leads with it.
+_UNKNOWN_ENTITY_ERROR_CODE = "0x80041102"
+
+# Projection for a privilege row, used verbatim on both routes (as $select on
+# `privileges`, and inside the $expand on the join route) so the two answer with the
+# same shape. Deliberately EXCLUDED: canberecordfilter (null on 100% of rows here),
+# iscustomizable (null on the wire), privilegerowid, versionnumber, overwritetime,
+# solutionid, supportingsolutionid, componentstate, ismanaged, introducedversion.
+# Measured live at top=50/500/1000: an unprojected row is ~567 B against ~289 B
+# for this one — a ~1.97x saving, stable across all three page sizes. Not the 4x
+# a fuller projection would give, but still worth keeping: it halves the payload
+# for columns that are null or unusable on this route.
+# privilegetype is NOT included because it does not exist on the `privilege` entity
+# at all (only on EntityMetadata.Privileges, a different route), and access_right_name
+# already carries the same information: accessright=0 is exactly the set of non-CRUD
+# privileges that route labels PrivilegeType: None.
+_PRIVILEGE_SELECT = (
+    "name",
+    "accessright",
+    "canbebasic",
+    "canbelocal",
+    "canbedeep",
+    "canbeglobal",
+    "canbeentityreference",
+    "canbeparententityreference",
+    "privilegeid",
+)
+
+# Hand-rolled decode of the integer `accessright` column. This map is the main
+# reason this tool exists: Dataverse exposes NO option set for the column — the
+# PicklistAttributeMetadata cast 404s ("PicklistAttributeMetadata does not exist"),
+# GlobalOptionSetDefinitions(Name='accessrights') 404s, and
+# Prefer: odata.include-annotations="*" yields only a FormattedValue of the integer
+# with thousands separators ('524,288'). The values below were derived empirically
+# from an exact 1:1 against one table's privileges and cross-checked by name-verb
+# across all 7,346 rows (observed counts in the comment).
+#
+# The sequence has REAL GAPS — bit 3 (8) and bits 6-15 are unused — so names must
+# NEVER be derived by shifting. Every value observed live is a single bit or zero,
+# with no combined values, so this is a LOOKUP and not a mask-splitter. A value that
+# is not a key here is reported RAW with NO access_right_name: a wrong access-level
+# label is more dangerous than an unlabelled one, the same discipline
+# dataverse_get_team_privileges applies to Depth.
+_ACCESS_RIGHT_NAMES = MappingProxyType({
+    0: "None",            # 48 rows
+    1: "ReadAccess",      # 1026
+    2: "WriteAccess",     # 997
+    4: "AppendAccess",    # 953
+    16: "AppendToAccess",  # 962
+    32: "CreateAccess",   # 996
+    65536: "DeleteAccess",  # 989
+    262144: "ShareAccess",  # 676
+    524288: "AssignAccess",  # 699
+})
+
+# Reverse map, used ONLY to translate the input model's Literal into the integer
+# that goes into the $filter. Caller text never reaches the URL.
+_ACCESS_RIGHT_VALUES = MappingProxyType(
+    {name: value for value, name in _ACCESS_RIGHT_NAMES.items()}
+)
+
+# The four canbe* booleans, collapsed into one ordered `depths` list. Ordered by
+# increasing scope (Basic = the user's own records, Global = org-wide), matching the
+# PrivilegeDepth ordering the role/team privilege tools report. Only 6 combinations
+# exist across all 7,346 rows and canbeglobal is true on 7,306 of them, so the list
+# is short and far more legible than four flags.
+_DEPTH_FLAGS = (
+    ("canbebasic", "Basic"),
+    ("canbelocal", "Local"),
+    ("canbedeep", "Deep"),
+    ("canbeglobal", "Global"),
+)
+
+# Ceiling on the join route's single page. A table carries single-digit privileges
+# (8 for `account`) and the WHOLE join table is only 7,575 rows, so this is never
+# reached in practice; it exists so the request is bounded, and hitting it makes
+# total_count untrustworthy, which is reported as an omission rather than a guess.
+_PRIVILEGE_JOIN_MAX_ROWS = 5000
+
+
+def _plain_int(value: Any) -> int | None:
+    """Return *value* only when it really is an int, else None.
+
+    The companion to _plain_bool below. ``bool`` is a subclass of ``int`` and has
+    bitten this repo repeatedly, so True must not decode as ReadAccess; anything
+    else (None, a string, a float) is not an integer either and yields None, which
+    suppresses the decoded access-right name entirely.
+    """
+    if isinstance(value, bool):
+        return None
+    return value if isinstance(value, int) else None
+
+
+def _is_true(value: Any) -> bool:
+    """True only for the actual boolean True — never for 1 or a truthy object."""
+    return isinstance(value, bool) and value
+
+
+def _shape_privilege(row: dict[str, Any]) -> dict[str, Any]:
+    """Reduce one raw privilege row to the tool's uniform entry shape."""
+    access_right = row.get("accessright")
+    shaped: dict[str, Any] = {
+        "name": row.get("name"),
+        "privilege_id": row.get("privilegeid"),
+        "access_right": access_right,
+    }
+    decoded = _ACCESS_RIGHT_NAMES.get(_plain_int(access_right))
+    if decoded is not None:
+        # Omitted entirely when the value is unknown — see _ACCESS_RIGHT_NAMES.
+        shaped["access_right_name"] = decoded
+    # An EMPTY depths list is unexpected: no privilege among the 7,346 sampled had
+    # all four flags false. It is not treated as impossible — a row whose canbe*
+    # columns were not returned, or arrived as something other than a bool, lands
+    # here — so it is reported rather than suppressed.
+    shaped["depths"] = [label for column, label in _DEPTH_FLAGS if _is_true(row.get(column))]
+    # _plain_bool (defined further down for the audit probes) returns the value only
+    # when it really is a bool, so a missing column reads as None, not False.
+    shaped["can_be_entity_reference"] = _plain_bool(row.get("canbeentityreference"))
+    shaped["can_be_parent_entity_reference"] = _plain_bool(
+        row.get("canbeparententityreference")
+    )
+    return shaped
+
+
+def _privilege_rows(body: Any) -> list[dict[str, Any]] | None:
+    """Locate an OData collection in *body*, or None when the shape is unrecognised.
+
+    An EMPTY ``value`` list is a real answer and is returned as such. A MISSING or
+    non-list container returns None: a missing container is not "no privileges", and
+    fabricating an empty list there would report "this table grants nothing" for what
+    is really an unreadable payload.
+    """
+    if not isinstance(body, dict):
+        return None
+    rows = body.get("value")
+    if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+        return None
+    return rows
+
+
+def _parse_body(response: httpx.Response, label: str) -> Any:
+    """Parse a JSON body, degrading to the raw text instead of raising."""
+    try:
+        return response.json()
+    except ValueError:
+        logger.warning("%s returned a non-JSON body", label)
+        return response.text or None
+
+
+def _privilege_echo(params: ListPrivilegesInput) -> dict[str, Any]:
+    """Echo back only the filters the caller actually supplied."""
+    echo: dict[str, Any] = {}
+    if params.table_logical_name is not None:
+        echo["table_logical_name"] = params.table_logical_name
+    if params.name_startswith is not None:
+        echo["name_startswith"] = params.name_startswith
+    if params.access_right is not None:
+        echo["access_right"] = params.access_right
+    return echo
+
+
+def _unnormalized_response(
+    params: ListPrivilegesInput, source: str, body: Any, detail: str
+) -> str:
+    """Raw pass-through: no counts, no fabricated list."""
+    logger.warning("%s returned an unrecognised collection shape; returning it raw", source)
+    return finalize_response({
+        "normalized": False,
+        "source": source,
+        **_privilege_echo(params),
+        "message": (
+            f"Dataverse answered successfully from '{source}', but {detail} No count "
+            "is reported and none is guessed — in particular this is NOT 'no "
+            "privileges'. The response is returned unchanged (minus the @odata.* "
+            "envelope) under raw_response."
+        ),
+        "raw_response": body,
+    })
+
+
+def _catalogue_filter(params: ListPrivilegesInput) -> str | None:
+    """Build the $filter for the `privileges` route, or None when unfiltered.
+
+    ESCAPING. name_startswith is Edm.String inside a single-quoted OData literal, so
+    odata_quote DOUBLES any embedded quote here and urlencode percent-encodes the
+    whole expression at the build site — together exactly the two layers
+    encode_odata_literal applies, split across the two steps so the value is not
+    encoded twice. access_right never contributes caller text at all: the input
+    model's Literal is translated through _ACCESS_RIGHT_VALUES into an integer.
+    """
+    clauses: list[str] = []
+    if params.name_startswith is not None:
+        clauses.append(f"startswith(name,'{odata_quote(params.name_startswith)}')")
+    if params.access_right is not None:
+        clauses.append(f"accessright eq {_ACCESS_RIGHT_VALUES[params.access_right]}")
+    return " and ".join(clauses) if clauses else None
+
+
+async def _privilege_total_count(
+    app_ctx: Any,
+    headers: dict[str, str],
+    api_root: str,
+    filter_expr: str | None,
+) -> int | None:
+    """Return the TRUE row count via aggregation, or None when it cannot be trusted.
+
+    @odata.count LIES on this collection: it CAPS AT 5,000, so
+    ``?$count=true&$top=1`` reports 5,000 and ``/privileges/$count`` returns 5,000
+    where a full @odata.nextLink walk finds 7,346 (both confirmed live).
+    ``$apply=aggregate($count as c)`` bypasses the cap and returns the real number,
+    so it is the only count this tool will report. When the aggregation fails or its
+    shape is unrecognised, None comes back and total_count is OMITTED — never
+    replaced with a capped number.
+    """
+    apply_expr = "aggregate($count as c)"
+    if filter_expr:
+        apply_expr = f"filter({filter_expr})/{apply_expr}"
+    url = (
+        f"{api_root}/{_PRIVILEGES_ENTITY_SET}"
+        f"?{urlencode({'$apply': apply_expr}, safe='$,')}"
+    )
+    try:
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+        rows = response.json().get("value")
+    except Exception as e:
+        logger.warning(
+            "Privilege count aggregation failed (%s); total_count is omitted rather "
+            "than filled from the capped @odata.count",
+            e,
+        )
+        return None
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        return None
+    return _plain_int(rows[0].get("c"))
+
+
+async def _list_privileges_catalogue(
+    params: ListPrivilegesInput,
+    app_ctx: Any,
+    headers: dict[str, str],
+    api_root: str,
+) -> str:
+    """Environment-wide route: the ordinary, queryable `privileges` collection."""
+    filter_expr = _catalogue_filter(params)
+    query: dict[str, str] = {
+        "$select": ",".join(_PRIVILEGE_SELECT),
+        "$top": str(params.top),
+    }
+    if filter_expr:
+        query["$filter"] = filter_expr
+    # No $skip anywhere: Dataverse rejects it on this collection with HTTP 400
+    # "Skip Clause is not supported in CRM".
+    url = f"{api_root}/{_PRIVILEGES_ENTITY_SET}?{urlencode(query, safe='$,')}"
+
+    response = await request_with_retry(app_ctx.http_client, "GET", url, headers=headers)
+    response.raise_for_status()
+    payload = _parse_body(response, _PRIVILEGES_ENTITY_SET)
+    body: Any = payload
+    if isinstance(payload, dict):
+        body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+    rows = _privilege_rows(payload)
+    if rows is None:
+        return _unnormalized_response(
+            params,
+            _PRIVILEGES_ENTITY_SET,
+            body,
+            "it carried no readable 'value' collection.",
+        )
+
+    page = [_shape_privilege(row) for row in rows[: params.top]]
+    total_count = await _privilege_total_count(app_ctx, headers, api_root, filter_expr)
+    if total_count is not None:
+        has_more = total_count > len(page)
+    else:
+        # No trustworthy total: fall back to the two signals that ARE trustworthy —
+        # a page filled to the cap, and a nextLink the server offered.
+        next_link = payload.get("@odata.nextLink") if isinstance(payload, dict) else None
+        has_more = len(rows) >= params.top or bool(next_link)
+    return _privilege_response(
+        params, _PRIVILEGES_ENTITY_SET, page, total_count, has_more, []
+    )
+
+
+async def _list_privileges_for_table(
+    params: ListPrivilegesInput,
+    app_ctx: Any,
+    headers: dict[str, str],
+    api_root: str,
+) -> str:
+    """Table-scoped route: the private privilegeobjecttypecodesset join table.
+
+    objecttypecode on that table is AttributeType EntityName and holds the LOGICAL
+    NAME STRING ('account'), not the integer object type code. There is no navigation
+    property from `privilege` to this join table — $expand=privilegeobjecttypecodes
+    on /privileges answers HTTP 400 — so the join has to be read from this side.
+    """
+    # Edm.String in a single-quoted literal: odata_quote doubles any embedded quote
+    # and urlencode percent-encodes below. _DATAVERSE_NAME_PATTERN on the model is
+    # the independent second layer.
+    table_literal = odata_quote(params.table_logical_name or "")
+    query = {
+        "$select": "objecttypecode",
+        "$expand": f"privilegeid($select={','.join(_PRIVILEGE_SELECT)})",
+        "$filter": f"objecttypecode eq '{table_literal}'",
+        "$top": str(_PRIVILEGE_JOIN_MAX_ROWS),
+    }
+    url = (
+        f"{api_root}/{_PRIVILEGE_TABLE_JOIN_ENTITY_SET}"
+        f"?{urlencode(query, safe='$,')}"
+    )
+
+    try:
+        response = await request_with_retry(
+            app_ctx.http_client, "GET", url, headers=headers
+        )
+        response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        # Named explicitly rather than degraded to a name-based guess: this entity
+        # set is private and undocumented, so a caller must be told WHICH route
+        # failed instead of receiving privileges picked by name matching.
+        logger.error(
+            "Table-scoped privilege lookup failed on %s: HTTP %d",
+            _PRIVILEGE_TABLE_JOIN_ENTITY_SET,
+            e.response.status_code,
+        )
+        # Trailing '.' trimmed because the sentence below supplies its own.
+        detail = str(extract_error_message(e.response)).strip().rstrip(".")
+        if _UNKNOWN_ENTITY_ERROR_CODE in detail:
+            # The overwhelmingly likely cause, so it leads: the caller named a
+            # table Dataverse does not know. The private-entity-set caveat below
+            # is the wrong first-order diagnosis for a typo.
+            cause = (
+                f"'{params.table_logical_name}' is not a table logical name this "
+                "environment knows. Dataverse returned HTTP "
+                f"{e.response.status_code} from the "
+                f"'{_PRIVILEGE_TABLE_JOIN_ENTITY_SET}' join table, which is how "
+                f"table-scoped privileges are read: {detail}. That "
+                f"{_UNKNOWN_ENTITY_ERROR_CODE} code names the entity that could "
+                "not be found and is the reliable signal for a bad table name, so "
+                "check the spelling and use the SINGULAR logical name ('account', "
+                "not 'accounts'); casing is normalised for you, so it is never the "
+                "cause."
+            )
+        else:
+            cause = (
+                f"Dataverse returned HTTP {e.response.status_code} from the "
+                f"'{_PRIVILEGE_TABLE_JOIN_ENTITY_SET}' join table, which is how "
+                f"table-scoped privileges are read: {detail}. That entity set is "
+                "private and undocumented, so it may be unavailable or "
+                "privilege-gated on this environment."
+            )
+        return json.dumps({
+            "error": True,
+            "message": (
+                f"{cause} Nothing is guessed in its place — matching privileges by "
+                "name is NOT a valid substitute. Retry without table_logical_name "
+                "to list the catalogue."
+            ),
+        })
+
+    payload = _parse_body(response, _PRIVILEGE_TABLE_JOIN_ENTITY_SET)
+    body: Any = payload
+    if isinstance(payload, dict):
+        body = {k: v for k, v in payload.items() if not k.startswith("@odata.")}
+
+    rows = _privilege_rows(payload)
+    if rows is None:
+        return _unnormalized_response(
+            params,
+            _PRIVILEGE_TABLE_JOIN_ENTITY_SET,
+            body,
+            "it carried no readable 'value' collection.",
+        )
+
+    expanded = [row["privilegeid"] for row in rows if isinstance(row.get("privilegeid"), dict)]
+    if rows and not expanded:
+        return _unnormalized_response(
+            params,
+            _PRIVILEGE_TABLE_JOIN_ENTITY_SET,
+            body,
+            "not one join row carried an expanded 'privilegeid' privilege, so the "
+            "privileges themselves could not be read.",
+        )
+
+    # The join route cannot express the name/access-right filters (they apply to the
+    # EXPANDED privilege, not to the join row), so they are applied here. The prefix
+    # match is case-INSENSITIVE to match OData startswith on Dataverse, which is
+    # case-insensitive by collation — otherwise the same prefix would behave
+    # differently on the two routes.
+    shaped = [_shape_privilege(privilege) for privilege in expanded]
+    prefix = (params.name_startswith or "").lower()
+    wanted = (
+        _ACCESS_RIGHT_VALUES[params.access_right]
+        if params.access_right is not None
+        else None
+    )
+    matches = [
+        entry
+        for entry in shaped
+        if (
+            not prefix
+            or (isinstance(entry["name"], str) and entry["name"].lower().startswith(prefix))
+        )
+        and (wanted is None or _plain_int(entry["access_right"]) == wanted)
+    ]
+
+    notes: list[str] = []
+    total_count: int | None = len(matches)
+    if len(rows) >= _PRIVILEGE_JOIN_MAX_ROWS:
+        # Never seen live (the whole join table is 7,575 rows), but a capped page
+        # means the count is a floor, not a total — so it is omitted, not reported.
+        total_count = None
+        notes.append(
+            f"The join query hit its {_PRIVILEGE_JOIN_MAX_ROWS}-row ceiling, so "
+            "total_count is omitted rather than reported as a number that would be "
+            "a floor."
+        )
+    if not matches:
+        # NOT a spelling problem: a bad logical name never reaches this branch. The
+        # join table validates objecttypecode, so an unknown, misspelled or plural
+        # name fails with HTTP 400 [0x80041102] in the error path above. Reaching
+        # here means the name was CORRECT — telling the caller to check their
+        # spelling is exactly backwards.
+        if shaped:
+            notes.append(
+                f"Table '{params.table_logical_name}' has {len(shaped)} privilege(s), "
+                "but none matched the name_startswith/access_right filters — widen "
+                "or drop them to see the rest."
+            )
+        else:
+            notes.append(
+                f"Table '{params.table_logical_name}' EXISTS and has no privileges "
+                "mapped to it. This is a real answer, not a lookup failure: an "
+                f"unknown or misspelled logical name fails with HTTP 400 "
+                f"[{_UNKNOWN_ENTITY_ERROR_CODE}] naming the entity instead of "
+                "answering empty. A few tables genuinely map to none — "
+                "'privilege' itself is one, live-confirmed at 0."
+            )
+    if prefix or wanted is not None:
+        notes.append(
+            "name_startswith/access_right were applied client-side to the expanded "
+            "privileges (the join table cannot express them), so count and "
+            "total_count describe the FILTERED set."
+        )
+
+    page = matches[: params.top]
+    has_more = total_count is None or total_count > len(page)
+    return _privilege_response(
+        params, _PRIVILEGE_TABLE_JOIN_ENTITY_SET, page, total_count, has_more, notes
+    )
+
+
+def _privilege_response(
+    params: ListPrivilegesInput,
+    source: str,
+    page: list[dict[str, Any]],
+    total_count: int | None,
+    has_more: bool,
+    notes: list[str],
+) -> str:
+    """Assemble the uniform response both routes return."""
+    result: dict[str, Any] = {
+        "normalized": True,
+        "source": source,
+        "count": len(page),
+    }
+    if total_count is not None:
+        result["total_count"] = total_count
+    else:
+        notes.append(
+            "total_count is OMITTED because no trustworthy total could be obtained "
+            "— it is never filled from @odata.count, which caps at 5,000 on this "
+            "collection and under-reports the true number."
+        )
+    result["has_more"] = has_more
+    result["privileges"] = page
+    result.update(_privilege_echo(params))
+
+    unmapped = sorted(
+        {
+            str(entry["access_right"])
+            for entry in page
+            if "access_right_name" not in entry
+        }
+    )
+    if unmapped:
+        result["unmapped_access_rights"] = unmapped
+        notes.append(
+            f"{len(unmapped)} access right value(s) are not in this server's decode "
+            f"map ({', '.join(unmapped)}); those entries carry access_right raw with "
+            "NO access_right_name, because a wrong access-level label is more "
+            "dangerous than an unlabelled one."
+        )
+    if has_more and total_count is not None:
+        notes.append(
+            f"{total_count} privileges match; the first {len(page)} are returned — "
+            "raise top (max 5000) or narrow with name_startswith / access_right / "
+            "table_logical_name to see the rest."
+        )
+    if notes:
+        result["message"] = " ".join(notes)
+    return finalize_response(result)
+
+
+@tool(
+    name="dataverse_list_privileges",
+    annotations={
+        "title": "List Privileges",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def dataverse_list_privileges(params: ListPrivilegesInput, ctx: Context) -> str:
+    """List the privileges DEFINED in the environment — the catalogue of what CAN be granted.
+
+    This is the reference list, not an assignment. dataverse_get_role_privileges,
+    dataverse_get_team_privileges and dataverse_retrieve_user_privileges answer "who
+    HOLDS what"; this answers "what privileges exist, what access right does each
+    carry, and at which depths can it be granted". Use it to look up the privilege
+    behind a name those tools return ('prvReadAccount'), or to enumerate everything
+    that exists for one table.
+
+    ACCESS RIGHTS ARE DECODED BY A HAND-ROLLED MAP, AND THAT IS THE POINT. The
+    accessright column is an integer with NO option set behind it anywhere in
+    Dataverse: the PicklistAttributeMetadata cast 404s, GlobalOptionSetDefinitions
+    for it 404s, and annotation-included FormattedValues return only the integer with
+    thousands separators. So access_right_name comes from a map derived empirically
+    and cross-checked across every privilege in the environment:
+      0 None · 1 ReadAccess · 2 WriteAccess · 4 AppendAccess · 16 AppendToAccess ·
+      32 CreateAccess · 65536 DeleteAccess · 262144 ShareAccess · 524288 AssignAccess
+    The gaps are real (8 and 16-32768 are unused), so a name is never derived by
+    shifting bits. AN UNRECOGNISED VALUE IS REPORTED RAW: access_right still carries
+    it, access_right_name is ABSENT, and the value is listed under
+    unmapped_access_rights. Nothing is invented — a wrong access-level label is more
+    dangerous than an unlabelled one, the same discipline dataverse_get_team_privileges
+    applies to Depth. accessright 0 marks the non-CRUD privileges (prvActOnBehalfOf...
+    and friends); it is a real value, not "unknown".
+
+    depths COLLAPSES THE FOUR canbe* FLAGS into one ordered list, e.g.
+    ["Basic","Local","Deep","Global"] — the depths at which that privilege may be
+    granted, by increasing scope (Basic = the user's own records, Global = org-wide).
+    Only six combinations exist in practice and nearly every privilege allows Global.
+    An EMPTY depths list is unexpected and means the flags could not be read, not
+    that the privilege can be granted nowhere.
+
+    total_count COMES FROM AN AGGREGATION, NOT @odata.count. On this collection
+    @odata.count CAPS AT 5,000 and lies — ?$count=true reports 5,000 where the true
+    catalogue is ~7,346 — so the count is taken with
+    $apply=aggregate($count as c), which bypasses the cap. If a trustworthy total
+    cannot be obtained, total_count is OMITTED and message says so; a capped number
+    is never reported as the truth. count is the size of the returned page, has_more
+    says whether anything was trimmed.
+
+    TABLE SCOPING GOES THROUGH A JOIN TABLE, NOT THROUGH PRIVILEGE NAMES. Passing
+    table_logical_name queries privilegeobjecttypecodesset, whose objecttypecode
+    column holds the table's LOGICAL NAME STRING. Filtering by name instead —
+    endswith(name,'Account') — is WRONG in general even though it looks right on the
+    tables people test with: endswith(name,'Role') returns 25 privileges spanning
+    FOUR different tables (role, connectionrole, relationshiprole, mspp_webrole).
+    Privileges are also many-to-many with tables (one privilege can map to as many as
+    14), which a name can never express. That join table is private and undocumented,
+    so if it fails you get a clear error naming it — never a silent fall back to name
+    matching.
+
+    AN UNKNOWN TABLE NAME IS AN ERROR, NOT AN EMPTY LIST. objecttypecode is an
+    EntityName column, so Dataverse validates it: an unknown, misspelled or plural
+    logical name answers HTTP 400 [0x80041102] "The entity with a name = '…' with
+    namemapping = 'Logical' was not found in the MetadataCache", naming the offending
+    entity — that message is the reliable signal for a bad table name, and it is what
+    the error surfaces first. Casing is never the cause: table_logical_name is
+    lowercased for you, matching name_startswith's case-insensitivity on both routes.
+    An EMPTY privileges list means the opposite — the table EXISTS and genuinely has
+    no privileges mapped to it, live-confirmed on 'privilege' itself, which returns 0.
+
+    source names the route that actually ran ('privileges' or
+    'privilegeobjecttypecodesset'); the response shape is identical either way. On
+    the join route, name_startswith and access_right are applied client-side, so
+    count/total_count describe the filtered set.
+
+    Each entry: name, privilege_id, access_right (raw integer), access_right_name
+    (absent when unknown), depths, can_be_entity_reference,
+    can_be_parent_entity_reference. Bulky and empty columns are deliberately dropped
+    (privilegetype does not exist on this entity at all).
+
+    If the response carries no readable collection, nothing is guessed: normalized is
+    false, no counts are reported, and the body comes back under raw_response. An
+    empty privileges list with normalized: true is a real answer; a missing container
+    is not.
+    """
+    app_ctx = get_app_ctx(ctx)
+    try:
+        base_url = resolve_base_url(params.dataverse_url)
+    except ValueError as e:
+        return json.dumps({"error": True, "message": str(e)})
+
+    api_root = f"{base_url}/api/data/{_DATAVERSE_API_VERSION}"
+
+    # The whole body is guarded, not just the HTTP calls: CLAUDE.md's "do not raise
+    # uncaught exceptions from tools" is unconditional and the shaping below reads a
+    # payload whose columns can be absent.
+    try:
+        headers = await build_headers(app_ctx, base_url)
+        if params.table_logical_name is not None:
+            return await _list_privileges_for_table(params, app_ctx, headers, api_root)
+        return await _list_privileges_catalogue(params, app_ctx, headers, api_root)
+    except httpx.HTTPStatusError as e:
+        return tool_error_response(e, "dataverse_list_privileges")
+    except Exception as e:
+        return tool_error_response(e, "dataverse_list_privileges")
 
 
 # ---------------------------------------------------------------------------

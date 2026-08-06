@@ -1,4 +1,4 @@
-![dataverse-mcp](https://raw.githubusercontent.com/ryanmichaeljames/dataverse-mcp/main/assets/dataverse-mcp-banner.png)
+![dataverse-mcp](https://raw.githubusercontent.com/ryanmichaeljames/dataverse-mcp/main/assets/dataverse-mcp-banner.svg)
 
 [![CI](https://github.com/ryanmichaeljames/dataverse-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/ryanmichaeljames/dataverse-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)

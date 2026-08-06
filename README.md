@@ -1,4 +1,4 @@
-# Dataverse MCP Server
+![dataverse-mcp](https://raw.githubusercontent.com/ryanmichaeljames/dataverse-mcp/main/assets/dataverse-mcp-banner.png)
 
 [![PyPI](https://img.shields.io/pypi/v/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)
 [![Python](https://img.shields.io/pypi/pyversions/dataverse-mcp)](https://pypi.org/project/dataverse-mcp/)

@@ -5,6 +5,169 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [3.9.0] - 2026-08-06
+
+Fifteen read-only tools wrapping Dataverse Web API functions, taking the registered tool count from
+185 to 200. Each was verified against a live organization rather than from documentation alone, and
+that verification repeatedly contradicted the published contracts — the corrections are recorded per
+entry below.
+
+Minor rather than major, though one shipped tool's output changes: the old counts from
+`dataverse_retrieve_record_change_history` were simply wrong, so this corrects a defect rather than
+breaking a contract. **It does mean recorded counts from that tool will differ after upgrading** —
+see the entry under Changed.
+
+### Added
+- `dataverse_get_organization_info` (`core`, read-only): fingerprints the target environment by
+  merging `RetrieveVersion`, `RetrieveCurrentOrganization` and `RetrieveOrganizationInfo` — server
+  version, organization identity, service endpoints and instance type, so a caller can tell a
+  sandbox from production before doing anything risky. The installed-solution list is behind
+  `include_solutions` (it ran to 519 entries on a real org); by default only `solutions_count` is
+  returned. One function failing is reported in `partial_errors` while the rest of the data is
+  still returned.
+- `dataverse_get_total_record_counts` (`core`, read-only): approximate row counts for up to 50
+  tables in one call via the unbound `RetrieveTotalRecordCount` function. Takes table **logical**
+  names (`account`, not `accounts`). **Counts come from a snapshot taken at most once every 24
+  hours**: they can be stale, and on an org where the snapshot job has not run every count comes
+  back `0` (flagged with `all_counts_zero`) — use `dataverse_count_records` for an exact, live
+  count. All-or-nothing: one unrecognized table name fails the whole batch with HTTP 400.
+- `dataverse_validate_fetchxml` (`core`, read-only): pre-flight companion to
+  `dataverse_execute_fetchxml`. The unbound `ValidateFetchXmlExpression` function parses and
+  analyses a FetchXml expression server-side, returning validation errors and performance
+  suggestions without executing it. **HTTP 200 does not mean the query is valid** — a nonexistent
+  table or attribute still returns 200 carrying a severity-3 message — so the verdict is lifted to
+  `has_errors`, `count`, `error_count`, `warning_count` and `errors`. Input is capped at 2000
+  characters because the document travels in the request URL.
+- `dataverse_is_component_customizable` (`schema`, read-only): pre-flight check via the unbound
+  `IsComponentCustomizable` function answering whether a solution component can be customized
+  before an edit is attempted. Takes the component's own GUID plus the integer `component_type`
+  code `dataverse_analyze_dependencies` uses, and returns `is_customizable`. **A system component
+  does not imply `false`** — `systemuser` reports `true`, because core tables still permit
+  customizations such as adding columns. A well-formed GUID matching no component is an HTTP 400,
+  not a `false`.
+- `dataverse_retrieve_unpublished` (`core`, read-only): reads the **unpublished (draft)**
+  definition of one customization record via the instance-bound `RetrieveUnpublished` function, so
+  a read-back after `dataverse_set_formxml` / `dataverse_update_view` sees the edit instead of the
+  stale published row. `entity_set_name` is a closed allowlist — `savedqueries`, `systemforms`,
+  `appmodules`, `webresourceset`; **`sitemaps` is not accepted**, because Dataverse refuses the
+  message for that entity type outright. Returns one record, not a list, with a small default
+  projection that excludes the large `formxml` / `fetchxml` / `layoutxml` / `content` columns —
+  pass `select` to opt in. The returned column set is not the requested one: columns whose value is
+  NULL are omitted rather than returned as `null`, and `_organizationid_value` is added unasked.
+- `dataverse_get_role_privileges` (`security`, read-only): lists the privileges assigned to a
+  security role via the unbound `RetrieveRolePrivilegesRole` function — the "what can this role
+  actually do?" companion to `dataverse_get_security_role`, which returns only the role record.
+  The function has no server-side paging and a System Administrator role carries thousands of
+  privileges (4,132 in a ~1 MB response, measured live), so entries are trimmed to `top` (default
+  50, max 1000) while `total_count`, `has_more` and `depth_summary` are computed over the full set.
+  A well-formed but nonexistent role id returns HTTP 404, not an empty list.
+- `dataverse_retrieve_access_origin` (`security`, read-only): answers **why** a principal has
+  access to one specific record — security role, ownership, share, business-unit hierarchy, team
+  membership — via the unbound `RetrieveAccessOrigin` function, complementing
+  `dataverse_retrieve_principal_access`, which returns only the access mask. Takes the record's
+  `object_id`, the **singular lowercase** `logical_name` of its table (not the entity set name),
+  and a `principal_id` that must be a systemuser or a team. **HTTP 200 does not mean the principal
+  has access**: access, no access, and a record that does not exist all arrive as successful calls,
+  distinguishable only by the English prose in the returned `access_origin` string, which is
+  deliberately not classified into a boolean.
+- `dataverse_get_team_privileges` (`security`, read-only): answers "what can this **team**
+  actually do?" via the entity-bound `RetrieveTeamPrivileges` function — the missing third
+  alongside `dataverse_get_role_privileges` (role) and `dataverse_retrieve_user_privileges` (user).
+  Like the role function it has no server-side paging, so entries are trimmed to `top` (default 50,
+  max 1000) while `total_count`, `has_more` and `depth_summary` cover the full set. The collection
+  arrives under **`RolePrivileges`**, not `TeamPrivileges` (verified live); `privileges_source`
+  reports where it was found and an unrecognized payload returns `normalized: false` with the raw
+  body rather than a guess. **An empty list is a normal answer, not a failure** — it means the team
+  has no directly-assigned security roles; a nonexistent team id is an HTTP 404 instead, so the two
+  are never confused.
+- `dataverse_list_privileges` (`security`, read-only): lists the privileges **defined** in the
+  environment — the catalogue behind the `prvReadAccount` names the role/team/user privilege tools
+  return. `accessright` is decoded by a hand-rolled map because Dataverse exposes **no option set
+  for it** (an unknown value is reported raw, never labelled), `total_count` comes from
+  `$apply=aggregate($count as c)` because **`@odata.count` caps at 5,000 and under-reports** on this
+  collection, and `table_logical_name` scopes through the `privilegeobjecttypecodesset` join table
+  rather than by matching privilege names, which is wrong in general. `table_logical_name` is
+  **lowercased for you** (Dataverse rejects `Account` outright, while `name_startswith` is
+  case-insensitive on both routes). An **unknown table name is an HTTP 400 `[0x80041102]` naming
+  it**, not an empty list; an empty list means a real table with no privileges mapped to it.
+- `dataverse_list_shared_principals` (`security`, read-only): lists **everyone one record was
+  shared with**, merging the unbound `RetrieveSharedPrincipalsAndAccess` (the principals and their
+  access rights) and `RetrieveSharedLinks`. Neither `dataverse_retrieve_principal_access` (the
+  access mask) nor `dataverse_retrieve_access_origin` (why one principal has access) can enumerate
+  them. Takes the **plural `entity_set_name`** (`accounts`) — not the singular logical name
+  `dataverse_retrieve_access_origin` takes, and **getting it wrong is indistinguishable from a
+  missing record**: a valid id with the wrong entity set and a nonexistent id both return the same
+  HTTP 404 `Does Not Exist`, so check the plural before concluding the record is gone. The two
+  functions fail independently: one failing is reported in `partial_errors` while the other's data
+  still returns, and only both failing yields an error. **An empty result is not proof the record is
+  private** — these functions report explicit shares visible to the caller, not access from
+  ownership, roles, teams or the business-unit hierarchy.
+- `dataverse_get_setting` (`core`, read-only): reads one setting's **final computed value** via
+  the unbound `RetrieveSetting` function — the value in effect after the platform's precedence
+  rules, which is what diffing configuration between environments needs; a raw row is not it.
+  The value is nested in the `SettingDetail` container Dataverse returns; `Value` is a **string**
+  and the `DataType` integer code is passed through unmapped. Optional `app_unique_name` reads a
+  model-driven app's view of the setting, and when omitted the parameter is left out of the request
+  entirely rather than sent empty. An **unknown setting name is not an error** — Dataverse answers
+  HTTP 200 with `SettingDetail: null`, reported as `setting_found: false`, which never collapses
+  with a setting that genuinely holds `""`, `"false"` or `0`.
+- `dataverse_list_languages` (`schema`, read-only): reports an environment's provisioned, available
+  and installed-pack LCIDs in one concurrent call, each source failing independently via
+  `partial_errors`. `provisioned` is the load-bearing set — the LCIDs a `LocalizedLabels` entry may
+  use — and the three can be **mutually disjoint**, so `available_not_provisioned` and
+  `installed_not_provisioned` are reported explicitly.
+- `dataverse_get_valid_relationship_entities` (`schema`, read-only): enumerates **which** tables may
+  take a relationship role (`referenced` / `referencing` / `many_to_many`) — the counterpart to
+  `dataverse_check_relationship_eligibility`, which answers for one named table. The optional
+  `table_logical_name` is validated server-side but does **not** narrow the result
+  (`table_logical_name_filtered: false`); it is rejected for `many_to_many`. Results are trimmed to
+  `top` (default 250), with `total_count` and `has_more` over the full set.
+- `dataverse_get_import_job_results` (`solutions`, read-only): answers **why a solution import
+  failed** by fetching Dataverse's own human-readable results document for an importjob via the
+  unbound `RetrieveFormattedImportJobResults` function, instead of the opaque `data` XML blob
+  `dataverse_get_import_job` returns. The document is a **SpreadsheetML (Excel XML) workbook**, so
+  the meaning lives in the cell values, not the tag names — no tag is named error, warning or
+  failure. It is large (~14,000–71,000 characters observed) and is truncated at `max_chars`
+  (default 20,000, max 2,000,000), with `results_length` always reporting the full length and
+  `truncated` saying whether anything was cut.
+- `dataverse_get_attribute_change_history` (`security`, read-only): column-scoped audit history for
+  one record via `RetrieveAttributeChangeHistory`, taking the plural `entity_set_name` plus the
+  singular `table_logical_name` (used only by the probes). The org-level audit-**configuration** rows
+  that accompany every response are identified by type, split into `audit_configuration_events` and
+  excluded from `audit_details`, `count` and `has_more`. **Zero changes is ambiguous, so it is diagnosed** — an
+  `audit_configuration` block names the outermost level at which auditing is off (organization /
+  table / column), or confirms auditing is on and nothing was recorded.
+
+### Changed
+- Both audit-history tools now require an all-zero `AuditRecord._objectid_value` before filing an
+  entry as an audit-**configuration** row, on top of the existing "no `@odata.type`, `AuditRecord`
+  and nothing else" shape test. Behaviour-neutral against every row observed live; it exists so a
+  bare genuine event (base `AuditDetail` declares only `AuditRecord`, and OData omits `@odata.type`
+  when the instance type equals the declared type) is kept as a change instead of being dropped.
+  Entries kept that way are reported in the new `unclassified_typeless_count`, which is `0` on
+  every response seen so far. `dataverse_retrieve_record_change_history` also now emits
+  `detail_types`, matching its column-scoped sibling — it is the call that sees the wider subtype
+  mix. Corrected on both tools: audit-configuration rows do **not** accompany every response — they
+  arrive only when an audit-configuration change falls inside the target record's history window,
+  so `audit_configuration_events_count: 0` is normal (0 for a record created after the last such
+  change, 4 for older records on the same org), and those rows carry the **target table's**
+  `objecttypecode`, not `organization`.
+- **`dataverse_retrieve_record_change_history` response shape corrected — counts will differ.** The org-level
+  audit-**configuration** rows Dataverse attaches to every response were being counted as results, so
+  `count` was inflated (and non-zero for records that never changed); they now move to
+  `audit_configuration_events` / `audit_configuration_events_count` and `count`/`has_more`/
+  `audit_details` cover genuine changes only. `total_record_count` is now omitted when Dataverse
+  sends its `-1` "not counted" sentinel instead of being emitted as `-1`, `has_more` is now true when
+  the client-side `top` trim cut rows (it previously reported only the server's `MoreRecords`), and a
+  missing/malformed `AuditDetailCollection` returns `normalized: false` + `raw_response` instead of a
+  fabricated empty list. The docstring's claim that auditing being disabled returns an HTTP error was
+  false: that case is a live-confirmed HTTP 200 with zero genuine changes. It no longer claims a 404
+  always means a wrong entity set name either — most tables do not validate the target id, but a
+  15-entity-set sweep on one org found `audits` answering 404 `[0x80048d02]` for a genuinely absent
+  row, so the error code decides.
+
 ## [3.8.0] - 2026-07-29
 
 ### Fixed
@@ -695,7 +858,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.0...HEAD
+[3.9.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.8.0...v3.9.0
+[3.8.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.6.0...v3.7.0
 [3.6.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.1...v3.6.0
 [3.5.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.5.0...v3.5.1

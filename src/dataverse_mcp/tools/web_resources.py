@@ -197,8 +197,8 @@ async def dataverse_get_web_resource(
     IMPORTANT: this returns the PUBLISHED version of the web resource. Edits made
     via dataverse_update_web_resource are saved to the unpublished draft and will
     NOT appear here until you call dataverse_publish_customizations for this web
-    resource. (The Dataverse RetrieveUnpublished message — not exposed by this
-    server — is what tooling uses to read the draft before publishing.)
+    resource. (Use dataverse_retrieve_unpublished with
+    entity_set_name='webresourceset' to read the draft before publishing.)
     """
     app_ctx = get_app_ctx(ctx)
     try:

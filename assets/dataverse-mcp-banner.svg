@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="500" viewBox="0 0 1600 500">
+<rect width="100%" height="100%" fill="#09090b"/>
+<defs>
+  <pattern id="grid" width="80" height="80" patternUnits="userSpaceOnUse">
+    <path d="M 80 0 L 0 0 0 80" fill="none" stroke="#111114" stroke-width="1"/>
+  </pattern>
+</defs>
+<rect width="100%" height="100%" fill="url(#grid)"/>
+<g font-family="DejaVu Sans Mono, monospace">
+  <rect x="95" y="88" width="7" height="42" fill="#e11d2e"/>
+  <text x="117" y="112" font-size="21" fill="#8b8b91" letter-spacing="1">OPEN-SOURCE MCP SERVER</text>
+  <text x="95" y="238" font-family="DejaVu Sans, sans-serif" font-size="102" font-weight="700" fill="#f5f5f4">DATAVERSE</text>
+  <text x="95" y="348" font-family="DejaVu Sans, sans-serif" font-size="102" font-weight="700" fill="#f5f5f4">MCP</text>
+  <rect x="95" y="370" width="248" height="9" rx="4" fill="#e11d2e"/>
+  <text x="95" y="428" font-size="25" fill="#8b8b91">AI AGENTS  ↔  MICROSOFT DATAVERSE</text>
+
+
+  <polygon points="1210,248 1390,328 1210,408 1030,328" fill="none" stroke="#25252a" stroke-width="3"/>
+  <polygon points="1210,208 1390,288 1210,368 1030,288" fill="none" stroke="#8b8b91" stroke-width="3"/>
+  <polygon points="1210,168 1390,248 1210,328 1030,248" fill="none" stroke="#f5f5f4" stroke-width="4"/>
+  <line x1="1210" y1="168" x2="1210" y2="328" stroke="#25252a" stroke-width="2"/>
+  <line x1="1030" y1="248" x2="1210" y2="328" stroke="#25252a" stroke-width="2"/>
+  <line x1="1390" y1="248" x2="1210" y2="328" stroke="#25252a" stroke-width="2"/>
+
+  <polygon points="1210,221 1253,248 1210,275 1167,248" fill="#7f101a" stroke="#e11d2e" stroke-width="3"/>
+  <line x1="1210" y1="221" x2="1210" y2="142" stroke="#e11d2e" stroke-width="3"/>
+  <line x1="1253" y1="248" x2="1342" y2="208" stroke="#e11d2e" stroke-width="3"/>
+  <line x1="1167" y1="248" x2="1078" y2="208" stroke="#e11d2e" stroke-width="3"/>
+  <circle cx="1210" cy="142" r="6" fill="#e11d2e"/>
+  <circle cx="1342" cy="208" r="6" fill="#e11d2e"/>
+  <circle cx="1078" cy="208" r="6" fill="#e11d2e"/>
+
+  <text x="1100" y="442" font-size="16" fill="#8b8b91">QUERY  •  SCHEMA  •  SECURITY  •  AUTOMATION</text>
+</g>
+<g stroke="#25252a" stroke-width="2" fill="none">
+  <path d="M62 126 V62 H210"/>
+  <path d="M1538 374 V438 H1390"/>
+</g>
+<g stroke="#e11d2e" stroke-width="3">
+  <line x1="40" y1="32" x2="40" y2="58"/>
+  <line x1="780" y1="32" x2="780" y2="58"/>
+  <line x1="1260" y1="32" x2="1260" y2="58"/>
+  <line x1="1558" y1="32" x2="1558" y2="58"/>
+  <line x1="1534" y1="78" x2="1560" y2="78"/>
+  <line x1="1534" y1="422" x2="1560" y2="422"/>
+</g>
+</svg>

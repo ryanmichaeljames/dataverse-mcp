@@ -10,21 +10,21 @@ interpreter process.
 
 Acceptance criteria covered:
 1. No env vars set (DATAVERSE_ALLOW_WRITE/DELETE both absent): default read-only
-   tools across all categories register (82 tools).
-2. All allow flags set, DATAVERSE_TOOLS unset: all 185 tools register.
-3. DATAVERSE_TOOLS=security + both allow flags: only 19 core + 16 security = 35.
-4. DATAVERSE_TOOLS=core,solutions + both allow flags: 19 core + 20 solutions = 39.
+   tools across all categories register (97 tools).
+2. All allow flags set, DATAVERSE_TOOLS unset: all 200 tools register.
+3. DATAVERSE_TOOLS=security + both allow flags: only 24 core + 22 security = 46.
+4. DATAVERSE_TOOLS=core,solutions + both allow flags: 24 core + 21 solutions = 45.
 5. core is always on: DATAVERSE_TOOLS=security (no explicit core) still yields
    core tools in the registered set.
-6. Composition: DATAVERSE_TOOLS=security, no allow flags → 11 read core + 11 read
-   security = 22 tools.
+6. Composition: DATAVERSE_TOOLS=security, no allow flags → 16 read core + 17 read
+   security = 33 tools.
 7. Unknown category: DATAVERSE_TOOLS=bogus,security + both allow flags → warning
-   logged, bogus ignored, security+core still register (35 tools).
-8. DATAVERSE_TOOLS=jobs + both allow flags: 19 core + 3 jobs = 22 tools.
+   logged, bogus ignored, security+core still register (46 tools).
+8. DATAVERSE_TOOLS=jobs + both allow flags: 24 core + 3 jobs = 27 tools.
 9. DATAVERSE_TOOLS=security (no jobs): jobs tools absent.
-10. DATAVERSE_TOOLS=webresources + both allow flags: 19 core + 5 webresources = 24.
+10. DATAVERSE_TOOLS=webresources + both allow flags: 24 core + 5 webresources = 29.
 11. DATAVERSE_TOOLS=security (no webresources): webresource tools absent.
-12. DATAVERSE_TOOLS=customapis + both allow flags: 19 core + 13 customapis = 32.
+12. DATAVERSE_TOOLS=customapis + both allow flags: 24 core + 13 customapis = 37.
 13. DATAVERSE_TOOLS=security (no customapis): customapi tools absent.
 """
 
@@ -85,20 +85,28 @@ def _run_scenario(env_overrides: dict) -> list[str]:
 # Expected tool sets (derived from decorator analysis)
 # ---------------------------------------------------------------------------
 
-# Core tools: environments (5) + tables (14) = 19 total (11 read + 6 write + 2 delete for tables)
+# Core tools: environments (7) + tables (16) + customizations (1) = 24 total
+# (16 read + 6 write + 2 delete)
 _CORE_READ_TOOLS = {
     "dataverse_list_environments",
     "dataverse_whoami",
+    "dataverse_get_organization_info",
+    "dataverse_get_setting",
     "dataverse_get_entity_sets",
     "dataverse_retrieve_user_privileges",
     "dataverse_retrieve_principal_access",
     # tables read
     "dataverse_query_table",
     "dataverse_execute_fetchxml",
+    "dataverse_validate_fetchxml",
     "dataverse_get_record",
     "dataverse_count_records",
+    "dataverse_get_total_record_counts",
     "dataverse_aggregate_table",
     "dataverse_execute_batch",
+    # customizations read (spans views/forms/sitemaps/apps/webresources, so it
+    # lives in the always-on core category rather than any one domain)
+    "dataverse_retrieve_unpublished",
 }
 
 _CORE_WRITE_TOOLS = {
@@ -117,10 +125,16 @@ _CORE_DELETE_TOOLS = {
 
 _CORE_ALL_TOOLS = _CORE_READ_TOOLS | _CORE_WRITE_TOOLS | _CORE_DELETE_TOOLS
 
-# Security tools: 11 read + 3 write + 2 delete = 16 total
+# Security tools: 17 read + 3 write + 2 delete = 22 total
 _SECURITY_READ_TOOLS = {
     "dataverse_list_security_roles",
     "dataverse_get_security_role",
+    "dataverse_get_role_privileges",
+    "dataverse_get_team_privileges",
+    # Environment-wide privilege catalogue (privileges / privilegeobjecttypecodesset)
+    "dataverse_list_privileges",
+    "dataverse_retrieve_access_origin",
+    "dataverse_list_shared_principals",
     "dataverse_list_teams",
     "dataverse_get_team",
     "dataverse_list_users",
@@ -131,6 +145,8 @@ _SECURITY_READ_TOOLS = {
     "dataverse_retrieve_record_change_history",
     "dataverse_get_audit_details",
     "dataverse_list_audit",
+    # Column-scoped audit history
+    "dataverse_get_attribute_change_history",
 }
 
 _SECURITY_WRITE_TOOLS = {
@@ -204,7 +220,7 @@ _CUSTOMAPIS_ALL_TOOLS = (
     _CUSTOMAPIS_READ_TOOLS | _CUSTOMAPIS_WRITE_TOOLS | _CUSTOMAPIS_DELETE_TOOLS
 )
 
-# Solutions tools (solutions category only, not flows): 9 read + 10 write + 1 delete = 20
+# Solutions tools (solutions category only, not flows): 10 read + 10 write + 1 delete = 21
 _SOLUTIONS_READ_TOOLS = {
     "dataverse_list_solutions",
     "dataverse_get_solution",
@@ -214,6 +230,7 @@ _SOLUTIONS_READ_TOOLS = {
     # ALM tools (issue #91)
     "dataverse_export_solution",
     "dataverse_get_import_job",
+    "dataverse_get_import_job_results",
     "dataverse_list_import_jobs",
     # Dependency analysis (issue #104)
     "dataverse_analyze_dependencies",
@@ -263,7 +280,7 @@ _FLOWS_ALL_TOOLS = _FLOWS_READ_TOOLS | _FLOWS_WRITE_TOOLS
 
 
 def test_default_no_env_vars():
-    """No env vars set: only read-only tools register across all categories (82 tools)."""
+    """No env vars set: only read-only tools register across all categories (97 tools)."""
     tools = _run_scenario({})
     tool_set = set(tools)
 
@@ -284,6 +301,17 @@ def test_default_no_env_vars():
     # Alternate key read tool must be present (schema is always-on when DATAVERSE_TOOLS unset)
     assert "dataverse_list_alternate_keys" in tool_set, (
         "dataverse_list_alternate_keys missing from default read-only tool set"
+    )
+    # Component customizability pre-flight is a read-only schema tool
+    assert "dataverse_is_component_customizable" in tool_set, (
+        "dataverse_is_component_customizable missing from default read-only tool set"
+    )
+    # Language and relationship-eligibility enumeration are read-only schema tools
+    assert "dataverse_list_languages" in tool_set, (
+        "dataverse_list_languages missing from default read-only tool set"
+    )
+    assert "dataverse_get_valid_relationship_entities" in tool_set, (
+        "dataverse_get_valid_relationship_entities missing from default read-only tool set"
     )
     # Alternate key write/delete tools must NOT be present
     assert "dataverse_create_alternate_key" not in tool_set
@@ -317,21 +345,22 @@ def test_default_no_env_vars():
     assert "dataverse_activate_process" not in tool_set
     assert "dataverse_deactivate_process" not in tool_set
 
-    # Total should be 82 (81 previous + 1 new classic process read: dataverse_list_processes)
-    assert len(tools) == 82, f"Expected 82 default tools, got {len(tools)}: {tools}"
+    # Total should be 97 (96 + dataverse_list_privileges, a new read-only
+    # security tool)
+    assert len(tools) == 97, f"Expected 97 default tools, got {len(tools)}: {tools}"
 
 
 def test_all_categories_all_flags():
-    """DATAVERSE_TOOLS unset + both allow flags: all 185 tools register."""
+    """DATAVERSE_TOOLS unset + both allow flags: all 200 tools register."""
     tools = _run_scenario({
         "DATAVERSE_ALLOW_WRITE": "true",
         "DATAVERSE_ALLOW_DELETE": "true",
     })
-    assert len(tools) == 185, f"Expected 185 tools, got {len(tools)}"
+    assert len(tools) == 200, f"Expected 200 tools, got {len(tools)}"
 
 
 def test_security_only_with_all_flags():
-    """DATAVERSE_TOOLS=security + both allow flags: 19 core + 16 security = 35."""
+    """DATAVERSE_TOOLS=security + both allow flags: 24 core + 22 security = 46."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -343,11 +372,11 @@ def test_security_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 35, f"Expected 35 tools, got {len(tools)}"
+    assert len(tools) == 46, f"Expected 46 tools, got {len(tools)}"
 
 
 def test_core_solutions_with_all_flags():
-    """DATAVERSE_TOOLS=core,solutions + both allow flags: 19 core + 20 solutions = 39.
+    """DATAVERSE_TOOLS=core,solutions + both allow flags: 24 core + 21 solutions = 45.
 
     Flows (a separate category) must NOT register.
     """
@@ -363,7 +392,7 @@ def test_core_solutions_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 39, f"Expected 39 tools, got {len(tools)}"
+    assert len(tools) == 45, f"Expected 45 tools, got {len(tools)}"
 
     # Flow tools must not be present
     assert not (tool_set & _FLOWS_ALL_TOOLS), (
@@ -385,7 +414,7 @@ def test_core_always_on_when_omitted():
 
 
 def test_composition_security_no_allow_flags():
-    """DATAVERSE_TOOLS=security, no allow flags: 11 read core + 11 read security = 22."""
+    """DATAVERSE_TOOLS=security, no allow flags: 16 read core + 17 read security = 33."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "security",
     })
@@ -396,11 +425,11 @@ def test_composition_security_no_allow_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 22, f"Expected 22 tools, got {len(tools)}"
+    assert len(tools) == 33, f"Expected 33 tools, got {len(tools)}"
 
 
 def test_unknown_category_ignored():
-    """Unknown category 'bogus' is ignored; security+core still register (34 tools)."""
+    """Unknown category 'bogus' is ignored; security+core still register (46 tools)."""
     result = subprocess.run(
         [sys.executable, "-c", _HELPER_SCRIPT],
         capture_output=True,
@@ -430,11 +459,11 @@ def test_unknown_category_ignored():
         f"Extra: {tool_set - (_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS)}, "
         f"Missing: {(_CORE_ALL_TOOLS | _SECURITY_ALL_TOOLS) - tool_set}"
     )
-    assert len(tools) == 35, f"Expected 35 tools, got {len(tools)}"
+    assert len(tools) == 46, f"Expected 46 tools, got {len(tools)}"
 
 
 def test_jobs_only_with_all_flags():
-    """DATAVERSE_TOOLS=jobs + both allow flags: 19 core + 3 jobs = 22."""
+    """DATAVERSE_TOOLS=jobs + both allow flags: 24 core + 3 jobs = 27."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "jobs",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -447,7 +476,7 @@ def test_jobs_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 22, f"Expected 22 tools, got {len(tools)}"
+    assert len(tools) == 27, f"Expected 27 tools, got {len(tools)}"
 
     # Security tools must not be present
     assert not (tool_set & _SECURITY_ALL_TOOLS), (
@@ -472,7 +501,7 @@ def test_security_only_no_jobs():
 
 
 def test_webresources_only_with_all_flags():
-    """DATAVERSE_TOOLS=webresources + both allow flags: 19 core + 5 webresources = 24."""
+    """DATAVERSE_TOOLS=webresources + both allow flags: 24 core + 5 webresources = 29."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "webresources",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -485,7 +514,7 @@ def test_webresources_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 24, f"Expected 24 tools, got {len(tools)}"
+    assert len(tools) == 29, f"Expected 29 tools, got {len(tools)}"
 
     # Security tools must not be present
     assert not (tool_set & _SECURITY_ALL_TOOLS), (
@@ -510,7 +539,7 @@ def test_security_only_no_webresources():
 
 
 def test_customapis_only_with_all_flags():
-    """DATAVERSE_TOOLS=customapis + both allow flags: 19 core + 13 customapis = 32."""
+    """DATAVERSE_TOOLS=customapis + both allow flags: 24 core + 13 customapis = 37."""
     tools = _run_scenario({
         "DATAVERSE_TOOLS": "customapis",
         "DATAVERSE_ALLOW_WRITE": "true",
@@ -523,7 +552,7 @@ def test_customapis_only_with_all_flags():
         f"Unexpected tools. Extra: {tool_set - expected}, "
         f"Missing: {expected - tool_set}"
     )
-    assert len(tools) == 32, f"Expected 32 tools, got {len(tools)}"
+    assert len(tools) == 37, f"Expected 37 tools, got {len(tools)}"
 
     # Security tools must not be present
     assert not (tool_set & _SECURITY_ALL_TOOLS), (

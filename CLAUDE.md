@@ -67,7 +67,8 @@ example on that page, not an essay. Terse bullets under the standard headings on
 
 - Update `CHANGELOG.md` for notable behavior/tool changes
 - Add entries only under `[Unreleased]`; do not modify released sections
-- **One line per change**, ideally one sentence. Lead with the tool or behaviour that changed.
+- **One bullet per change**, ideally one sentence. Lead with the tool or behaviour that changed.
+- **One physical line per bullet** — do not hard-wrap; let the editor soft-wrap.
 - **No `####` subsections, no prose paragraphs between bullets.** If a bullet needs a clause of
   justification, one trailing `—` clause is the ceiling.
 - **Write for someone deciding whether to upgrade**, not for a reviewer of the diff. State what

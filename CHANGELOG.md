@@ -7,9 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.9.1] - 2026-08-13
+
 ### Security
-- Unhandled tool errors no longer return the exception type and text to the caller — the detail
-  could include internal paths and hostnames, and now stays in the server log.
+- Unhandled tool errors no longer return the exception type and text to the caller — the detail could include internal paths and hostnames, and now stays in the server log.
 
 ## [3.9.0] - 2026-08-06
 
@@ -862,7 +863,8 @@ see the entry under Changed.
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.0...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.1...HEAD
+[3.9.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.0...v3.9.1
 [3.9.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...v3.8.0
 [3.7.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.6.0...v3.7.0

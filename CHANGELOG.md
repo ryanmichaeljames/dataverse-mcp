@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- Unhandled tool errors no longer return the exception type and text to the caller — the detail
+  could include internal paths and hostnames, and now stays in the server log.
+
 ## [3.9.0] - 2026-08-06
 
 Fifteen read-only tools wrapping Dataverse Web API functions, taking the registered tool count from

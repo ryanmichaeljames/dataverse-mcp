@@ -892,10 +892,14 @@ def tool_error_response(e: Exception, tool_name: str) -> str:
                 "configuration."
             ),
         })
+    # Detail stays in the server log only: str(e) on an unhandled exception can
+    # carry internal paths, hostnames, or other state the caller must not see.
     logger.exception("Unexpected error in %s", tool_name)
     return json.dumps({
         "error": True,
-        "message": f"Unexpected error: {type(e).__name__}: {e}",
+        "message": (
+            f"Unexpected error in {tool_name}. See the server logs for details."
+        ),
     })
 
 

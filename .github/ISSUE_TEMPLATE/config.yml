@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/ryanmichaeljames/dataverse-mcp/security/advisories/new
+    about: Report privately through a GitHub security advisory. Do not open a public issue for a vulnerability.
+  - name: Ask a question about setup or usage
+    url: https://github.com/ryanmichaeljames/dataverse-mcp#readme
+    about: Installation, authentication, and the environment variables are covered in the README. Open a bug report if something there does not work.

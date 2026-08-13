@@ -1,0 +1,65 @@
+name: Feature request
+description: Request a new tool, or a change to an existing one
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Only the first two fields are required.
+
+        Requesting a **new tool** for a Dataverse message that is not wrapped yet? Name the message (for example `AddMembersTeam`) under "What do you want to do" and the rest is optional.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: What do you want to do?
+      description: The task you are trying to accomplish, not the implementation you have in mind. If it maps to a specific Dataverse message, action or function, name it.
+      placeholder: |
+        Add a user to a team. I think this is the AddMembersTeam action; there is no tool for it today.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: How do you handle it today?
+      description: The workaround you use now, or why there isn't one.
+      placeholder: |
+        I drop out of the agent and do it in the maker portal by hand.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Type of change
+      options:
+        - New tool
+        - Change to an existing tool
+        - Server behaviour or configuration
+        - Documentation
+        - Other
+
+  - type: input
+    id: tool
+    attributes:
+      label: Existing tool
+      description: If this changes a tool that already exists, name it.
+      placeholder: dataverse_query_table
+
+  - type: dropdown
+    id: access
+    attributes:
+      label: Does it write to Dataverse?
+      description: Write and delete tools register only behind DATAVERSE_ALLOW_WRITE / DATAVERSE_ALLOW_DELETE.
+      options:
+        - Read-only
+        - Creates or updates data
+        - Deletes data
+        - Not sure
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Links to Microsoft's documentation for the message, example payloads, or the shape of the response you would expect back.

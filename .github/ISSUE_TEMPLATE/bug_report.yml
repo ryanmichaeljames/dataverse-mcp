@@ -1,0 +1,81 @@
+name: Bug report
+description: Something in the server or one of its tools does not work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Only the first three fields are required — fill in the rest if you have them.
+
+        **Do not paste credentials, tokens, tenant or client IDs, or your real organization URL.** Replace the org host with `yourorg.crm.dynamics.com`.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you expected, and what you got instead. Paste the tool's error message if there was one.
+      placeholder: |
+        Called dataverse_query_table on the account table and got HTTP 400, but the same query works in the Web API directly.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The tool call and arguments you used, with any real org URL replaced by a placeholder.
+      placeholder: |
+        1. dataverse_query_table with entity_set_name "accounts", select "name,createdon"
+        2. Error returned instead of rows
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: dataverse-mcp version
+      description: Run `pip show dataverse-mcp`, or `uv pip show dataverse-mcp`.
+      placeholder: "3.9.1"
+    validations:
+      required: true
+
+  - type: input
+    id: tool
+    attributes:
+      label: Tool name
+      description: Which tool misbehaved, if it was one specific tool.
+      placeholder: dataverse_query_table
+
+  - type: dropdown
+    id: client
+    attributes:
+      label: MCP client
+      options:
+        - Claude Code
+        - Claude Desktop
+        - VS Code
+        - Cursor
+        - Other
+
+  - type: dropdown
+    id: auth
+    attributes:
+      label: DATAVERSE_AUTH_TYPE
+      options:
+        - interactive
+        - azure_cli
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Server logs
+      description: Anything the server wrote to stderr around the failure. Automatically formatted as code — no backticks needed.
+      render: shell
+
+  - type: checkboxes
+    id: hygiene
+    attributes:
+      label: Before submitting
+      options:
+        - label: This report contains no credentials, tokens, tenant or client IDs, or real organization URL.
+          required: true

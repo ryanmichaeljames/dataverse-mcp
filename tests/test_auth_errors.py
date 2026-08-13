@@ -123,6 +123,18 @@ def test_tool_error_response_unexpected_error_fallback_unaffected() -> None:
 
     assert payload["error"] is True
     assert "Unexpected error" in payload["message"]
+    assert "some_tool" in payload["message"]
+
+
+def test_tool_error_response_unexpected_error_does_not_leak_detail() -> None:
+    """Fallback message must not echo the exception type or its text."""
+    exc = RuntimeError(r"C:\srv\secret\config.json refused by internal-host:5432")
+    result = tool_error_response(exc, "some_tool")
+    payload = json.loads(result)
+
+    assert "RuntimeError" not in payload["message"]
+    assert "internal-host" not in payload["message"]
+    assert "config.json" not in payload["message"]
 
 
 # ---------------------------------------------------------------------------

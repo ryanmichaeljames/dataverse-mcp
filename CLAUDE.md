@@ -61,5 +61,20 @@ This repository is a Python MCPServer (`mcp.server.mcpserver`) server for Micros
 
 ## Changelog Policy
 
+Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) **as written** — the plain
+example on that page, not an essay. Terse bullets under the standard headings only (`Added`,
+`Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`), in that order, omitting the empty ones.
+
 - Update `CHANGELOG.md` for notable behavior/tool changes
 - Add entries only under `[Unreleased]`; do not modify released sections
+- **One bullet per change**, ideally one sentence. Lead with the tool or behaviour that changed.
+- **One physical line per bullet** — do not hard-wrap; let the editor soft-wrap.
+- **No `####` subsections, no prose paragraphs between bullets.** If a bullet needs a clause of
+  justification, one trailing `—` clause is the ceiling.
+- **Write for someone deciding whether to upgrade**, not for a reviewer of the diff. State what
+  changed and what it means for them; leave out how it was built, what was measured, what was
+  considered and rejected, and the API archaeology behind it.
+- **Rationale, measurements and gotchas go elsewhere** — module docstrings next to the code, the
+  PR body, or the commit message. All three outlive the release note and none of them are read by
+  someone skimming for breaking changes.
+- New version section: `## [X.Y.Z] - YYYY-MM-DD`, plus a compare link at the file's foot.

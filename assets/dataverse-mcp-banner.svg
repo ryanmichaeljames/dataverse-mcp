@@ -14,7 +14,6 @@
   <rect x="95" y="370" width="248" height="9" rx="4" fill="#e11d2e"/>
   <text x="95" y="428" font-size="25" fill="#8b8b91">AI AGENTS  ↔  MICROSOFT DATAVERSE</text>
 
-
   <polygon points="1210,248 1390,328 1210,408 1030,328" fill="none" stroke="#25252a" stroke-width="3"/>
   <polygon points="1210,208 1390,288 1210,368 1030,288" fill="none" stroke="#8b8b91" stroke-width="3"/>
   <polygon points="1210,168 1390,248 1210,328 1030,248" fill="none" stroke="#f5f5f4" stroke-width="4"/>
@@ -30,7 +29,7 @@
   <circle cx="1342" cy="208" r="6" fill="#e11d2e"/>
   <circle cx="1078" cy="208" r="6" fill="#e11d2e"/>
 
-  <text x="1100" y="442" font-size="16" fill="#8b8b91">QUERY  •  SCHEMA  •  SECURITY  •  AUTOMATION</text>
+  <text x="1004" y="428" font-size="16" fill="#8b8b91">QUERY  •  SCHEMA  •  SECURITY  •  AUTOMATION</text>
 </g>
 <g stroke="#25252a" stroke-width="2" fill="none">
   <path d="M62 126 V62 H210"/>

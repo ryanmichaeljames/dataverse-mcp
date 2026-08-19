@@ -36,6 +36,15 @@ jobs:
       - name: Lint
         run: uv run ruff check .
 
+      - name: Check generated wiki tool pages are current
+        # scripts/gen_wiki_tools.py derives the wiki tool reference from the live
+        # MCP registry. The pages live in the separate <repo>.wiki git repo, which
+        # is public and anonymously cloneable, so no token is needed. Fails the
+        # build when the committed pages have drifted from the code.
+        run: |
+          git clone --depth 1 "https://github.com/${{ github.repository }}.wiki.git" "$RUNNER_TEMP/wiki"
+          uv run python scripts/gen_wiki_tools.py --check --out "$RUNNER_TEMP/wiki"
+
   build-sample-plugin:
     # Compiles the ContactPlugin sample to catch C# regressions early.
     # No secrets required — the GenerateSnk step creates a throwaway dev key.

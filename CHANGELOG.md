@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Per-tool reference pages on the GitHub wiki — every tool's category, access class, parameters and response shape, generated from the code and checked for staleness in CI.
+
+### Changed
+- The `output_path` / `input_path` parameters on the solution export, import and stage-and-upgrade tools now document that `DATAVERSE_FILE_BASE_DIR` confines them when it is set, and that they are unconfined when it is not.
+
 ## [3.9.1] - 2026-08-13
 
 ### Security

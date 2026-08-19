@@ -63,20 +63,42 @@ def _category_enabled(category: str) -> bool:
     return _ENABLED_CATEGORIES is None or category in _ENABLED_CATEGORIES
 
 
+TOOL_CATEGORIES: dict[str, str] = {}
+"""Maps tool function name -> category token.
+
+Populated at decoration time by :func:`category_tools`, *regardless* of whether
+the env gate for that tool is open.  The MCP registry only ever contains the
+tools whose gates are open, so it cannot answer "which category does this tool
+belong to?" for a gated-off tool; this mapping can.  Read-only bookkeeping —
+it has no effect on which tools are exposed.  Used by
+``scripts/gen_wiki_tools.py`` to group tools onto wiki pages.
+"""
+
+
 def category_tools(category: str):
     """Return (tool, write_tool, delete_tool) decorators scoped to *category*.
 
     Each decorator composes category gating with the existing write/delete env
     flags.  When a gate is closed the decorator is a no-op (the function is
-    defined but not exposed as an MCP tool).
+    defined but not exposed as an MCP tool).  Either way the function's
+    category is recorded in :data:`TOOL_CATEGORIES`.
     """
+    def _gated(is_open: bool, kwargs: dict):
+        register = mcp.tool(**kwargs) if is_open else None
+
+        def decorate(func):
+            TOOL_CATEGORIES[func.__name__] = category
+            return register(func) if register is not None else func
+
+        return decorate
+
     def tool(**kwargs):
-        return mcp.tool(**kwargs) if _category_enabled(category) else (lambda f: f)
+        return _gated(_category_enabled(category), kwargs)
 
     def write_tool(**kwargs):
-        return mcp.tool(**kwargs) if (_ALLOW_WRITE and _category_enabled(category)) else (lambda f: f)
+        return _gated(_ALLOW_WRITE and _category_enabled(category), kwargs)
 
     def delete_tool(**kwargs):
-        return mcp.tool(**kwargs) if (_ALLOW_DELETE and _category_enabled(category)) else (lambda f: f)
+        return _gated(_ALLOW_DELETE and _category_enabled(category), kwargs)
 
     return tool, write_tool, delete_tool

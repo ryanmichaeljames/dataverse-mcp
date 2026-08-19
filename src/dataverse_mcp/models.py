@@ -649,10 +649,15 @@ class ExportSolutionInput(DataverseEnvironmentInput):
         description=(
             "Local filesystem path to write the exported solution .zip to "
             "(e.g., '/tmp/MySolution.zip' or 'C:\\\\exports\\\\MySolution.zip'). "
-            "When provided, the zip is decoded and written to disk; the response "
-            "contains metadata only (no base64 payload). "
+            "When provided, the zip is decoded and written to disk (parent "
+            "directories are created if missing); the response contains metadata "
+            "only (no base64 payload). "
             "When omitted, the base64 payload is returned inline if it is under "
-            "~3 MB; otherwise a structured error asks you to supply output_path."
+            "~3 MB; otherwise a structured error asks you to supply output_path. "
+            "If the server sets DATAVERSE_FILE_BASE_DIR, the resolved path must "
+            "stay inside that directory — '..' traversal or an absolute path "
+            "elsewhere is rejected with an error and nothing is written. "
+            "When that variable is unset the path is not confined."
         ),
     )
     export_general_settings: bool | None = Field(
@@ -714,7 +719,11 @@ class ImportSolutionInput(DataverseEnvironmentInput):
             "Local filesystem path to the solution .zip to import "
             "(e.g., '/tmp/MySolution.zip'). "
             "The server reads the file and base64-encodes it before posting. "
-            "Provide this XOR customization_file — not both and not neither."
+            "Provide this XOR customization_file — not both and not neither. "
+            "If the server sets DATAVERSE_FILE_BASE_DIR, the resolved path must "
+            "stay inside that directory — '..' traversal or an absolute path "
+            "elsewhere is rejected with an error and nothing is read. "
+            "When that variable is unset the path is not confined."
         ),
     )
     overwrite_unmanaged_customizations: bool = Field(
@@ -864,7 +873,11 @@ class StageAndUpgradeSolutionInput(DataverseEnvironmentInput):
             "Local filesystem path to the solution .zip to stage and upgrade "
             "(e.g., '/tmp/MySolution.zip'). "
             "The server reads the file and base64-encodes it before posting. "
-            "Provide this XOR customization_file — not both and not neither."
+            "Provide this XOR customization_file — not both and not neither. "
+            "If the server sets DATAVERSE_FILE_BASE_DIR, the resolved path must "
+            "stay inside that directory — '..' traversal or an absolute path "
+            "elsewhere is rejected with an error and nothing is read. "
+            "When that variable is unset the path is not confined."
         ),
     )
     overwrite_unmanaged_customizations: bool = Field(

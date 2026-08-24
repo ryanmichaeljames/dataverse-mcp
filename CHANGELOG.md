@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Interactive sign-in lands on a branded page matching the project banner, replacing azure-identity's one-line text response.
+
+### Changed
+- A failed interactive sign-in shows the Entra error and description instead of a success message.
+
 ## [3.9.1] - 2026-08-13
 
 ### Security

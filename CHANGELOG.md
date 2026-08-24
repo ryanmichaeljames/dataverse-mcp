@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.10.0] - 2026-08-25
+
+### Added
+- Interactive sign-in lands on a branded page matching the project banner, replacing azure-identity's one-line text response.
+
+### Changed
+- A failed interactive sign-in shows the Entra error and description instead of a success message.
+
 ## [3.9.1] - 2026-08-13
 
 ### Security
@@ -863,7 +871,8 @@ see the entry under Changed.
 - Structured JSON responses for all tools with consistent `error`, `count`, and `has_more` fields
 - Logging to stderr via Python `logging` module — stdout reserved for stdio transport
 
-[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.1...HEAD
+[Unreleased]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.10.0...HEAD
+[3.10.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.1...v3.10.0
 [3.9.1]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.9.0...v3.9.1
 [3.9.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.8.0...v3.9.0
 [3.8.0]: https://github.com/ryanmichaeljames/dataverse-mcp/compare/v3.7.0...v3.8.0

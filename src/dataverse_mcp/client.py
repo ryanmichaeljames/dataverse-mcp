@@ -23,6 +23,8 @@ from azure.identity import (
     TokenCachePersistenceOptions,
 )
 
+from .auth_redirect import BrandedAuthCodeRedirectServer
+
 logger = logging.getLogger(__name__)
 
 SUPPORTED_AUTH_TYPES = ("interactive", "azure_cli")
@@ -343,6 +345,31 @@ def _ensure_az_cli_on_path() -> None:
         )
 
 
+def _new_interactive_credential(**kwargs) -> InteractiveBrowserCredential:
+    """Build an InteractiveBrowserCredential that serves the branded redirect page.
+
+    ``_server_class`` is a private azure-identity keyword: InteractiveBrowserCredential
+    pops it in ``__init__`` and instantiates it as the loopback listener that catches
+    the post-sign-in ``?code=`` redirect.  Passing our own server swaps azure-identity's
+    one-line "Authentication complete" response for the styled page in auth_redirect.py.
+
+    Should a future azure-identity drop that keyword, it would fall through to MSAL and
+    raise TypeError, so retry once without it — an unstyled landing page is a far better
+    outcome than a credential that cannot be constructed.
+    """
+    try:
+        return InteractiveBrowserCredential(
+            _server_class=BrandedAuthCodeRedirectServer, **kwargs
+        )
+    except TypeError as exc:
+        logger.warning(
+            "azure-identity rejected the _server_class keyword (%s); "
+            "falling back to its default sign-in redirect page",
+            exc,
+        )
+        return InteractiveBrowserCredential(**kwargs)
+
+
 def _build_credential(auth_type: str):
     """Build an Azure TokenCredential based on the configured auth type.
 
@@ -363,7 +390,7 @@ def _build_credential(auth_type: str):
                 "DATAVERSE_TOKEN_CACHE_PERSIST=false: "
                 "interactive credential uses in-memory token cache only"
             )
-            return InteractiveBrowserCredential()
+            return _new_interactive_credential()
 
         allow_unencrypted = _get_token_cache_allow_unencrypted()
         if allow_unencrypted:
@@ -403,7 +430,7 @@ def _build_credential(auth_type: str):
         record_path = config_dir / record_filename
         auth_record = _load_auth_record(record_path)
 
-        credential = InteractiveBrowserCredential(
+        credential = _new_interactive_credential(
             cache_persistence_options=cache_opts,
             authentication_record=auth_record,
         )
